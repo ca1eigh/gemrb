@@ -124,7 +124,7 @@ def ConnectPress():
 
 def PregenPress():
 	#do not start game after chargen
-	GemRB.SetVar("PlayMode",-1) #will allow export
+	GemRB.SetVar("PlayMode", None) #will allow export
 	GemRB.SetVar("Slot",1)
 	GemRB.LoadGame(None)
 	GemRB.SetNextScript ("CharGen")
