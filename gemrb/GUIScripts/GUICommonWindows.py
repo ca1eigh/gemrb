@@ -1308,8 +1308,6 @@ def SetSelectionChangeHandler (handler):
 
 	SelectionChangeHandler = handler
 
-	# redraw selection on change main selection | single selection
-	# SelectionChanged ()
 	return
 
 def CloseTopWindow ():
@@ -1506,7 +1504,6 @@ def PortraitButtonOnPress (btn):
 		GemRB.GameSelectPC (pcID, True, SELECT_REPLACE)
 	else:
 		GemRB.GameSelectPCSingle (pcID)
-		SelectionChanged ()
 	return
 
 def PortraitButtonOnShiftPress (btn):
@@ -1519,7 +1516,6 @@ def PortraitButtonOnShiftPress (btn):
 		GemRB.GameSelectPC (pcID, sel)
 	else:
 		GemRB.GameSelectPCSingle (pcID)
-		SelectionChanged ()
 	return
 
 def SelectionChanged ():
