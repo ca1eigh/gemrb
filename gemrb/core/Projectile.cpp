@@ -27,6 +27,7 @@
 #include "GlobalTimer.h"
 #include "Interface.h"
 #include "Light.h"
+#include "Map.h"
 #include "ProjectileServer.h"
 #include "Sprite2D.h"
 #include "VEFObject.h"
@@ -321,12 +322,12 @@ void Projectile::Setup()
 			//the explosion consists of a pop in/hold/pop out of the travel projectile (dimension door)
 			if (travel[0] && shadow[0]) {
 				extensionDelay = travel[0].GetFrameCount() * 2 + shadow[0].GetFrameCount();
-				travel[0].Flags |= A_ANI_PLAYONCE;
-				shadow[0].Flags |= A_ANI_PLAYONCE;
+				travel[0].flags |= Animation::Flags::Once;
+				shadow[0].flags |= Animation::Flags::Once;
 			}
 		} else if (travel[0]) {
 			extensionDelay = travel[0].GetFrameCount();
-			travel[0].Flags |= A_ANI_PLAYONCE;
+			travel[0].flags |= Animation::Flags::Once;
 		}
 	}
 
@@ -1600,7 +1601,7 @@ void Projectile::DrawExplosion(const Region& vp)
 			if (pro->travel[0] && Extension->APFlags & APF_PLAYONCE) {
 				// set on all orients while we don't force one for single-orientation animations (see CreateOrientedAnimations)
 				for (auto& anim : pro->travel) {
-					anim.Flags |= A_ANI_PLAYONCE;
+					anim.flags |= Animation::Flags::Once;
 				}
 			}
 			
