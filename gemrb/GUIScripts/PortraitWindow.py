@@ -83,15 +83,11 @@ def SetupDamageInfo (pc, Button, Window):
 
 	return ratio_str, color
 
-# returns buttons and a numerical index
 # does nothing new in iwd2 due to layout
 # in the rest, it will enable extra button generation for higher resolutions
 # Mode determines arrangment direction, horizontal being for party reform and potentially save/load
-def GetPortraitButtonPairs (Window, ExtraSlots=0, Mode="vertical"):
-	pairs = {}
-
-	if not Window:
-		return pairs
+def GetPortraitButtons (Window, ExtraSlots=0, Mode="vertical"):
+	list = []
 
 	oldSlotCount = 6 + ExtraSlots
 
@@ -99,25 +95,25 @@ def GetPortraitButtonPairs (Window, ExtraSlots=0, Mode="vertical"):
 		btn = Window.GetControl(i)
 		btn.SetHotKey(chr(ord('1') + i), 0, True)
 		btn.SetVarAssoc("portrait", i + 1)
-		pairs[i] = btn
+		list.append(btn)
 
 	# nothing left to do
 	PartySize = GemRB.GetPartySize ()
 	if PartySize <= oldSlotCount:
-		return pairs
+		return list
 
 	if GameCheck.IsIWD2():
 		# set Mode = "horizontal" once we can create enough space
-		GemRB.Log(LOG_ERROR, "GetPortraitButtonPairs", "Parties larger than 6 are currently not supported in IWD2! Using 6 ...")
-		return pairs
+		GemRB.Log(LOG_ERROR, "GetPortraitButtons", "Parties larger than 6 are currently not supported in IWD2! Using 6 ...")
+		return list
 
 	# GUIWORLD doesn't have a separate portraits window, so we need to skip
 	# all this magic when reforming an overflowing party
 	if PartySize > MAX_PARTY_SIZE:
-		return pairs
+		return list
 
 	# generate new buttons by copying from existing ones
-	firstButton = pairs[0]
+	firstButton = list[0]
 	firstRect = firstButton.GetFrame ()
 	buttonHeight = firstRect["h"]
 	buttonWidth = firstRect["w"]
@@ -153,13 +149,13 @@ def GetPortraitButtonPairs (Window, ExtraSlots=0, Mode="vertical"):
 			limit = windowHeight - buttonHeight * 6 + unused
 		limitStep = buttonHeight
 
-	for i in range(len(pairs), PartySize):
+	for i in range(len(list), PartySize):
 		if limitStep > limit:
 			raise SystemExit("Not enough window space for so many party members (portraits), bailing out! %d vs width/height of %d/%d" %(limit, buttonWidth, buttonHeight))
 		nextID = 1000 + i
 		control = Window.GetControl (nextID)
 		if control:
-			pairs[i] = control
+			list[i] = control
 			continue
 		if Mode ==  "horizontal":
 			button = Window.CreateButton (nextID, xOffset+i*buttonWidth, yOffset, buttonWidth, buttonHeight)
@@ -180,13 +176,13 @@ def GetPortraitButtonPairs (Window, ExtraSlots=0, Mode="vertical"):
 		button.SetAction (GUICommonWindows.ButtonDragSourceHandler, IE_ACT_DRAG_DROP_SRC)
 		button.SetAction (GUICommonWindows.ButtonDragDestHandler, IE_ACT_DRAG_DROP_DST)
 
-		pairs[i] = button
+		list[i] = button
 		limit -= limitStep
 
 	# move the buttons back up, to combine the freed space
 	if scale:
 		for i in range(PartySize - 1):
-			button = pairs[i]
+			button = list[i]
 			button.SetSize (buttonWidth, buttonHeight)
 			if i == 0:
 				continue # don't move the first portrait
@@ -195,10 +191,10 @@ def GetPortraitButtonPairs (Window, ExtraSlots=0, Mode="vertical"):
 			y = rect["y"]
 			button.SetPos (x, y-portraitGap*i)
 
-	return pairs
+	return list
 
 def AddStatusFlagLabel (Window, Button, i):
-	label = Window.GetControl (200 + i)
+	label = Window.GetControl (199 + i)
 	if label:
 		return label
 
@@ -206,18 +202,18 @@ def AddStatusFlagLabel (Window, Button, i):
 	align = IE_FONT_ALIGN_TOP | IE_FONT_ALIGN_RIGHT | IE_FONT_SINGLE_LINE
 	if GameCheck.IsBG2 ():
 		align = IE_FONT_ALIGN_TOP | IE_FONT_ALIGN_CENTER | IE_FONT_SINGLE_LINE
-	label = Button.CreateLabel (200 + i, StatesFont, "", align) #level up icon is on the right
+	label = Button.CreateLabel (199 + i, StatesFont, "", align) #level up icon is on the right
 	label.SetFrame (Button.GetInsetFrame (4))
 	return label
 
 # overlay a label, so we can display the hp with the correct font. Regular button label
 #   is used by effect icons
 def AddHPLabel (Window, Button, i):
-	label = Window.GetControl (100 + i)
+	label = Window.GetControl (99 + i)
 	if label:
 		return label
 
-	label = Button.CreateLabel (100 + i, "NUMFONT", "", IE_FONT_ALIGN_TOP | IE_FONT_ALIGN_LEFT | IE_FONT_SINGLE_LINE)
+	label = Button.CreateLabel (99 + i, "NUMFONT", "", IE_FONT_ALIGN_TOP | IE_FONT_ALIGN_LEFT | IE_FONT_SINGLE_LINE)
 	return label
 
 def SetupButtonBorders (Window, Button, i):
@@ -291,14 +287,14 @@ def OpenPortraitWindow (needcontrols=0, pos=WINDOW_RIGHT|WINDOW_VCENTER):
 				Button.SetTooltip (11942)
 				Button.OnPress (GUICommonWindows.RestPress)
 
-	PortraitButtons = GetPortraitButtonPairs (Window)
-	for i, Button in PortraitButtons.items():
-		pcID = i + 1
+	PortraitButtons = GetPortraitButtons (Window)
+	for Button in PortraitButtons:
+		pcID = Button.Value
 
 		Button.SetVarAssoc("portrait", pcID)
-		Button.SetHotKey(chr(ord('1') + i), 0, True)
+		Button.SetHotKey(chr(ord('0') + pcID), 0, True)
 		Button.SetFont (StatesFont)
-		AddStatusFlagLabel (Window, Button, i)
+		AddStatusFlagLabel (Window, Button, pcID)
 
 		if needcontrols or GameCheck.IsIWD2():
 			Button.OnRightPress (GUICommonWindows.OpenInventoryWindowClick)
@@ -311,8 +307,8 @@ def OpenPortraitWindow (needcontrols=0, pos=WINDOW_RIGHT|WINDOW_VCENTER):
 		Button.SetAction (GUICommonWindows.ButtonDragSourceHandler, IE_ACT_DRAG_DROP_SRC)
 		Button.SetAction (GUICommonWindows.ButtonDragDestHandler, IE_ACT_DRAG_DROP_DST)
 
-		AddHPLabel (Window, Button, i)
-		SetupButtonBorders (Window, Button, i)
+		AddHPLabel (Window, Button, pcID)
+		SetupButtonBorders (Window, Button, pcID)
 
 	UpdatePortraitWindow ()
 	GUICommonWindows.SelectionChanged ()
@@ -328,9 +324,9 @@ def UpdatePortraitWindow ():
 	Inventory = GemRB.GetVar ("Inventory")
 	GSFlags = GemRB.GetGUIFlags()
 
-	PortraitButtons = GetPortraitButtonPairs (Window)
-	for i, Button in PortraitButtons.items():
-		pcID = i + 1
+	PortraitButtons = GetPortraitButtons (Window)
+	for Button in PortraitButtons:
+		pcID = Button.Value
 		if (pcID <= GemRB.GetPartySize()):
 			Button.SetAction(lambda btn, pc=pcID: GemRB.GameControlLocateActor(pc), IE_ACT_MOUSE_ENTER);
 			Button.SetAction(lambda: GemRB.GameControlLocateActor(-1), IE_ACT_MOUSE_LEAVE);
@@ -388,11 +384,11 @@ def UpdatePortraitWindow ():
 			else:
 				flag = ""
 			if GameCheck.IsIWD1() or GameCheck.IsIWD2():
-				HPLabel = AddHPLabel (Window, Button, i) # missing if new pc joined since the window was opened
+				HPLabel = AddHPLabel (Window, Button, pcID) # missing if new pc joined since the window was opened
 				HPLabel.SetText (ratio_str)
 				HPLabel.SetColor (color)
 			
-		FlagLabel = AddStatusFlagLabel (Window, Button, i) # missing if new pc joined since the window was opened
+		FlagLabel = AddStatusFlagLabel (Window, Button, pcID) # missing if new pc joined since the window was opened
 		FlagLabel.SetText(flag)
 
 		#add effects on the portrait
