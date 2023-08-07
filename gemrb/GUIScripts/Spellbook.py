@@ -545,8 +545,8 @@ def HasSorcererBook (pc, cls=-1):
 		return False
 	return IsSorcererBook (SorcererBook)
 
-def CannotLearnSlotSpell ():
-	pc = GemRB.GameGetSelectedPCSingle ()
+def CannotLearnSlotSpell (slot_item):
+	pc = slot_item["PC"]
 
 	# disqualify sorcerers immediately
 	if HasSorcererBook (pc):
@@ -556,7 +556,6 @@ def CannotLearnSlotSpell ():
 	if GameCheck.IsIWD2():
 		booktype = IE_IWD2_SPELL_WIZARD
 
-	slot_item = GemRB.GetSlotItem (pc, GemRB.GetVar ("ItemButton"))
 	spell_ref = GemRB.GetItem (slot_item['ItemResRef'])['Spell']
 	spell = GemRB.GetSpell (spell_ref)
 	level = spell['SpellLevel']
