@@ -236,8 +236,8 @@ def OpenStoreWindow ():
 		Button.SetVarAssoc ("Action", i)
 		# iwd2 has no steal window
 		if GameCheck.IsIWD2() and Action == 2:
-			Action = -1
-		if Action>=0:
+			Action = None
+		if Action is not None:
 			Button.SetFlags (IE_GUI_BUTTON_RADIOBUTTON, OP_OR)
 			if GameCheck.IsIWD1() or GameCheck.IsIWD2():
 				Button.SetSprites ("GUISTBBC", Action, 1,2,0,0)
