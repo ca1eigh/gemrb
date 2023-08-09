@@ -37,6 +37,7 @@ def InitInventoryWindow (Window):
 	global InventoryWindow
 
 	Window.AddAlias("WIN_INV")
+	Window.OnFocus(UpdateInventoryWindow)
 	InventoryWindow = Window
 
 	#ground items scrollbar
