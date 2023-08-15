@@ -216,6 +216,13 @@ else()
 endif()
 MESSAGE(STATUS "Git version bool: ${GIT_VERSION}")
 
+# install pre-commit hook and set up git blame
+if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/.git" AND NOT EXISTS "${CMAKE_SOURCE_DIR}/.git/hooks/pre-commit")
+  message(STATUS "Installing git pre-commit hook and .git-blame-ignore-revs file")
+  file(COPY admin/pre-commit DESTINATION "${CMAKE_SOURCE_DIR}/.git/hooks")
+  execute_process(COMMAND git "config" "--add" "blame.ignoreRevsFile" ".git-blame-ignore-revs")
+endif()
+
 IF(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 	INCLUDE(CheckCXXCompilerFlag)
 	if ((NOT DISABLE_WERROR) AND GIT_VERSION)
