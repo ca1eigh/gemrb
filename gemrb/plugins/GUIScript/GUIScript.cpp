@@ -545,7 +545,7 @@ static PyObject* GemRB_LoadWindow(PyObject * /*self*/, PyObject* args)
 	int WindowID = -1;
 	Window::WindowPosition pos = Window::PosCentered;
 	char* ref = NULL;
-	PARSE_ARGS(args, "i|si", &WindowID, &ref, &pos);
+	PARSE_ARGS(args, "is|i", &WindowID, &ref, &pos);
 
 	Window* win = core->GetWindowManager()->LoadWindow(WindowID, ScriptingGroup_t(ref), pos);
 	ABORT_IF_NULL(win);

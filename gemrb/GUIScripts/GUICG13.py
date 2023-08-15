@@ -134,7 +134,7 @@ def DonePress():
 def GetColor():
 	global ColorPicker
 
-	ColorPicker=GemRB.LoadWindow(14)
+	ColorPicker=GemRB.LoadWindow(14, "GUICG")
 	GemRB.SetVar("Selected", None)
 	btnFlags = IE_GUI_BUTTON_PICTURE
 	btnState = IE_GUI_BUTTON_LOCKED
