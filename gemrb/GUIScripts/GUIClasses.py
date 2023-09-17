@@ -212,8 +212,11 @@ class GWindow(GView, Scrollable):
 			view = self.GetControl (view)
 		RemoveView (view, True)
 
-	def GetControl(self, newID):
-		return GetView(self, newID)
+	def GetControl(self, cid):
+		if cid is not None and cid >= 0: # FIXME: some GUIScript functions are still returning values of -1 instead on None
+			return GetView(self, cid)
+		else:
+			return None
 
 	def AliasControls (self, map):
 		for alias, cid in map.items():
