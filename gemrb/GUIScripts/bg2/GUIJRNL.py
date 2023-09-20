@@ -159,7 +159,7 @@ def AddUserEntry ():
 	Text = Window.ReplaceSubview (0, IE_GUI_TEXTAREA, "NORMAL")
 	Text.SetFlags (IE_GUI_TEXTAREA_EDITABLE, OP_OR)
 	Text.SetColor (ColorBlackish, TA_COLOR_NORMAL)
-	Text.SetColor ({'r' : 126, 'g' : 126, 'b' : 126, 'a' : 255}, TA_COLOR_BACKGROUND)
+	Text.SetColor ({'r' : 0xf0, 'g' : 0xb0, 'b' : 0x80, 'a' : 255}, TA_COLOR_BACKGROUND)
 	Text.Focus ()
 
 	# title
