@@ -103,7 +103,9 @@ def SinglePlayerPress():
 	return
 
 def MultiPlayerPress():
+	StartWindow = GemRB.GetView("START2")
 
+	OptionsButton = StartWindow.GetControl (4)
 	OptionsButton.SetText ("")
 	SinglePlayerButton.SetText (20642)
 	ExitButton.SetText (15416)
