@@ -3335,6 +3335,7 @@ void Interface::CloseCurrentStore()
 {
 	gamedata->SaveStore(CurrentStore);
 	CurrentStore = NULL;
+	vars.Set("BARTER_PC", 0);
 }
 
 Store *Interface::SetCurrentStore(const ResRef &resName, ieDword owner)
@@ -3349,9 +3350,13 @@ Store *Interface::SetCurrentStore(const ResRef &resName, ieDword owner)
 	}
 
 	CurrentStore = gamedata->GetStore(resName);
-	if (CurrentStore == NULL) {
-		return NULL;
+	if (CurrentStore == nullptr) {
+		vars.Set("BARTER_PC", 0);
+		return nullptr;
 	}
+	// this is set when opening the store and not updated when changing PC
+	// TODO: seems like it would be a good enhancement to set this to the selected PC with the highest charisma
+	vars.Set("BARTER_PC", game->GetSelectedPCSingle());
 	if (owner) {
 		CurrentStore->SetOwnerID(owner);
 	}
