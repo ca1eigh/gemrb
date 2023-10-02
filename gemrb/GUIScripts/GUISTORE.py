@@ -1660,8 +1660,7 @@ def SetupItems (pc, Slot, Button, Label, i, storetype, steal = False):
 		if steal:
 			Button.EnableBorder (1, False)
 		else:
-			if not Inventory:
-				Price = GetRealPrice(pc, "buy", Item, Slot)
+			Price = 0 if Inventory else GetRealPrice(pc, "buy", Item, Slot)
 
 			if Item['Function'] & ITM_F_CONTAINER and not Bag and not Inventory:
 				# containers are always clickable
@@ -1684,7 +1683,7 @@ def SetupItems (pc, Slot, Button, Label, i, storetype, steal = False):
 		Button.EnableBorder (0, False)
 
 	GemRB.SetToken ("ITEMNAME", Name)
-	GemRB.SetToken ("ITEMCOST", str(Price or ""))
+	GemRB.SetToken ("ITEMCOST", str(Price or "0"))
 	if (Inventory or (storetype == ITEM_STORE and steal)) and not GameCheck.IsPST():
 		if GameCheck.IsIWD1() or GameCheck.IsIWD2():
 			LabelText = GemRB.GetString (24890)
