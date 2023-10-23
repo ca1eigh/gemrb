@@ -21,6 +21,7 @@
 #include "EffectQueue.h"
 
 #include "ie_feats.h"
+#include "opcode_params.h"
 #include "overlays.h"
 #include "strrefs.h"
 
@@ -734,7 +735,7 @@ int EffectQueue::AddAllEffects(Actor* target, const Point &destination)
 }
 
 //resisted effect based on level
-static inline bool check_level(const Actor *target, Effect *fx)
+static inline bool CheckLevel(const Actor* target, Effect* fx)
 {
 	const auto& Opcodes = Globals::Get().Opcodes;
 	//skip non level based effects
@@ -781,13 +782,30 @@ static inline bool check_level(const Actor *target, Effect *fx)
 
 //roll for the effect probability, there is a high and a low treshold, the d100
 //roll should hit in the middle
-static inline bool check_probability(const Effect* fx)
+static inline bool CheckProbability(const Effect* fx)
 {
 	//random value is 0-99
 	if (fx->RandomValue < fx->ProbabilityRangeMin || fx->RandomValue > fx->ProbabilityRangeMax) {
 		return false;
 	}
 	return true;
+}
+
+static int CheckOpcodeImmunity(const Effect* fx, const Actor* target)
+{
+	const auto& globals = Globals::Get();
+	// opcode immunity
+	// TODO: research, maybe the whole check_resistance should be skipped on caster != actor (selfapplication)
+	if (target->fxqueue.HasEffectWithParam(fx_opcode_immunity_ref, fx->Opcode)) {
+		Log(MESSAGE, "EffectQueue", "{} is immune to effect: {}", fmt::WideToChar { target->GetName() }, globals.Opcodes[fx->Opcode].Name);
+		return FX_NOT_APPLIED;
+	}
+	if (target->fxqueue.HasEffectWithParam(fx_opcode_immunity2_ref, fx->Opcode)) {
+		Log(MESSAGE, "EffectQueue", "{} is immune2 to effect: {}", fmt::WideToChar { target->GetName() }, globals.Opcodes[fx->Opcode].Name);
+		// totlm's spin166 should be wholly blocked by spwi210, but only blocks its third effect, so make it fatal
+		return FX_ABORT;
+	}
+	return -1;
 }
 
 //this is for whole spell immunity/bounce
@@ -979,8 +997,7 @@ static int check_type(Actor *actor, const Effect& fx)
 	return 1;
 }
 
-// pure magic resistance
-static inline int check_magic_res(const Actor *actor, const Effect *fx, const Actor *caster)
+static inline int CheckMagicResistance(const Actor* actor, const Effect* fx, const Actor* caster)
 {
 	const auto& globals = Globals::Get();
 	//don't resist self
@@ -1019,56 +1036,30 @@ static inline int check_magic_res(const Actor *actor, const Effect *fx, const Ac
 	return -1;
 }
 
-//check resistances, saving throws
-static int check_resistance(Actor* actor, Effect* fx)
+// check saving throws
+static int CheckSaves(Actor* actor, Effect* fx)
 {
 	if (!actor) return -1;
 
-	const Scriptable *cob = GetCasterObject();
-	const Actor* caster = Scriptable::As<const Actor>(cob);
-	
+	const Actor* caster = Scriptable::As<const Actor>(GetCasterObject());
 	const auto& globals = Globals::Get();
 
-	//opcode immunity
-	// TODO: research, maybe the whole check_resistance should be skipped on caster != actor (selfapplication)
-	if (actor->fxqueue.HasEffectWithParam(fx_opcode_immunity_ref, fx->Opcode)) {
-		Log(MESSAGE, "EffectQueue", "{} is immune to effect: {}", fmt::WideToChar{actor->GetName()}, globals.Opcodes[fx->Opcode].Name);
-		return FX_NOT_APPLIED;
-	}
-	if (actor->fxqueue.HasEffectWithParam(fx_opcode_immunity2_ref, fx->Opcode)) {
-		Log(MESSAGE, "EffectQueue", "{} is immune2 to effect: {}", fmt::WideToChar{actor->GetName()}, globals.Opcodes[fx->Opcode].Name);
-		// totlm's spin166 should be wholly blocked by spwi210, but only blocks its third effect, so make it fatal
-		return FX_ABORT;
-	}
-
-	// check magic resistance if applicable
-	// (note that no MR roll does not preclude saving throws -- see e.g. chromatic orb instakill)
-	if (fx->Resistance == FX_CAN_RESIST_CAN_DISPEL && check_magic_res(actor, fx, caster) == FX_NOT_APPLIED) {
-		// bg2 sequencer trigger spells have bad resistance set, so ignore them
-		if (signed(fx->Opcode) != EffectQueue::ResolveEffect(fx_activate_spell_sequencer_ref)) {
-			return FX_NOT_APPLIED;
-		}
-	}
-
-	if (globals.pstflags && (actor->GetSafeStat(IE_STATE_ID) & STATE_ANTIMAGIC)) {
-		return -1;
-	}
-
-	//saving throws, bonus can be improved by school specific bonus
+	// bonus can be improved by school specific bonus
 	int bonus = fx->SavingThrowBonus + actor->fxqueue.BonusForParam2(fx_spell_resistance_ref, fx->PrimaryType);
 	if (caster) {
-		bonus += actor->fxqueue.BonusAgainstCreature(fx_ac_vs_creature_type_ref,caster);
-		//saving throw could be made difficult by caster's school specific bonus
+		// bonus from generic ac&saves bonus opcode
+		bonus += actor->fxqueue.BonusAgainstCreature(fx_ac_vs_creature_type_ref, caster);
+		// saving throw could be made difficult by caster's school specific bonus
 		bonus -= caster->fxqueue.BonusForParam2(fx_spell_focus_ref, fx->PrimaryType);
 	}
 
 	// handle modifiers of specialist mages
-	if (!core->HasFeature(GFFlags::PST_STATE_FLAGS)) {
+	if (!globals.pstflags) {
 		int specialist = KIT_BASECLASS;
 		if (caster) specialist = caster->GetStat(IE_KIT);
 		if (caster && caster->GetMageLevel() && specialist != KIT_BASECLASS) {
 			// specialist mage's enemies get a -2 penalty to saves vs the specialist's school
-			if (specialist & (1 << (fx->PrimaryType+5))) {
+			if (specialist & (1 << (fx->PrimaryType + 5))) {
 				bonus -= 2;
 			}
 		}
@@ -1076,28 +1067,33 @@ static int check_resistance(Actor* actor, Effect* fx)
 		// specialist mages get a +2 bonus to saves to spells of the same school used against them
 		specialist = actor->GetStat(IE_KIT);
 		if (actor->GetMageLevel() && specialist != KIT_BASECLASS) {
-			if (specialist & (1 << (fx->PrimaryType+5))) {
+			if (specialist & (1 << (fx->PrimaryType + 5))) {
 				bonus += 2;
 			}
 		}
 	}
 
+	static EffectRef fx_damage_ref = { "Damage", -1 };
+	if (fx_damage_ref.opcode < 0) {
+		Globals::ResolveEffectRef(fx_damage_ref);
+	}
+
 	bool saved = false;
-	for (int i=0;i<5;i++) {
-		if( fx->SavingThrowType&(1<<i)) {
+	for (int i = 0; i < 5; i++) {
+		if (fx->SavingThrowType & (1 << i)) {
 			// FIXME: first bonus handling for iwd2 is just a guess
 			if (globals.iwd2fx) {
 				saved = actor->GetSavingThrow(i, bonus - fx->SavingThrowBonus, fx);
 			} else {
 				saved = actor->GetSavingThrow(i, bonus, fx);
 			}
-			if( saved) {
+			if (saved) {
 				break;
 			}
 		}
 	}
-	if( saved) {
-		if (fx->IsSaveForHalfDamage || (fx->Opcode == 12 && fx->IsVariable & DamageFlags::SaveForHalf)) {
+	if (saved) {
+		if (fx->IsSaveForHalfDamage || ((int) fx->Opcode == fx_damage_ref.opcode && fx->IsVariable & DamageFlags::SaveForHalf)) {
 			// if we have evasion, we take no damage
 			// sadly there's no feat or stat for it
 			if (globals.iwd2fx && (actor->GetThiefLevel() > 1 || actor->GetMonkLevel())) {
@@ -1111,7 +1107,7 @@ static int check_resistance(Actor* actor, Effect* fx)
 			return FX_NOT_APPLIED;
 		}
 	} else {
-		if (fx->Opcode == 12 && fx->IsVariable & DamageFlags::FailForHalf) {
+		if ((int) fx->Opcode == fx_damage_ref.opcode && fx->IsVariable & DamageFlags::FailForHalf) {
 			fx->Parameter1 /= 2;
 		}
 		// improved evasion: take only half damage even though we failed the save
@@ -1119,6 +1115,53 @@ static int check_resistance(Actor* actor, Effect* fx)
 			fx->Parameter1 /= 2;
 		}
 	}
+	return -1;
+}
+
+static int CheckResistances(Effect* fx, Actor* target)
+{
+	if (!CheckProbability(fx)) {
+		fx->TimingMode = FX_DURATION_JUST_EXPIRED;
+		return FX_NOT_APPLIED;
+	}
+
+	// the effect didn't pass the target level check
+	if (CheckLevel(target, fx)) {
+		fx->TimingMode = FX_DURATION_JUST_EXPIRED;
+		return FX_NOT_APPLIED;
+	}
+
+	if (!target) return -1;
+
+	// any localised antimagic at play?
+	const auto& globals = Globals::Get();
+	if (globals.pstflags && (target->GetSafeStat(IE_STATE_ID) & STATE_ANTIMAGIC)) {
+		return -1;
+	}
+	// also check for SS_ANTIMAGIC for completeness (spell adds level immunities)
+	if (target->HasSpellState(SS_ANTIMAGIC)) return -1;
+
+	int immune = CheckOpcodeImmunity(fx, target);
+	if (immune != -1) return immune;
+
+	// check magic resistance if applicable
+	const Actor* caster = Scriptable::As<const Actor>(GetCasterObject());
+	// (note that no MR roll does not preclude saving throws -- see e.g. chromatic orb instakill)
+	if (fx->Resistance == FX_CAN_RESIST_CAN_DISPEL && CheckMagicResistance(target, fx, caster) == FX_NOT_APPLIED) {
+		// bg2 sequencer trigger spells have bad resistance set, so ignore them
+		if (signed(fx->Opcode) != EffectQueue::ResolveEffect(fx_activate_spell_sequencer_ref)) {
+			fx->TimingMode = FX_DURATION_JUST_EXPIRED;
+			return FX_NOT_APPLIED;
+		}
+	}
+
+	// the effect didn't pass saving throws
+	int saved = CheckSaves(target, fx);
+	if (saved != -1) {
+		fx->TimingMode = FX_DURATION_JUST_EXPIRED;
+		return saved;
+	}
+
 	return -1;
 }
 
@@ -1160,24 +1203,8 @@ int EffectQueue::ApplyEffect(Actor* target, Effect* fx, ieDword first_apply, ieD
 		}
 
 		if (resistance) {
-			//the effect didn't pass the probability check
-			if( !check_probability(fx) ) {
-				fx->TimingMode = FX_DURATION_JUST_EXPIRED;
-				return FX_NOT_APPLIED;
-			}
-
-			//the effect didn't pass the target level check
-			if( check_level(target, fx) ) {
-				fx->TimingMode = FX_DURATION_JUST_EXPIRED;
-				return FX_NOT_APPLIED;
-			}
-
-			//the effect didn't pass the resistance check
-			int resisted = check_resistance(target, fx);
-			if (resisted != -1) {
-				fx->TimingMode = FX_DURATION_JUST_EXPIRED;
-				return resisted;
-			}
+			int resisted = CheckResistances(fx, target);
+			if (resisted != -1) return resisted;
 		}
 
 		//Same as in items and spells

@@ -198,9 +198,9 @@ static const TriggerLink triggernames[] = {
 	{"hasitem", GameScript::HasItem, 0},
 	{"hasitemcategory", GameScript::HasItemCategory, 0},
 	{"hasitemequiped", GameScript::HasItemEquipped, 0}, //typo in bg2
-	{"hasitemequipedreal", GameScript::HasItemEquipped, 0}, //not sure
+	{"hasitemequipedreal", GameScript::HasItemEquippedReal, 0},
 	{"hasitemequipped", GameScript::HasItemEquipped, 0},
-	{"hasitemequippedreal", GameScript::HasItemEquipped, 0}, //not sure
+	{"hasitemequippedreal", GameScript::HasItemEquippedReal, 0},
 	{"hasiteminslot", GameScript::HasItemSlot, 0},
 	{"hasitemslot", GameScript::HasItemSlot, 0},
 	{"hasitemtypeslot", GameScript::HasItemTypeSlot, 0},//gemrb extension
@@ -1082,9 +1082,11 @@ static const ActionLink actionnames[] = {
 	{"usecontainer", GameScript::UseContainer,AF_BLOCKING},
 	{"usedoor", GameScript::UseDoor,AF_BLOCKING},
 	{"useitem", GameScript::UseItem,AF_BLOCKING},
+	{"useitemability", GameScript::UseItem, AF_BLOCKING},
 	{"useitempoint", GameScript::UseItemPoint,AF_BLOCKING},
 	{"useitempointslot", GameScript::UseItemPoint,AF_BLOCKING},
 	{"useitemslot", GameScript::UseItem,AF_BLOCKING},
+	{"useitemslotability", GameScript::UseItem, AF_BLOCKING},
 	{"vequip",GameScript::SetArmourLevel, 0},
 	{"verbalconstant", GameScript::VerbalConstant, 0},
 	{"verbalconstanthead", GameScript::VerbalConstantHead, 0},

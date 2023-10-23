@@ -683,7 +683,7 @@ void Map::DrawPortal(const InfoPoint *ip, int enable)
 			sca->Pos = ip->Pos;
 			//this is actually ordered by time, not by height
 			sca->ZOffset = gotPortal;
-			AddVVCell( new VEFObject(sca));
+			AddVVCell(sca);
 		}
 		return;
 	}
@@ -1340,8 +1340,7 @@ void Map::DrawMap(const Region& viewport, FogRenderer& fogRenderer, uint32_t dFl
 				Color tint = GetLighting(sca->Pos);
 				tint.a = 255;
 
-				// FIXME: these should actually make use of SetDrawingStencilForObject too
-				BlitFlags flags = core->DitherSprites ? BlitFlags::STENCIL_BLUE : BlitFlags::STENCIL_RED;
+				BlitFlags flags = SetDrawingStencilForScriptedAnimation(sca->GetSingleObject(), viewport, 0);
 				if (timestop) {
 					flags |= BlitFlags::GREY;
 				}
@@ -1359,7 +1358,8 @@ void Map::DrawMap(const Region& viewport, FogRenderer& fogRenderer, uint32_t dFl
 				drawn = 1;
 			}
 			if (drawn) {
-				pro->Draw(viewport);
+				BlitFlags flags = SetDrawingStencilForProjectile(pro, viewport);
+				pro->Draw(viewport, flags);
 				proidx++;
 			} else {
 				delete pro;
@@ -1374,6 +1374,7 @@ void Map::DrawMap(const Region& viewport, FogRenderer& fogRenderer, uint32_t dFl
 				drawn = 1;
 			}
 			if (drawn) {
+				// no wallgroup stenciling needed, in the original these were always drawn
 				spark->Draw(viewport.origin);
 				spaidx++;
 			} else {
@@ -1664,6 +1665,54 @@ BlitFlags Map::SetDrawingStencilForAreaAnimation(const AreaAnimation* anim, cons
 	}
 
 	return bool(anim->flags & AreaAnimation::Flags::NoWall) ? BlitFlags::NONE : BlitFlags::STENCIL_GREEN;
+}
+
+// test case: vvc played when summoning a creature (it's not attached to the actor as most spell vfx)
+BlitFlags Map::SetDrawingStencilForScriptedAnimation(const ScriptedAnimation* anim, const Region& viewPort, int height)
+{
+	const Region& bbox = anim->DrawingRegion();
+	if (bbox.IntersectsRegion(viewPort) == false) {
+		return BlitFlags::NONE;
+	}
+
+	Point p(anim->Pos.x + anim->XOffset, anim->Pos.y - anim->ZOffset + anim->YOffset);
+	if (anim->SequenceFlags & IE_VVC_HEIGHT) p.y -= height;
+
+	WallPolygonSet walls = WallsIntersectingRegion(bbox, false, &p);
+
+	SetDrawingStencilForObject(anim, bbox, walls, viewPort.origin);
+
+	// check this after SetDrawingStencilForObject for debug drawing purposes
+	if (walls.first.empty()) {
+		return BlitFlags::NONE; // not behind a wall, no stencil required
+	}
+
+	BlitFlags flags = core->DitherSprites ? BlitFlags::STENCIL_BLUE : BlitFlags::STENCIL_RED;
+	return flags;
+}
+
+// test case: fireball ball and spread animation
+// almost all parts should be occluded, but many are drawn by adding vvcs to the map
+BlitFlags Map::SetDrawingStencilForProjectile(const Projectile* pro, const Region& viewPort)
+{
+	const Region& bbox = pro->DrawingRegion(viewPort);
+	if (bbox.IntersectsRegion(viewPort) == false) {
+		return BlitFlags::NONE;
+	}
+
+	Point p = pro->GetPos();
+	p.y -= pro->GetZPos();
+	WallPolygonSet walls = WallsIntersectingRegion(bbox, false, &p);
+
+	SetDrawingStencilForObject(pro, bbox, walls, viewPort.origin);
+
+	// check this after SetDrawingStencilForObject for debug drawing purposes
+	if (walls.first.empty()) {
+		return BlitFlags::NONE; // not behind a wall, no stencil required
+	}
+
+	BlitFlags flags = core->DitherSprites ? BlitFlags::STENCIL_BLUE : BlitFlags::STENCIL_RED;
+	return flags;
 }
 
 void Map::DrawDebugOverlay(const Region &vp, uint32_t dFlags) const
@@ -2718,6 +2767,11 @@ ieDword Map::HasVVCCell(const ResRef &resource, const Point &p) const
 }
 
 //adding videocell in order, based on its height parameter
+void Map::AddVVCell(ScriptedAnimation* vvc)
+{
+	AddVVCell(new VEFObject(vvc));
+}
+
 void Map::AddVVCell(VEFObject* vvc)
 {
 	scaIterator iter;
@@ -3404,12 +3458,7 @@ static void MergePiles(Container *donorPile, Container *pile)
 		int skipped = count;
 		while (count) {
 			int slot = pile->inventory.FindItem(item->ItemResRef, 0, --count);
-			if (slot == -1) {
-				// probably an inventory bug, shouldn't happen
-				Log(DEBUG, "Map", "MoveVisibleGroundPiles found unaccessible pile item: {}", item->ItemResRef);
-				skipped--;
-				continue;
-			}
+			assert(slot != -1);
 			const CREItem *otheritem = pile->inventory.GetSlotItem(slot);
 			if (otheritem->Usages[0] == otheritem->MaxStackAmount) {
 				// already full (or nonstackable), nothing to do here
@@ -3873,14 +3922,6 @@ void Map::SeeSpellCast(Scriptable *caster, ieDword spell) const
 		triggerType = trigger_spellcastpriest;
 
 	caster->AddTrigger(TriggerEntry(triggerType, caster->GetGlobalID(), spell));
-
-	size_t i = actors.size();
-	while (i--) {
-		const Actor *witness = actors[i];
-		if (CanSee(witness, caster, true, 0)) {
-			caster->AddTrigger(TriggerEntry(triggerType, caster->GetGlobalID(), spell));
-		}
-	}
 }
 
 void Map::SetBackground(const ResRef &bgResRef, ieDword duration)

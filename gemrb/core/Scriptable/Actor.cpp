@@ -6427,13 +6427,6 @@ int Actor::GetProficiencyBonus(int& style, bool leftOrRight, int& damageBonus, i
 	if (third) {
 		if (!dualWielding) return prof;
 
-		// iwd2 gives a dualwielding bonus when using a simple weapon in the offhand
-		// it is limited to shortswords and daggers, which also have this flag set
-		// the bonus is applied to both hands
-		if (weaponInfo[1].wflags & WEAPON_FINESSE) {
-			prof += 2;
-		}
-
 		// rangers wearing light or no armor gain ambidexterity and
 		// two-weapon-fighting feats for free
 		bool ambidextrous = HasFeat(FEAT_AMBIDEXTERITY);
@@ -6446,23 +6439,26 @@ int Actor::GetProficiencyBonus(int& style, bool leftOrRight, int& damageBonus, i
 			}
 		}
 
-		// FIXME: externalise
 		// penalites and boni for both hands:
 		// -6 main, -10 off with no adjustments
 		//  0 main, +4 off with ambidexterity
 		// +2 main, +2 off with two weapon fighting
-		// +2 main, +2 off with a simple weapons in the off hand
+		// +2 main, +2 off with a simple weapon in the off hand
 		// so a minimum penalty of -2, -2
-		if (twoWeaponFighting) {
-			prof += 2;
+		static AutoTable modifierTable = gamedata->LoadTable("dwmods");
+		std::string hand = "RIGHT";
+		if (wi.wflags & WEAPON_LEFTHAND) hand = "LEFT";
+
+		prof += modifierTable->QueryFieldSigned<int>("BASE", hand);
+		if (ambidextrous) {
+			prof += modifierTable->QueryFieldSigned<int>("AMBIDEXTERITY", hand);
 		}
-		if (wi.wflags & WEAPON_LEFTHAND) {
-			prof -= 6;
-		} else {
-			prof -= 10;
-			if (ambidextrous) {
-				prof += 4;
-			}
+		if (twoWeaponFighting) {
+			prof += modifierTable->QueryFieldSigned<int>("2WFIGHTING", hand);
+		}
+		// this bonus is limited to shortswords and daggers, which also have this flag set
+		if (weaponInfo[1].wflags & WEAPON_FINESSE) {
+			prof += modifierTable->QueryFieldSigned<int>("SIMPLEWEAPONS", hand);
 		}
 
 		return prof;
@@ -8106,13 +8102,25 @@ void Actor::Draw(const Region& vp, Color baseTint, Color tint, BlitFlags flags) 
 	tint.a = 255 - trans;
 
 	//draw videocells under the actor
+	// but don't try to dither them; test cases for occlusion:
+	// - fireshield: not drawn
+	// - casting glow: not drawn
+	// - fireshield: not drawn
+	// - spell turning: not drawn
+	// - globe: drawn (we don't, which looks fine)
+	// - mirror images: drawn
+	BlitFlags vvcFlags = flags & (BlitFlags::STENCIL_MASK | BlitFlags::ALPHA_MOD);
+	if (vvcFlags & BlitFlags::STENCIL_DITHER) {
+		vvcFlags &= ~(BlitFlags::STENCIL_ALPHA | BlitFlags::STENCIL_DITHER);
+		vvcFlags |= BlitFlags::STENCIL_BLUE;
+	}
 	auto it = vfxQueue.cbegin();
 	for (; it != vfxQueue.cend(); ++it) {
 		const ScriptedAnimation* vvc = *it;
 		if (vvc->YOffset >= 0) {
 			break;
 		}
-		vvc->Draw(vp, baseTint, BBox.h, flags & (BlitFlags::STENCIL_MASK | BlitFlags::ALPHA_MOD));
+		vvc->Draw(vp, baseTint, BBox.h, vvcFlags);
 	}
 
 	if (ShouldDrawCircle()) {
@@ -8231,7 +8239,7 @@ void Actor::Draw(const Region& vp, Color baseTint, Color tint, BlitFlags flags) 
 	//draw videocells over the actor
 	for (; it != vfxQueue.cend(); ++it) {
 		const ScriptedAnimation* vvc = *it;
-		vvc->Draw(vp, baseTint, BBox.h, flags & (BlitFlags::STENCIL_MASK | BlitFlags::ALPHA_MOD));
+		vvc->Draw(vp, baseTint, BBox.h, vvcFlags);
 	}
 }
 
@@ -8926,7 +8934,7 @@ bool Actor::UseItemPoint(ieDword slot, ieDword header, const Point &target, ieDw
 	}
 	ResetCommentTime();
 	if (pro) {
-		pro->SetCaster(GetGlobalID(), ITEM_CASTERLEVEL);
+		pro->SetCaster(GetGlobalID(), gamedata->GetMiscRule("ITEM_CASTERLEVEL"));
 		GetCurrentArea()->AddProjectile(pro, Pos, target);
 		SetOrientation(target, Pos, false);
 		return true;
@@ -9282,7 +9290,7 @@ bool Actor::UseItem(ieDword slot, ieDword header, const Scriptable* target, ieDw
 		return false;
 	}
 
-	pro->SetCaster(GetGlobalID(), ITEM_CASTERLEVEL);
+	pro->SetCaster(GetGlobalID(), gamedata->GetMiscRule("ITEM_CASTERLEVEL"));
 	if (flags & UI_FAKE) {
 		delete pro;
 	} else if (((int) header < 0) && !(flags & UI_MISS)) { // using a weapon
@@ -11166,6 +11174,52 @@ const std::string& Actor::GetRaceName() const
 	} else {
 		return blank;
 	}
+}
+
+bool Actor::TouchAttack(const Projectile* pro) const
+{
+	if (!(pro->ExtFlags & PEF_TOUCH)) {
+		return false;
+	}
+
+	Actor* caster = core->GetGame()->GetActorByGlobalID(pro->GetCaster());
+	if (!caster) {
+		return false;
+	}
+
+	static int attackRollDiceSides = gamedata->GetMiscRule("ATTACK_ROLL_DICE_SIDES");
+	int roll = caster->LuckyRoll(1, attackRollDiceSides, 0);
+	if (roll == 1) {
+		return false; // critical failure
+	}
+
+	if (!(GetStat(IE_STATE_ID) & STATE_CRIT_PROT)) {
+		if (roll >= attackRollDiceSides - (int) caster->GetStat(IE_CRITICALHITBONUS)) {
+			return true; // critical success
+		}
+	}
+
+	// handle attack type here, weapon depends on it too
+	int attackType = WEAPON_FIST;
+	if (pro->form == ITEM_AT_MELEE) {
+		// unsure if present in the originals
+		// this way spells could simulate proficient melee attacks
+		attackType = WEAPON_MELEE;
+	} else if (pro->form % 2 == 0) {
+		attackType = WEAPON_RANGED;
+	}
+	int toHit = caster->GetToHit(attackType, this);
+	// damage type, should be generic?
+	// ignore the armor bonus
+	int defense = GetDefense(0, WEAPON_BYPASS, caster);
+	bool fail;
+	if (Actor::IsReverseToHit()) {
+		fail = roll + defense < toHit;
+	} else {
+		fail = toHit + roll < defense;
+	}
+
+	return !fail;
 }
 
 }

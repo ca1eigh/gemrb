@@ -1673,7 +1673,7 @@ Actor *Interface::SummonCreature(const ResRef& resource, const ResRef& animRes, 
 				vvc->Pos = ab->Pos;
 				//force vvc to play only once
 				vvc->PlayOnce();
-				map->AddVVCell( new VEFObject(vvc) );
+				map->AddVVCell(vvc);
 
 				//set up the summon disable effect
 				Effect *newfx = EffectQueue::CreateEffect(fx_summon_disable_ref, 0, 1, FX_DURATION_ABSOLUTE);
@@ -2926,12 +2926,6 @@ bool Interface::ProtectedExtension(const path_t& filename) const
 	return false;
 }
 
-void Interface::RemoveFromCache(const ResRef& resref, SClass_ID ClassID) const
-{
-	path_t filename = PathJoinExt(config.CachePath, resref, TypeExt(ClassID));
-	unlink(filename.c_str());
-}
-
 //this function checks if the path is eligible as a cache
 //if it contains a directory, or suspicious file extensions
 //we bail out, because the cache will be purged regularly.
@@ -3572,6 +3566,11 @@ Effect *Interface::GetEffect(const ResRef& resname, int level, const Point &p)
 // dealing with saved games
 int Interface::SwapoutArea(Map *map) const
 {
+	auto RemoveFromCache = [&](const ResRef& resref, SClass_ID classID) {
+		path_t filename = PathJoinExt(config.CachePath, resref, TypeExt(classID));
+		unlink(filename.c_str());
+	};
+
 	//refuse to save ambush areas, for example
 	if (map->AreaFlags & AF_NOSAVE) {
 		Log(DEBUG, "Core", "Not saving area {}",

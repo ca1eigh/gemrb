@@ -5348,9 +5348,6 @@ static PyObject* GemRB_GetINIPartyKey(PyObject * /*self*/, PyObject* args)
 		return RuntimeError( "INI resource not found!\n" );
 	}
 	const StringView desc = core->GetPartyINI()->GetKeyAsString(PyString_AsStringView(Tag), PyString_AsStringView(Key), PyString_AsStringView(Default));
-	// ensure it can be converted to unicode
-	// FIXME: English party.ini is encoded in cp-1252, not iso-8859-1, the tlk encoding
-	// but we don't display its 0x92 single quote / apostrophe correctly either way (see The Winter Rose description: father Di'Arnos)
 	return PyString_FromStringView(desc);
 }
 
@@ -5403,12 +5400,15 @@ static PyObject* GemRB_CreatePlayer(PyObject * /*self*/, PyObject* args)
 	Slot = ( PlayerSlot & 0x7fff );
 	GET_GAME();
 
-	//FIXME:overwriting original slot
-	//is dangerous if the game is already loaded
-	//maybe the actor should be removed from the area first
+	// overwriting original slot?
 	if (PlayerSlot & 0x8000) {
 		PlayerSlot = game->FindPlayer( Slot );
 		if (PlayerSlot >= 0) {
+			Map* map = game->GetCurrentArea();
+			if (map) {
+				Actor* actor = game->GetPC(PlayerSlot, false);
+				map->RemoveActor(actor);
+			}
 			game->DelPC(PlayerSlot, true);
 		}
 	} else {

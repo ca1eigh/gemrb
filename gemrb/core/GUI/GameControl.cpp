@@ -2544,7 +2544,7 @@ void GameControl::FlagsChanged(unsigned int /*oldflags*/)
 bool GameControl::SetScreenFlags(ScreenFlags value, BitOp mode)
 {
 	auto bits = screenFlags.to_ulong();
-	bool toggled = SetBits(bits, (unsigned long) value, mode);
+	bool toggled = SetBits(bits, (unsigned long) (1 << UnderType(value)), mode);
 	screenFlags = EnumBitset<ScreenFlags>(bits);
 	return toggled;
 }

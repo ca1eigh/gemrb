@@ -1871,9 +1871,9 @@ int fx_morale_modifier (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	return FX_APPLIED;
 }
 
-// 0x18 State:Panic
+// 0x18 State:Panic / State: Horror
 // TODO: Non-zero param2 -> Bypass opcode #101 (Immunity to effect); iwd thing, but no users
-int fx_set_panic_state (Scriptable* /*Owner*/, Actor* target, Effect* fx)
+int fx_set_panic_state(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
 	// print("fx_set_panic_state(%2d)", fx->Opcode);
 
@@ -1892,6 +1892,27 @@ int fx_set_panic_state (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		BASE_STATE_SET( STATE_PANIC );
 	} else {
 		STATE_SET( STATE_PANIC );
+	}
+
+	// run away and reevaluate every round, so expiry can take effect
+	// a simplified Actor::Panic that does too much and too little for reuse here
+	if (fx->FirstApply || target->Ticks % core->Time.round_size == 0) {
+		if (target->InParty) core->GetGame()->SelectActor(target, false, SELECT_NORMAL);
+		target->VerbalConstant(Verbal::Panic, gamedata->GetVBData("SPECIAL_COUNT"));
+
+		Action* action;
+		const Actor* caster = GetCasterObject();
+		if (caster) {
+			action = GenerateActionDirect("RunAwayFromNoInterruptNoLeaveArea([-1])", caster);
+		} else {
+			action = GenerateAction("RandomWalk()");
+		}
+		assert(action);
+		action->int0Parameter = core->Time.round_size;
+		action->int2Parameter = 1; // mark as our own
+		const Action* current = target->GetCurrentAction();
+		if (current && current->int2Parameter == 1) target->ReleaseCurrentAction();
+		target->AddActionInFront(action);
 	}
 	if (core->HasFeature(GFFlags::ENHANCED_EFFECTS)) {
 		target->AddPortraitIcon(PI_PANIC);
@@ -2872,7 +2893,7 @@ int fx_unsummon_creature (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		ScriptedAnimation* sca = gamedata->GetScriptedAnimation(fx->Resource, false);
 		if (sca) {
 			sca->Pos = target->Pos;
-			area->AddVVCell(new VEFObject(sca));
+			area->AddVVCell(sca);
 		}
 		//remove the creature
 		target->DestroySelf();
@@ -4606,7 +4627,7 @@ int fx_visual_spell_hit (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		}
 		sca->SetBlend();
 		sca->PlayOnce();
-		map->AddVVCell( new VEFObject(sca));
+		map->AddVVCell(sca);
 	} else {
 		Log(ERROR, "FXOpcodes", "fx_visual_spell_hit: Unhandled Type: {}", fx->Parameter2);
 	}
@@ -5544,7 +5565,7 @@ static Actor *GetFamiliar(Scriptable *Owner, const Actor *target, const Effect *
 			vvc->Pos = fam->Pos;
 			//force vvc to play only once
 			vvc->PlayOnce();
-			map->AddVVCell( new VEFObject(vvc) );
+			map->AddVVCell(vvc);
 		}
 	}
 
@@ -6063,7 +6084,7 @@ int fx_play_visual_effect (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		sca->Pos = target->Pos;
 	}
 	sca->PlayOnce();
-	map->AddVVCell( new VEFObject(sca) );
+	map->AddVVCell(sca);
 	return FX_NOT_APPLIED;
 }
 

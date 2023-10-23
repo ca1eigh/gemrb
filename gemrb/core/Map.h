@@ -550,6 +550,7 @@ public:
 	//returns the duration of a VVC cell set in the area (point may be set to empty)
 	ieDword HasVVCCell(const ResRef &resource, const Point &p) const;
 	void AddVVCell(VEFObject* vvc);
+	void AddVVCell(ScriptedAnimation* vvc);
 	bool CanFree();
 	int GetCursor(const Point &p) const;
 	//adds a sparkle puff of colour to a point in the area
@@ -671,6 +672,8 @@ private:
 	void SetDrawingStencilForObject(const void*, const Region&, const WallPolygonSet&, const Point& viewPortOrigin);
 	BlitFlags SetDrawingStencilForScriptable(const Scriptable*, const Region& viewPort);
 	BlitFlags SetDrawingStencilForAreaAnimation(const AreaAnimation*, const Region& viewPort);
+	BlitFlags SetDrawingStencilForScriptedAnimation(const ScriptedAnimation* anim, const Region& viewPort, int height);
+	BlitFlags SetDrawingStencilForProjectile(const Projectile* pro, const Region& viewPort);
 
 	void DrawDebugOverlay(const Region &vp, uint32_t dFlags) const;
 	void DrawPortal(const InfoPoint *ip, int enable);
