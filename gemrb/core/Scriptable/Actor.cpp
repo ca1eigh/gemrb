@@ -719,7 +719,7 @@ bool Actor::ApplyKit(bool remove, ieDword baseclass, int diff)
 
 	// iwd2 has support for multikit characters, so we have more work
 	// at the same time each baseclass has its own level stat, so the logic is cleaner
-	// NOTE: in iwd2 there are no pure class options for classes with kits, a kit has to be choosen
+	// NOTE: in iwd2 there are no pure class options for classes with kits, a kit has to be chosen
 	// even generalist mages are a kit the same way as in the older games
 	if (iwd2class) {
 		// callers always pass a baseclass (only exception are actions not present in iwd2: addkit and addsuperkit)
@@ -3784,7 +3784,7 @@ static void ForceOverrideAction(Actor* actor, std::string actionString)
 {
 	Action* action = GenerateAction(std::move(actionString));
 	assert(action);
-	// the original was as agressive, clearing the queue and stopping movement
+	// the original was as aggressive, clearing the queue and stopping movement
 	actor->Stop();
 	actor->AddAction(action);
 }
@@ -3856,7 +3856,7 @@ static bool CheckConfusionOverride(Actor* actor)
 // forced actions that mess with scripting, eg. panic, confusion, berserking
 bool Actor::OverrideActions()
 {
-	// but maybe not: if we're in dialog, cutscene or running an overriden action
+	// but maybe not: if we're in dialog, cutscene or running an overridden action
 	// the caller checks for this already
 	// the original didn't check this, but it can be considered a bug
 	const Game* game = core->GetGame();
@@ -4260,7 +4260,7 @@ int Actor::Damage(int damage, int damagetype, Scriptable* hitter, int modtype, i
 	}
 
 	// can be negative if we're healing on 100%+ resistance
-	// do this after GetHit, so VB_HURT isn't overriden by VB_DAMAGE, just (dis)played later
+	// do this after GetHit, so VB_HURT isn't overridden by VB_DAMAGE, just (dis)played later
 	if (damage != 0) {
 		NewBase(IE_HITPOINTS, (stat_t) -damage, MOD_ADDITIVE);
 		// unstun for that one special stun type
@@ -6439,7 +6439,7 @@ int Actor::GetProficiencyBonus(int& style, bool leftOrRight, int& damageBonus, i
 			}
 		}
 
-		// penalites and boni for both hands:
+		// penalties and boni for both hands:
 		// -6 main, -10 off with no adjustments
 		//  0 main, +4 off with ambidexterity
 		// +2 main, +2 off with two weapon fighting
@@ -6588,7 +6588,7 @@ int Actor::MeleePenalty() const
 	return 0;
 }
 
-//FIXME: can get called on its own and ToHit could erroneusly give weapon and some prof boni in that case
+// FIXME: can get called on its own and ToHit could erroneously give weapon and some prof boni in that case
 int Actor::GetToHit(ieDword Flags, const Actor *target)
 {
 	int generic = 0;
@@ -7451,12 +7451,12 @@ void Actor::UpdateModalState(ieDword gameTime)
 				// some modals notify each round, some only initially
 				bool feedback = ModalStates[Modal.State].repeat_msg || Modal.FirstApply;
 				Modal.FirstApply = false;
-				if (InParty && feedback && core->HasFeedback(FT_MISC)) {
+				if (IsPartyMember() && feedback && core->HasFeedback(FT_MISC)) {
 					ieStrRef entering = PersonalizePSTString(ModalStates[Modal.State].entering_str, this);
 					displaymsg->DisplayStringName(entering, GUIColors::WHITE, this, STRING_FLAGS::SOUND | STRING_FLAGS::SPEECH);
 				}
 			} else {
-				if (InParty && core->HasFeedback(FT_MISC)) {
+				if (IsPartyMember() && core->HasFeedback(FT_MISC)) {
 					ieStrRef failed = PersonalizePSTString(ModalStates[Modal.State].failed_str, this);
 					displaymsg->DisplayStringName(failed, GUIColors::WHITE, this, STRING_FLAGS::SOUND | STRING_FLAGS::SPEECH);
 				}
@@ -7768,7 +7768,7 @@ static const unsigned int MirrorImageZOrder[8] = { 2, 4, 6, 0, 1, 7, 5, 3 };
 
 bool Actor::HibernateIfAble()
 {
-	//finding an excuse why we don't hybernate the actor
+	// finding an excuse why we don't hibernate the actor
 	if (Modified[IE_ENABLEOFFSCREENAI])
 		return false;
 	if (objects.LastTarget) // currently attacking someone
@@ -8935,8 +8935,8 @@ bool Actor::UseItemPoint(ieDword slot, ieDword header, const Point &target, ieDw
 	ResetCommentTime();
 	if (pro) {
 		pro->SetCaster(GetGlobalID(), gamedata->GetMiscRule("ITEM_CASTERLEVEL"));
-		GetCurrentArea()->AddProjectile(pro, Pos, target);
 		SetOrientation(target, Pos, false);
+		GetCurrentArea()->AddProjectile(pro, Pos, target);
 		return true;
 	}
 	return false;
@@ -9319,8 +9319,8 @@ bool Actor::UseItem(ieDword slot, ieDword header, const Scriptable* target, ieDw
 		}
 		attackProjectile = pro;
 	} else { // launch it now as we are not attacking
-		GetCurrentArea()->AddProjectile(pro, Pos, tar->GetGlobalID(), false);
 		SetOrientation(target->Pos, Pos, false);
+		GetCurrentArea()->AddProjectile(pro, Pos, tar->GetGlobalID(), false);
 	}
 	return true;
 }

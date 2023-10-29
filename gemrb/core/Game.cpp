@@ -754,44 +754,53 @@ int Game::DelMap(unsigned int index, int forced)
 	// (definitely if MAX_MAPS_LOADED gets bumped)
 	if (map->INISpawn) map->INISpawn->ExitSpawn();
 
-	if (forced || Maps.size() > MAX_MAPS_LOADED) {
-		//keep at least one master
-		const ResRef name = map->GetScriptRef();
-		if (MasterArea(name) && AnotherArea.IsEmpty()) {
-			AnotherArea = name;
-			if (!forced) {
-				return -1;
-			}
-		}
-		//this check must be the last, because
-		//after PurgeActors you cannot keep the
-		//area in memory
-		//Or the queues should be regenerated!
-		if (!map->CanFree()) {
-			return 1;
-		}
-		//if there are still selected actors on the map (e.g. summons)
-		//unselect them now before they get axed
-		for (auto m = selected.begin(); m != selected.end();) {
-			if (!(*m)->InParty && (*m)->Area == Maps[index]->GetScriptRef()) {
-				m = selected.erase(m);
-			} else {
-				++m;
-			}
-		}
+	if (!forced && Maps.size() <= MAX_MAPS_LOADED) {
+		// not removing the map
+		return 0;
+	}
 
-		//remove map from memory
-		core->SwapoutArea(Maps[index]);
-		delete(Maps[index]);
-		Maps.erase(Maps.begin() + index);
-		//current map will be decreased
-		if (MapIndex > (int) index) {
-			MapIndex--;
+	// keep at least one master
+	const ResRef name = map->GetScriptRef();
+	if (MasterArea(name) && AnotherArea.IsEmpty()) {
+		AnotherArea = name;
+		if (!forced) {
+			return -1;
 		}
+	}
+
+	// this check must be the last, because
+	// after PurgeActors you cannot keep the area in memory
+	// Or the queues should be regenerated!
+	if (!map->CanFree()) {
 		return 1;
 	}
-	//didn't remove the map
-	return 0;
+
+	// if a familiar isn't executing EscapeArea, it warps to the protagonist
+	for (auto& npc : NPCs) {
+		if (npc->GetBase(IE_EA) == EA_FAMILIAR && (!npc->GetCurrentAction() || npc->GetCurrentAction()->actionID != 108)) {
+			npc->SetPosition(PCs[0]->Pos, true);
+		}
+	}
+
+	// if there are still selected actors on the map (e.g. summons)
+	// unselect them now before they get axed
+	for (auto m = selected.begin(); m != selected.end();) {
+		if (!(*m)->InParty && (*m)->Area == Maps[index]->GetScriptRef()) {
+			m = selected.erase(m);
+		} else {
+			++m;
+		}
+	}
+
+	// remove map from memory
+	core->SwapoutArea(Maps[index]);
+	delete Maps[index];
+	Maps.erase(Maps.begin() + index);
+	// current map will be decreased
+	if (MapIndex > (int) index) {
+		MapIndex--;
+	}
+	return 1;
 }
 
 void Game::PlacePersistents(Map *newMap, const ResRef &resRef)
@@ -1254,15 +1263,16 @@ bool Game::EveryoneStopped() const
 //canmove=true: if some PC can't move (or hostile), then this returns false
 bool Game::EveryoneNearPoint(const Map *area, const Point &p, int flags) const
 {
-	for (const auto& pc : PCs) {
-		if (flags & ENP_ONLYSELECT && !pc->Selected) {
-			continue;
+	auto NearPoint = [area, &p, flags](const Actor* pc) {
+		if (flags & ENP::OnlySelect && !pc->Selected) {
+			return true;
 		}
 		if (pc->GetStat(IE_STATE_ID) & STATE_DEAD) {
-			continue;
+			return true;
 		}
-		if (flags&ENP_CANMOVE) {
-			//someone is uncontrollable, can't move
+
+		if (flags & ENP::CanMove) {
+			// someone is uncontrollable, can't move
 			if (pc->GetStat(IE_EA) > EA_GOODCUTOFF) {
 				return false;
 			}
@@ -1271,6 +1281,7 @@ bool Game::EveryoneNearPoint(const Map *area, const Point &p, int flags) const
 				return false;
 			}
 		}
+
 		if (pc->GetCurrentArea() != area) {
 			return false;
 		}
@@ -1278,7 +1289,21 @@ bool Game::EveryoneNearPoint(const Map *area, const Point &p, int flags) const
 			Log(MESSAGE, "Game", "Actor {} is not near!", fmt::WideToChar{pc->GetName()});
 			return false;
 		}
+		return true;
+	};
+
+	for (const auto& pc : PCs) {
+		if (!NearPoint(pc)) return false;
 	}
+
+	if (flags & ENP::Familars) {
+		for (const auto& npc : NPCs) {
+			if (npc->GetBase(IE_EA) == EA_FAMILIAR && !NearPoint(npc)) {
+				return false;
+			}
+		}
+	}
+
 	return true;
 }
 
@@ -1401,6 +1426,7 @@ void Game::AdvanceTime(ieDword add, bool fatigue)
 	// emulate speeding through effects than need more than just an expiry check (eg. regeneration)
 	// and delay most idle actions
 	// but only if we skip for at least an hour
+	Map* map = GetCurrentArea();
 	if (add >= core->Time.hour_size) {
 		for (const auto& pc : PCs) {
 			pc->ResetCommentTime();
@@ -1419,7 +1445,13 @@ void Game::AdvanceTime(ieDword add, bool fatigue)
 		}
 
 		// bg1 also closed doors
-		GetCurrentArea()->AutoLockDoors();
+		map->AutoLockDoors();
+		// teleport the familiar to the protagonist, sometimes
+		// resting already ensures all pcs are in the same area
+		// the original also checked if the familiar was controllable, but then we'd have to look it up
+		if (map->AreaType & AT_DAYNIGHT) {
+			MoveFamiliars(map->GetScriptRef(), PCs[0]->Pos, -1);
+		}
 	}
 
 	if (!fatigue) {
@@ -1431,7 +1463,6 @@ void Game::AdvanceTime(ieDword add, bool fatigue)
 	}
 
 	//change the tileset if needed
-	Map *map = GetCurrentArea();
 	if (map && map->ChangeMap(IsDay())) {
 		//play the daylight transition movie appropriate for the area
 		//it is needed to play only when the area truly changed its tileset
@@ -1744,6 +1775,16 @@ bool Game::CanPartyRest(int checks, ieStrRef* err) const
 				return false;
 			}
 		}
+
+		// disallowed if a familiar is in an incompatible area
+		for (const auto& npc : NPCs) {
+			if (npc->GetBase(IE_EA) != EA_FAMILIAR) continue;
+			const Map* map = npc->GetCurrentArea();
+			if (map && !(map->AreaType & (AT_OUTDOOR | AT_DUNGEON | AT_CAN_REST_INDOORS))) {
+				*err = DisplayMessage::GetStringReference(HCStrings::MayNotRest);
+				return false;
+			}
+		}
 	}
 
 	return true;
@@ -1781,7 +1822,7 @@ bool Game::RestParty(int checks, int dream, int hp)
 				hp = std::max(1, hp * (hours - hoursLeft) / hours);
 			}
 			hours -= hoursLeft;
-			// the interruption occured before any resting could be done, so just bail out
+			// the interruption occurred before any resting could be done, so just bail out
 			if (!hours) {
 				return false;
 			}
@@ -2309,7 +2350,7 @@ void Game::ResetPartyCommentTimes() const
 }
 
 // drop the bored one liner if there was no action for some time
-// this function is deliberatly called only for normal passage of time
+// this function is deliberately called only for normal passage of time
 void Game::CheckBored()
 {
 	static int boredTimeout = core->GetDictionary().Get("Bored Timeout", 3000);

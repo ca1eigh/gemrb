@@ -37,8 +37,11 @@ class Action;
 class GameScript;
 
 //escapearea flags
-#define EA_DESTROY 1        //destroy actor at the exit (otherwise move to new place)
-#define EA_NOSEE   2        //no need to see the exit
+enum class EscapeArea {
+	None,
+	Destroy, // destroy actor at the exit (otherwise move to new place)
+	DestroyNoSee // no need to see the exit either
+};
 
 //displaystring flags
 #define DS_WAIT    1
@@ -262,13 +265,13 @@ public:
 	int int2Parameter = 0;
 	
 	union {
-		StringParam string0Parameter; // keep largest type first to 0 fill everythings
+		StringParam string0Parameter; // keep largest type first to 0 fill everything
 		ieVariable variable0Parameter;
 		ResRef resref0Parameter;
 	};
 	
 	union {
-		StringParam string1Parameter; // keep largest type first to 0 fill everythings
+		StringParam string1Parameter; // keep largest type first to 0 fill everything
 		ieVariable variable1Parameter;
 		ResRef resref1Parameter;
 	};
@@ -853,6 +856,7 @@ public: //Script Functions
 	static int Reputation(Scriptable *Sender, const Trigger *parameters);
 	static int ReputationGT(Scriptable *Sender, const Trigger *parameters);
 	static int ReputationLT(Scriptable *Sender, const Trigger *parameters);
+	static int Reset(Scriptable* Sender, const Trigger* parameters);
 	static int School(Scriptable *Sender, const Trigger *parameters);
 	static int SecretDoorDetected(Scriptable* Sender, const Trigger* parameters);
 	static int See(Scriptable *Sender, const Trigger *parameters);
@@ -871,6 +875,7 @@ public: //Script Functions
 	static int StoryModeOn(Scriptable *Sender, const Trigger */*parameters*/);
 	static int StuffGlobalRandom(Scriptable *Sender, const Trigger *parameters);
 	static int SubRace(Scriptable *Sender, const Trigger *parameters);
+	static int Summoned(Scriptable* Sender, const Trigger* parameters);
 	static int SummoningLimit(Scriptable *Sender, const Trigger *parameters);
 	static int SummoningLimitGT(Scriptable *Sender, const Trigger *parameters);
 	static int SummoningLimitLT(Scriptable *Sender, const Trigger *parameters);
@@ -924,6 +929,7 @@ public: //Script Functions
 	static void AddExperienceParty(Scriptable *Sender, Action* parameters);
 	static void AddExperiencePartyCR(Scriptable *Sender, Action* parameters);
 	static void AddExperiencePartyGlobal(Scriptable *Sender, Action* parameters);
+	static void AddFamiliar(Scriptable* Sender, Action* parameters);
 	static void AddFeat(Scriptable *Sender, Action* parameters);
 	static void AddGlobals(Scriptable* Sender, Action* parameters);
 	static void AddHP(Scriptable* Sender, Action* parameters);
@@ -1202,6 +1208,7 @@ public: //Script Functions
 	static void NIDSpecial2(Scriptable* Sender, Action* parameters);
 	static void NoAction(Scriptable* Sender, Action* parameters);
 	static void OpenDoor(Scriptable* Sender, Action* parameters);
+	static void OverrideAreaDifficulty(Scriptable* Sender, Action* parameters);
 	static void Panic(Scriptable* Sender, Action* parameters);
 	static void PauseGame(Scriptable *Sender, Action* parameters);
 	static void PermanentStatChange(Scriptable* Sender, Action* parameters);
@@ -1210,7 +1217,7 @@ public: //Script Functions
 	static void PickUpItem(Scriptable* Sender, Action* parameters);
 	static void PlayBardSong(Scriptable* Sender, Action* parameters);
 	static void PlayDead(Scriptable* Sender, Action* parameters);
-	static void PlayDeadInterruptable(Scriptable* Sender, Action* parameters);
+	static void PlayDeadInterruptible(Scriptable* Sender, Action* parameters);
 	static void PlayerDialogue(Scriptable* Sender, Action* parameters);
 	static void PlaySequence(Scriptable* Sender, Action* parameters);
 	static void PlaySequenceGlobal(Scriptable* Sender, Action* parameters);
@@ -1239,6 +1246,7 @@ public: //Script Functions
 	static void RegainRangerHood(Scriptable* Sender, Action* parameters);
 	static void RemoveAreaFlag(Scriptable* Sender, Action* parameters);
 	static void RemoveAreaType(Scriptable* Sender, Action* parameters);
+	static void RemoveFamiliar(Scriptable* Sender, Action* parameters);
 	static void RemoveJournalEntry(Scriptable* Sender, Action* parameters);
 	static void RemoveMapnote(Scriptable* Sender, Action* parameters);
 	static void RemovePaladinHood(Scriptable* Sender, Action* parameters);
@@ -1319,6 +1327,7 @@ public: //Script Functions
 	static void SetMyTarget(Scriptable* Sender, Action* parameters);
 	static void SetNamelessClass(Scriptable* Sender, Action* parameters);
 	static void SetNamelessDeath(Scriptable* Sender, Action* parameters);
+	static void SetNamelessDeathParty(Scriptable* Sender, Action* parameters);
 	static void SetNamelessDisguise(Scriptable* Sender, Action* parameters);
 	static void SetNoOneOnTrigger(Scriptable* Sender, Action* parameters);
 	static void SetNumTimesTalkedTo(Scriptable* Sender, Action* parameters);

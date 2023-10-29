@@ -993,7 +993,7 @@ void Projectile::CheckTrigger(unsigned int radius)
 			phase = P_EXPLODING1;
 			extensionDelay = Extension->Delay;
 		}
-	} else if (phase == P_EXPLODING1 && Extension->AFlags & PAF_SYNC) {
+	} else if (phase == P_EXPLODING1 && Extension->AFlags & PAF_DELAYED) {
 		//the explosion is revoked
 		phase = P_TRIGGER;
 	}
@@ -1150,7 +1150,7 @@ void Projectile::SecondaryTarget()
 		}
 
 		Projectile *pro = server->GetProjectileByIndex(Extension->ExplProjIdx);
-		// run special targetting modes on one child only, so target-all and similar don't run payload too often
+		// run special targeting modes on one child only, so target-all and similar don't run payload too often
 		EffectQueue projQueue;
 		ProcessEffects(projQueue, owner, nullptr, first);
 		pro->SetEffectsCopy(projQueue, Pos);
@@ -1327,9 +1327,6 @@ void Projectile::SpawnFragment(Point& dest) const
 {
 	Projectile *pro = server->GetProjectileByIndex(Extension->FragProjIdx);
 	if (pro) {
-//		if (Extension->AFlags&PAF_SECONDARY) {
-//				pro->SetEffectsCopy(effects);
-//		}
 		pro->SetCaster(Caster, Level);
 		if (pro->ExtFlags&PEF_RANDOM) {
 			dest.x += core->Roll(1,Extension->tileCoord.x, -Extension->tileCoord.x / 2);
@@ -1412,26 +1409,38 @@ void Projectile::DrawExplodingPhase1() const
 	}
 }
 
-void Projectile::DrawSpreadChild(size_t idx, bool firstExplosion)
+constexpr Point ZeroPoint;
+void Projectile::DrawSpreadChild(size_t idx, bool firstExplosion, const Point& offset)
 {
 	int apFlags = Extension->APFlags;
 	ResRef tmp = Extension->Spread;
-	if (apFlags & APF_BOTH) {
-		if (RandomFlip()) {
-			tmp = Extension->Secondary;
-		} else {
-			tmp = Extension->Spread;
-		}
+	if (apFlags & APF_BOTH && RandomFlip()) {
+		tmp = Extension->Secondary;
 	}
 
 	// create a custom projectile with single traveling effect
 	Projectile* pro = server->CreateDefaultProjectile((unsigned int) ~0);
 	// not setting Caster, so we target the ground (ZPos 0)
 	pro->BAMRes1 = tmp;
+	pro->SetEffects(EffectQueue());
+
 	if (ExtFlags & PEF_TRAIL) {
 		pro->Aim = Aim;
 	}
-	pro->SetEffects(EffectQueue());
+	// bg2 cone of cold of course has Aim set to "don't orient" ...
+	// perhaps all PAF_CONE should take Aim into account?
+	if (tmp == "SPCCOLDL") pro->Aim = 5;
+	// it also spawned several children for the same direction slightly shifted
+	// some of them appeared later, some not
+	// we just emulate some of this mess
+	if (firstExplosion && tmp == "SPCCOLDL") {
+		orient_t face = GetOrient(Pos, Destination);
+		Point followerOffset;
+		for (int i = 1; i <= 4; ++i) {
+			followerOffset = OrientedOffset(face, 9 * i);
+			DrawSpreadChild(idx, false, followerOffset);
+		}
+	}
 
 	// calculate the child projectile's target point, it is either
 	// a perimeter or an inside point of the explosion radius
@@ -1486,7 +1495,7 @@ void Projectile::DrawSpreadChild(size_t idx, bool firstExplosion)
 	if (apFlags & APF_SCATTER) {
 		pro->MoveTo(area, newdest);
 	} else {
-		pro->MoveTo(area, Pos);
+		pro->MoveTo(area, Pos + offset);
 	}
 	pro->SetTarget(newdest);
 
@@ -1547,12 +1556,12 @@ void Projectile::DrawSpread()
 	}
 
 	for (size_t i = 0; i < childCount; ++i) {
-		DrawSpreadChild(i, firstExplosion);
+		DrawSpreadChild(i, firstExplosion, ZeroPoint);
 	}
 
 	// switch fill to scatter after the first time
 	// eg. web and storm of vengeance shouldn't explode outward in subsequent applications
-	if (Extension && apFlags & APF_FILL) {
+	if (apFlags & APF_FILL) {
 		Extension->APFlags |= APF_SCATTER;
 	}
 }
@@ -1744,14 +1753,14 @@ void Projectile::BendPosition(Point& pos) const
 }
 
 // draw pop in/hold/pop out animation sequences
-void Projectile::DrawPopping(unsigned int face, const Point& pos, BlitFlags flags, const Color& tint)
+void Projectile::DrawPopping(unsigned int face, const Point& pos, BlitFlags flags, const Color& popTint)
 {
 	const Game* game = core->GetGame();
 	Holder<Sprite2D> frame;
 	if (game && game->IsTimestopActive() && !(TFlags & PTF_TIMELESS)) {
 		frame = travel[face].LastFrame();
 		flags |= BlitFlags::GREY;
-		Draw(frame, pos, flags, tint);
+		Draw(frame, pos, flags, popTint);
 		return;
 	}
 
@@ -1769,7 +1778,7 @@ void Projectile::DrawPopping(unsigned int face, const Point& pos, BlitFlags flag
 			frame = shadow[0].NextFrame();
 		}
 	}
-	Draw(frame, pos, flags, tint);
+	Draw(frame, pos, flags, popTint);
 }
 
 void Projectile::DrawTravel(const Region& viewport, BlitFlags flags)

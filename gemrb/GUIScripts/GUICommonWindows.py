@@ -169,7 +169,7 @@ def SetupMenuWindowControls (Window, Gears=None, CloseWindowCallback=None):
 			# disabled/selected frame isn't present in .chu, defining it here
 			Button.SetSprites ("GUILSOP", 0,16,17,16,16)
 
-	# Party managment / character arbitration. Distinct form reform party window.
+	# Party management / character arbitration. Distinct form reform party window.
 	if not pst:
 		Button = Window.GetControl (OptionControl['Party'])
 		Button.OnPress (None) #TODO: OpenPartyWindow
@@ -1485,7 +1485,7 @@ def PortraitButtonOnPress (btn):
 	return
 
 def PortraitButtonOnShiftPress (btn):
-	"""Handles selecting multiple portaits with shift."""
+	"""Handles selecting multiple portraits with shift."""
 	
 	pcID = btn.Value
 	if (not SelectionChangeHandler):

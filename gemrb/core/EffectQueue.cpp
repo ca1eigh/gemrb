@@ -671,6 +671,7 @@ all_party:
 		i = map->GetActorCount(false);
 		while(i--) {
 			Actor* actor = map->GetActor( i, false );
+			if (actor->GetBase(IE_EA) == EA_FAMILIAR) continue;
 			Effect* new_fx = new Effect(*fx);
 			new_fx->SetPosition(actor->Pos);
 
@@ -780,7 +781,7 @@ static inline bool CheckLevel(const Actor* target, Effect* fx)
 	return false;
 }
 
-//roll for the effect probability, there is a high and a low treshold, the d100
+// roll for the effect probability, there is a high and a low threshold, the d100
 //roll should hit in the middle
 static inline bool CheckProbability(const Effect* fx)
 {
@@ -1121,13 +1122,11 @@ static int CheckSaves(Actor* actor, Effect* fx)
 static int CheckResistances(Effect* fx, Actor* target)
 {
 	if (!CheckProbability(fx)) {
-		fx->TimingMode = FX_DURATION_JUST_EXPIRED;
 		return FX_NOT_APPLIED;
 	}
 
 	// the effect didn't pass the target level check
 	if (CheckLevel(target, fx)) {
-		fx->TimingMode = FX_DURATION_JUST_EXPIRED;
 		return FX_NOT_APPLIED;
 	}
 
@@ -1150,19 +1149,13 @@ static int CheckResistances(Effect* fx, Actor* target)
 	if (fx->Resistance == FX_CAN_RESIST_CAN_DISPEL && CheckMagicResistance(target, fx, caster) == FX_NOT_APPLIED) {
 		// bg2 sequencer trigger spells have bad resistance set, so ignore them
 		if (signed(fx->Opcode) != EffectQueue::ResolveEffect(fx_activate_spell_sequencer_ref)) {
-			fx->TimingMode = FX_DURATION_JUST_EXPIRED;
 			return FX_NOT_APPLIED;
 		}
 	}
 
 	// the effect didn't pass saving throws
 	int saved = CheckSaves(target, fx);
-	if (saved != -1) {
-		fx->TimingMode = FX_DURATION_JUST_EXPIRED;
-		return saved;
-	}
-
-	return -1;
+	return saved;
 }
 
 // this function is called two different ways
@@ -1204,7 +1197,10 @@ int EffectQueue::ApplyEffect(Actor* target, Effect* fx, ieDword first_apply, ieD
 
 		if (resistance) {
 			int resisted = CheckResistances(fx, target);
-			if (resisted != -1) return resisted;
+			if (resisted != -1) {
+				fx->TimingMode = FX_DURATION_JUST_EXPIRED;
+				return resisted;
+			}
 		}
 
 		//Same as in items and spells
@@ -2315,7 +2311,7 @@ int EffectQueue::CheckImmunity(Actor *target) const
 		return 0;
 	}
 
-	// Allegedly, the book of infinite spells needed this, but irresistable by level
+	// Allegedly, the book of infinite spells needed this, but irresistible by level
 	// spells got fx->Power = 0, so i added those exceptions and removed returning here for fx->InventorySlot
 
 	// check level resistances

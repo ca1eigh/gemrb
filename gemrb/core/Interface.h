@@ -285,7 +285,7 @@ public:
 	using tokens_t = std::unordered_map<ieVariable, String, CstrHashCI>;
 
 private:
-	// dirvers must be deallocated last (keep them at the top)
+	// drivers must be deallocated last (keep them at the top)
 	// we hold onto resources (sprites etc) in Interface that must be destroyed prior to the respective driver
 	PluginHolder<Audio> AudioDriver;
 
@@ -558,6 +558,7 @@ public:
 	Holder<Sprite2D> GetCursorSprite() const;
 	/** returns a scroll cursor sprite */
 	Holder<Sprite2D> GetScrollCursorSprite(orient_t orient, int spriteNum) const;
+	void DisableGameControl(bool disable) const;
 	/** returns 0 for unmovable, -1 for movable items, otherwise it
 	returns gold value! */
 	int CanMoveItem(const CREItem *item) const;

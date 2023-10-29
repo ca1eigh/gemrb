@@ -79,62 +79,29 @@ std::vector<ResRef> ObjectIDSTableNames;
 int ObjectFieldsCount = 7;
 int ExtraParametersCount = 0;
 int RandomNumValue;
-// reaction modifiers (by reputation and charisma)
-#define MAX_REP_COLUMN 20
-#define MAX_CHR_COLUMN 25
-int rmodrep[MAX_REP_COLUMN];
-int rmodchr[MAX_CHR_COLUMN];
-ieWordSigned happiness[3][MAX_REP_COLUMN];
 Gem_Polygon **polygons;
-
-void InitScriptTables()
-{
-	//initializing the happiness table
-	AutoTable tab = gamedata->LoadTable("happy");
-	if (tab) {
-		for (int alignment=0;alignment<3;alignment++) {
-			for (int reputation=0;reputation<MAX_REP_COLUMN;reputation++) {
-				happiness[alignment][reputation] = tab->QueryFieldSigned<ieWordSigned>(reputation, alignment);
-			}
-		}
-	}
-
-	//initializing the reaction mod. reputation table
-	AutoTable rmr = gamedata->LoadTable("rmodrep");
-	if (rmr) {
-		for (int reputation=0; reputation<MAX_REP_COLUMN; reputation++) {
-			rmodrep[reputation] = rmr->QueryFieldSigned<int>(0, reputation);
-		}
-	}
-
-	//initializing the reaction mod. charisma table
-	AutoTable rmc = gamedata->LoadTable("rmodchr");
-	if (rmc) {
-		for (int charisma=0; charisma<MAX_CHR_COLUMN; charisma++) {
-			rmodchr[charisma] = rmc->QueryFieldSigned<int>(0, charisma);
-		}
-	}
-
-	// see note in voodooconst.h
-	if (core->HasFeature(GFFlags::AREA_OVERRIDE)) {
-		MAX_OPERATING_DISTANCE = 40*3;
-	}
-}
 
 int GetReaction(const Actor *target, const Scriptable *Sender)
 {
-	int rep;
-	if (target->GetStat(IE_EA) == EA_PC) {
-		rep = core->GetGame()->Reputation/10-1;
-	} else {
-		rep = target->GetStat(IE_REPUTATION)/10-1;
+	int reaction = 10;
+
+	static AutoTable repModTable = gamedata->LoadTable("rmodrep", true);
+	if (repModTable) {
+		int rep;
+		if (target->GetStat(IE_EA) == EA_PC) {
+			rep = core->GetGame()->Reputation / 10 - 1;
+		} else {
+			rep = target->GetStat(IE_REPUTATION) / 10 - 1;
+		}
+		rep = Clamp<int>(rep, 0, repModTable->GetColumnCount() - 1);
+		reaction += repModTable->QueryFieldSigned<int>(0, rep);
 	}
-	rep = Clamp(rep, 0, MAX_REP_COLUMN - 1);
 
-	int chr = target->GetStat(IE_CHR) - 1;
-	chr = Clamp(chr, 0, MAX_CHR_COLUMN - 1);
-
-	int reaction = 10 + rmodrep[rep] + rmodchr[chr];
+	static AutoTable chrModTable = gamedata->LoadTable("rmodchr", true);
+	if (chrModTable) {
+		int chr = Clamp<int>(target->GetStat(IE_CHR) - 1, 0, 24);
+		reaction += repModTable->QueryFieldSigned<int>(0, chr);
+	}
 
 	// add -4 penalty when dealing with racial enemies
 	const Actor* scr = Scriptable::As<Actor>(Sender);
@@ -158,7 +125,12 @@ ieWordSigned GetHappiness(const Scriptable* Sender, int reputation)
 		alignment = AL_GE_NEUTRAL;
 	}
 	reputation = Clamp(reputation, 10, 200);
-	return happiness[alignment-1][reputation/10-1];
+
+	static AutoTable happyTable = gamedata->LoadTable("happy", true);
+	if (happyTable) {
+		return happyTable->QueryFieldSigned<ieWordSigned>(alignment - 1, reputation / 10 - 1);
+	}
+	return 0;
 }
 
 int GetHPPercent(const Scriptable *Sender)
@@ -651,7 +623,7 @@ int SeeCore(Scriptable *Sender, const Trigger *parameters, int justlos)
 	return 0;
 }
 
-//transfering item from Sender to target
+// transferring item from Sender to target
 //if target has no inventory, the item will be destructed
 //if target can't get it, it will be dropped at its feet
 int MoveItemCore(Scriptable *Sender, Scriptable *target, const ResRef& resref, int flags, int setflag, int count)
@@ -699,12 +671,14 @@ int MoveItemCore(Scriptable *Sender, Scriptable *target, const ResRef& resref, i
 	}
 
 	item->Flags|=setflag;
-
+	Actor* targetActor = Scriptable::As<Actor>(target);
 	switch(target->Type) {
 		case ST_ACTOR:
-			tmp = Scriptable::As<Actor>(target);
-			myinv = &tmp->inventory;
-			if (tmp->InParty) gotitem = true;
+			if (targetActor->GetBase(IE_EA) == EA_FAMILIAR) {
+				targetActor = core->GetGame()->FindPC(1);
+			}
+			myinv = &targetActor->inventory;
+			if (targetActor->InParty) gotitem = true;
 			break;
 		case ST_CONTAINER:
 			myinv=&((Container *) target)->inventory;
@@ -725,9 +699,8 @@ int MoveItemCore(Scriptable *Sender, Scriptable *target, const ResRef& resref, i
 		// drop it at my feet
 		map->AddItemToLocation(target->Pos, item);
 		if (gotitem) {
-			tmp = Scriptable::As<Actor>(target);
-			if (tmp && tmp->InParty) {
-				tmp->VerbalConstant(Verbal::InventoryFull);
+			if (targetActor && targetActor->InParty) {
+				targetActor->VerbalConstant(Verbal::InventoryFull);
 			}
 			displaymsg->DisplayMsgCentered(HCStrings::InventoryFullItemDrop, FT_ANY, GUIColors::XPCHANGE);
 		}
@@ -1005,7 +978,7 @@ void ChangeAnimationCore(Actor* src, const ResRef& replacement, bool effect)
 	}
 }
 
-void EscapeAreaCore(Scriptable* Sender, const Point &p, const ResRef& area, const Point &enter, int flags, int wait)
+void EscapeAreaCore(Scriptable* Sender, const Point& p, const ResRef& area, const Point& enter, EscapeArea flags, int wait)
 {
 	if (Sender->CurrentActionTicks<100) {
 		if (!p.IsInvalid() && PersonalDistance(p, Sender)>MAX_OPERATING_DISTANCE) {
@@ -1015,14 +988,14 @@ void EscapeAreaCore(Scriptable* Sender, const Point &p, const ResRef& area, cons
 				if (!Sender->InMove()) Log(WARNING, "GSUtils", "At least it said so...");
 				// ensure the action doesn't get interrupted
 				// fixes Nalia starting a second dialog in the Coronet, if she gets a chance #253
-				Sender->CurrentActionInterruptable = false;
+				Sender->CurrentActionInterruptible = false;
 				return;
 			}
 		}
 	}
 
 	std::string Tmp;
-	if (flags &EA_DESTROY) {
+	if (flags == EscapeArea::Destroy || flags == EscapeArea::DestroyNoSee) {
 		//this must be put into a non-const variable
 		Tmp = "DestroySelf()";
 	} else {
@@ -1399,6 +1372,8 @@ void MoveBetweenAreasCore(Actor* actor, const ResRef &area, const Point &positio
 
 //repeat movement, until goal isn't reached
 //if int0parameter is !=0, then it will try only x times
+// for this family of actions, familiars cannot walk through a transition (that's flagged to allow NPCs to pass)
+// ... but we don't check areas/chasing here anyway
 void MoveToObjectCore(Scriptable *Sender, Action *parameters, ieDword flags, bool untilsee)
 {
 	Actor* actor = Scriptable::As<Actor>(Sender);
@@ -1827,7 +1802,7 @@ Action* GenerateActionCore(const char *src, const char *str, unsigned short acti
 					mergestrings = 0;
 				}
 				//skipping the context part, which
-				//is to be readed later
+				// is to be readded later
 				if (mergestrings) {
 					for (i=0;i<6;i++) {
 						*dst++='*';
@@ -1954,7 +1929,7 @@ int MoveNearerTo(Scriptable *Sender, const Point &p, int distance, int dont_rele
 
 	// chasing is not unbreakable
 	// would prevent smart ai from dropping a target that's running away
-	//Sender->CurrentActionInterruptable = false;
+	//Sender->CurrentActionInterruptible = false;
 
 	if (!actor->InMove() || actor->Destination != p) {
 		ieDword flags = core->GetGameControl()->ShouldRun(actor) ? IF_RUNNING : 0;
@@ -2100,7 +2075,7 @@ Trigger *GenerateTriggerCore(const char *src, const char *str, int trIndex, int 
 					dst = newTrigger->string1Parameter.begin();
 				}
 				//skipping the context part, which
-				//is to be readed later
+				// is to be readded later
 				if (mergestrings) {
 					for (i=0;i<6;i++) {
 						*dst++='*';
@@ -2472,7 +2447,7 @@ unsigned int GetSpellDistance(const ResRef& spellRes, Scriptable* Sender, const 
 }
 
 /* returns an item's casting distance, it depends on the used header, and targeting mode too
- the used header is explictly given */
+ the used header is explicitly given */
 unsigned int GetItemDistance(const ResRef& itemres, int header, double angle)
 {
 	const Item* itm = gamedata->GetItem(itemres);
@@ -2726,24 +2701,37 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 	dist = GetSpellDistance(spellResRef, Sender, tar->Pos);
 
 	if (act) {
+		// make sure we can still see the target
+		const Actor* target = Scriptable::As<const Actor>(tar);
+		const Spell* spl = gamedata->GetSpell(Sender->SpellResRef, true);
+		if (Sender != tar && !(flags & SC_NOINTERRUPT) && !(spl->Flags & SF_TARGETS_INVISIBLE) && target->IsInvisibleTo(Sender)) {
+			Sender->ReleaseCurrentAction();
+			Sender->AddTrigger(TriggerEntry(trigger_targetunreachable, tar->GetGlobalID()));
+			core->Autopause(AUTOPAUSE::NOTARGET, Sender);
+			gamedata->FreeSpell(spl, Sender->SpellResRef, false);
+			return;
+		}
+
 		//move near to target
 		if ((flags&SC_RANGE_CHECK) && dist != 0xffffffff) {
 			if (PersonalDistance(tar, Sender) > dist) {
 				MoveNearerTo(Sender, tar, dist);
+				gamedata->FreeSpell(spl, Sender->SpellResRef, false);
 				return;
 			}
 			if (!Sender->GetCurrentArea()->IsVisibleLOS(Sender->Pos, tar->Pos)) {
-				const Spell *spl = gamedata->GetSpell(Sender->SpellResRef, true);
 				if (!(spl->Flags&SF_NO_LOS)) {
 					gamedata->FreeSpell(spl, Sender->SpellResRef, false);
 					MoveNearerTo(Sender, tar, dist);
 					return;
 				}
-				gamedata->FreeSpell(spl, Sender->SpellResRef, false);
 			}
 
 			// finish approach before continuing with casting
-			if (act->InMove()) return;
+			if (act->InMove()) {
+				gamedata->FreeSpell(spl, Sender->SpellResRef, false);
+				return;
+			}
 		}
 
 		//face target
@@ -2753,6 +2741,7 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 
 		//stop doing anything else
 		act->SetModal(Modal::None);
+		gamedata->FreeSpell(spl, Sender->SpellResRef, false);
 	}
 
 	if ((flags&SC_AURA_CHECK) && parameters->int2Parameter && Sender->AuraPolluted()) {
@@ -2764,7 +2753,7 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 	// the originals or at least iwd2 even marked it as IF_NOINT,
 	// so it also guarded against the ClearActions action
 	// ... but just for the actual spellcasting part
-	Sender->CurrentActionInterruptable = false;
+	Sender->CurrentActionInterruptible = false;
 
 	int duration;
 	if (!parameters->int2Parameter) {
@@ -2883,7 +2872,7 @@ void SpellPointCore(Scriptable *Sender, Action *parameters, int flags)
 	// the originals or at least iwd2 even marked it as IF_NOINT,
 	// so it also guarded against the ClearActions action
 	// ... but just for the actual spellcasting part
-	Sender->CurrentActionInterruptable = false;
+	Sender->CurrentActionInterruptible = false;
 
 	int duration;
 	if (!parameters->int2Parameter) {
@@ -3068,7 +3057,7 @@ void RunAwayFromCore(Scriptable* Sender, const Action* parameters, int flags)
 		maxDistance = static_cast<int>(maxDistance * gamedata->GetStepTime() / speed);
 	}
 
-	if (flags & RunAwayFlags::NoInterrupt) { // should we just mark the action as CurrentActionInterruptable = false instead?
+	if (flags & RunAwayFlags::NoInterrupt) { // should we just mark the action as CurrentActionInterruptible = false instead?
 		actor->NoInterrupt();
 	}
 
@@ -3103,6 +3092,10 @@ void MoveGlobalObjectCore(Scriptable* Sender, const Action* parameters, int flag
 
 	if (actor->Persistent() || !CreateMovementEffect(actor, map->GetScriptRef(), dest, 0)) {
 		MoveBetweenAreasCore(actor, map->GetScriptRef(), dest, -1, true);
+		const Actor* protagonist = core->GetGame()->GetPC(0, false);
+		if (actor == protagonist) {
+			core->GetGame()->MoveFamiliars(map->GetScriptRef(), dest, -1);
+		}
 	}
 }
 

@@ -74,8 +74,11 @@ class TableMgr;
 #define SELECT_QUIET    0x02 // do not run handler when changing selection
 
 // Flags bits for EveryoneNearPoint()
-#define ENP_CANMOVE     1    // also check if the PC can move
-#define ENP_ONLYSELECT  2    // check only selected PC
+enum ENP {
+	CanMove = 1, // also check if the PC can move
+	OnlySelect = 2, // check only selected PC
+	Familars = 4, // also check familiars
+};
 
 // GUI Control Status flags (saved in game)
 #define CS_PARTY_AI  1   //enable party AI
@@ -273,13 +276,21 @@ public:
 	ieDword Reputation = 0;
 	ieDword ControlStatus = 0; // used in bg2, iwd (where you can switch panes off)
 	ieDword Expansion = 0; // mostly used by BG2. IWD games set it to 3 on newgame
-	ieDword zoomLevel = 0; // ee-style zoom
+	ieDword zoomLevel = 0; // ee-style zoom, 0 or 100: default zoom level, >100: zoomed out, <100: zoomed in
 	ResRef AnotherArea;
 	ResRef CurrentArea;
 	ResRef PreviousArea; //move here if the worldmap exit is illegal?
 	ResRef LastMasterArea; // last party-visited master area
 	ResRef LoadMos;
 	ResRef TextScreen;
+
+	// EE-only stuff that we don't really need yet
+	ResRef RandomEncounterArea;
+	ResRef CurrentWorldMap;
+	ResRef CurrentCampaign; // eg. "SOD"
+	ieDword FamiliarOwner = 0; // IWDEE: which player has the familiar? InParty - 1
+	FixedSizeString<20> RandomEncounterEntry;
+
 	Particles *weather = nullptr;
 	int event_timer = 0;
 	EventHandler event_handler = nullptr;

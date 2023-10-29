@@ -265,7 +265,7 @@ static void GetTextEdit(DataStream* str, Control*& ctrl, const Region& ctrlFrame
 
 	TextEdit* te = new TextEdit(ctrlFrame, maxInput, pos);
 	ctrl = te;
-	te->SetFont(fnt);
+	te->SetFont(std::move(fnt));
 	te->SetCursor(cursor);
 	te->SetBackground(img);
 }
@@ -290,7 +290,7 @@ static void GetTextArea(DataStream* str, Control*& ctrl, const Region& ctrlFrame
 
 	fore.a = init.a = back.a = 0xff;
 
-	TextArea* ta = new TextArea(ctrlFrame, textFont, initialsFont);
+	TextArea* ta = new TextArea(ctrlFrame, std::move(textFont), std::move(initialsFont));
 	ctrl = ta;
 	ta->SetColor(fore, TextArea::COLOR_NORMAL);
 	ta->SetColor(init, TextArea::COLOR_INITIALS);
@@ -320,7 +320,7 @@ static void GetLabel(DataStream* str, Control*& ctrl, const Region& ctrlFrame)
 	auto fnt = core->GetFont(fontResRef);
 	textCol.a = bgCol.a = 0xff;
 	String text = core->GetString(textRef);
-	Label* lab = new Label(ctrlFrame, fnt, text);
+	Label* lab = new Label(ctrlFrame, std::move(fnt), text);
 	ctrl = lab;
 
 	if (alignment & 1) {
@@ -378,7 +378,7 @@ static void GetScrollbar(DataStream* str, Control*& ctrl, const Region& ctrlFram
 			ta->SetScrollbar(sb);
 		} else {
 			ctrl = sb;
-			// NOTE: we dont delete this, becuase there are at least a few instances
+			// NOTE: we dont delete this, because there are at least a few instances
 			// where the CHU has this assigned to a text area even tho there isnt one! (BG1 GUISTORE:RUMORS, PST ContainerWindow)
 			// set them invisible instead, we will unhide them in the scripts that need them
 			sb->SetVisible(false);

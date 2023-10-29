@@ -395,9 +395,9 @@ int fx_title_modifier (Scriptable* Owner, Actor* target, Effect* fx);//122
 int fx_disable_overlay_modifier (Scriptable* Owner, Actor* target, Effect* fx);//123
 int fx_no_backstab_modifier (Scriptable* Owner, Actor* target, Effect* fx);//124
 int fx_offscreenai_modifier (Scriptable* Owner, Actor* target, Effect* fx);//125
-int fx_existance_delay_modifier (Scriptable* Owner, Actor* target, Effect* fx);//126
+int fx_existence_delay_modifier (Scriptable* Owner, Actor* target, Effect* fx);//126
 int fx_disable_chunk_modifier (Scriptable* Owner, Actor* target, Effect* fx);//127
-int fx_protection_from_animation (Scriptable* Owner, Actor* target, Effect* fx);//128
+// fx_protection_from_animation implements as generic effect, 128
 int fx_protection_from_turn (Scriptable* Owner, Actor* target, Effect* fx);//129
 int fx_cutscene2 (Scriptable* Owner, Actor* target, Effect* fx);//12a
 int fx_chaos_shield_modifier (Scriptable* Owner, Actor* target, Effect* fx);//12b
@@ -588,7 +588,7 @@ static EffectDesc effectnames[] = {
 	EffectDesc("ElectricityResistanceModifier", fx_electricity_resistance_modifier, EFFECT_SPECIAL_UNDO, -1 ),
 	EffectDesc("EnchantmentBonus", fx_generic_effect, 0, -1),
 	EffectDesc("EnchantmentVsCreatureType", fx_generic_effect, 0, -1),
-	EffectDesc("ExistanceDelayModifier", fx_existance_delay_modifier , 0, -1 ), //unknown
+	EffectDesc("ExistanceDelayModifier", fx_existence_delay_modifier , 0, -1 ),
 	EffectDesc("ExperienceModifier", fx_experience_modifier, 0, -1 ),
 	EffectDesc("ExploreModifier", fx_explore_modifier, 0, -1 ),
 	EffectDesc("FamiliarBond", fx_familiar_constitution_loss, 0, -1 ),
@@ -704,7 +704,7 @@ static EffectDesc effectnames[] = {
 	EffectDesc("Protection:SpellDec",fx_resist_spell_dec, 0, -1 ),//overlay?
 	EffectDesc("Protection:SpellLevel",fx_protection_spelllevel, 0, -1 ),//overlay?
 	EffectDesc("Protection:SpellLevelDec",fx_protection_spelllevel_dec, 0, -1 ),//overlay?
-	EffectDesc("Protection:String", fx_generic_effect, 0, -1 ),
+	EffectDesc("Protection:String", fx_protection_from_string, 0, -1),
 	EffectDesc("Protection:Tracking", fx_protection_from_tracking, 0, -1 ),
 	EffectDesc("Protection:Turn", fx_protection_from_turn, 0, -1 ),
 	EffectDesc("Protection:Weapons", fx_immune_to_weapon, EFFECT_NO_ACTOR|EFFECT_REINIT_ON_LOAD, -1 ),
@@ -953,7 +953,7 @@ static inline void HandleMainStatBonus(const Actor *target, int stat, Effect *fx
 		return;
 	}
 
-	// restore initial value in case we anulled it the previous tick
+	// restore initial value in case we annulled it the previous tick
 	if (!bonus && fx->Parameter3 != 0) {
 		bonus = fx->Parameter3;
 		fx->Parameter3 = 0;
@@ -1782,7 +1782,7 @@ int fx_set_invisible_state (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 			target->ToHit.HandleFxBonus(4, fx->TimingMode==FX_DURATION_INSTANT_PERMANENT);
 		}
 		break;
-	case 2:// EE: weak invisibility, like improved after being revelead (no backstabbing)
+	case 2:// EE: weak invisibility, like improved after being revealed (no backstabbing)
 		STATE_SET(STATE_INVIS2);
 	default:
 		break;
@@ -2235,7 +2235,7 @@ int fx_set_unconscious_state (Scriptable* Owner, Actor* target, Effect* fx)
 			target->SetSpellState(SS_PRONE);
 		}
 		// else make the creature untargettable (backlisted); an original hack to avoid stunning damage
-		// knockout then death by some other (eg. script targetting or call lightning)
+		// knockout then death by some other (eg. script targeting or call lightning)
 
 		target->AddPortraitIcon(PI_SLEEP);
 	}
@@ -2636,7 +2636,7 @@ int fx_alignment_change (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 // 0x3a DispelEffects
 int fx_dispel_effects (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
-	// ees added an upper word to tweak targetting of weapons in SLOT_MAGIC
+	// ees added an upper word to tweak targeting of weapons in SLOT_MAGIC
 	int slot = Inventory::GetMagicSlot();
 	ieDword itemLevel;
 	if (fx->Parameter2 > 2 && !target->inventory.IsSlotEmpty(slot)) {
@@ -3896,7 +3896,7 @@ int fx_mirror_image (Scriptable* Owner, Actor* target, Effect* fx)
 	if (fx->Parameter2) {
 		images = 1; //reflection
 	} else {
-		// the original uses only IE_LEVEL, but that can be awefully bad in
+		// the original uses only IE_LEVEL, but that can be awfully bad in
 		// the case of dual- and multiclasses
 		unsigned int level = target->GetCasterLevel(IE_SPL_WIZARD);
 		if (!level) level = target->GetAnyActiveCasterLevel();
@@ -4008,7 +4008,11 @@ int fx_create_inventory_item (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	if (!fx->Resource3.IsEmpty()) count++;
 	int choice = RAND(0, count - 1);
 
-	target->inventory.AddSlotItemRes(*refs[choice], SLOT_ONLYINVENTORY, fx->Parameter1, fx->Parameter3, fx->Parameter4);
+	Actor* receiver = target;
+	if (target->GetBase(IE_EA) == EA_FAMILIAR) {
+		receiver = core->GetGame()->FindPC(1);
+	}
+	receiver->inventory.AddSlotItemRes(*refs[choice], SLOT_ONLYINVENTORY, fx->Parameter1, fx->Parameter3, fx->Parameter4);
 
 	int ret = MaybeTransformTo(fx_remove_inventory_item_ref, fx);
 	if (ret == FX_APPLIED) fx->Resource = *refs[choice];
@@ -4423,7 +4427,7 @@ int fx_polymorph (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	if (!cached || fx->Resource != target->polymorphCache->Resource) {
 		Actor *newCreature = gamedata->GetCreature(fx->Resource,0);
 
-		//I don't know how could this happen, existance of the resource was already checked
+		// I don't know how could this happen, existence of the resource was already checked
 		if (!newCreature) {
 			return FX_NOT_APPLIED;
 		}
@@ -4637,8 +4641,10 @@ int fx_visual_spell_hit (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 //0x8e Icon:Display
 int fx_display_portrait_icon (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
-	// print("fx_display_string(%2d): Type: %d", fx->Opcode, fx->Parameter2);
-	target->AddPortraitIcon(fx->Parameter2);
+	static EffectRef fx_disable_portrait_icon_ref = { "Icon:Disable", -1 };
+	if (!target->fxqueue.HasEffectWithParam(fx_disable_portrait_icon_ref, fx->Parameter2)) {
+		target->AddPortraitIcon(fx->Parameter2);
+	}
 	return FX_APPLIED;
 }
 
@@ -5673,9 +5679,8 @@ int fx_familiar_constitution_loss (Scriptable* /*Owner*/, Actor* target, Effect*
 }
 
 //0xc4 FamiliarMarker
-int fx_familiar_marker (Scriptable* /*Owner*/, Actor* target, Effect* fx)
+int fx_familiar_marker(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
-	// print("fx_familiar_marker(%2d)", fx->Opcode);
 	if (!target) {
 		return FX_NOT_APPLIED;
 	}
@@ -5702,6 +5707,10 @@ int fx_familiar_marker (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 
 	if (!STATE_GET(STATE_NOSAVE)) {
 		game->familiarBlock=true;
+		if (fx->FirstApply) {
+			const Actor* master = Scriptable::As<Actor>(GetCasterObject());
+			if (master && master->InParty) game->FamiliarOwner = master->InParty - 1;
+		}
 		return FX_APPLIED;
 	}
 	game->familiarBlock=false;
@@ -5929,9 +5938,28 @@ int fx_power_word_stun (Scriptable* Owner, Actor* target, Effect* fx)
 }
 
 //0xd3 State:Imprisonment (avatar removal plus portrait icon)
-int fx_imprisonment (Scriptable* /*Owner*/, Actor* target, Effect* /*fx*/)
+int fx_imprisonment(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
-	// print("fx_imprisonment(%2d)", fx->Opcode);
+	// a bunch of odd special-casing for (fake) familiars
+	if (target->GetBase(IE_EA) == EA_FAMILIAR) {
+		if (fx->IsVariable == 1) {
+			target->GetCurrentArea()->RemoveActor(target);
+			return FX_NOT_APPLIED;
+		} else if (fx->IsVariable == 2) {
+			BASE_STATE_SET(STATE_DEAD);
+			target->SetBase(IE_EA, EA_NEUTRAL);
+			target->SetPersistent(-1);
+			return FX_NOT_APPLIED;
+		} else if (fx->IsVariable == 3) {
+			target->SetBase(IE_EA, EA_NEUTRAL);
+			target->SetPersistent(-1);
+		} else {
+			core->GetGame()->familiarBlock = false;
+			core->GetGame()->FamiliarOwner = 0;
+			target->GetCurrentArea()->RemoveActor(target);
+			return FX_NOT_APPLIED;
+		}
+	}
 	STAT_SET(IE_AVATARREMOVAL, 1);
 	target->AddPortraitIcon(PI_PRISON);
 	target->SendDiedTrigger();
@@ -6026,6 +6054,11 @@ int fx_play_visual_effect (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	Map *map = target->GetCurrentArea();
 	if (!map) return FX_APPLIED;
 
+	if (target->fxqueue.HasEffectWithResource(fx_protection_from_animation_ref, fx->Resource)) {
+		// effect suppressed by opcode 0x128
+		return FX_APPLIED;
+	}
+
 	//if it is sticky, don't add it if it is already played
 	if (fx->Parameter2) {
 		auto range = target->GetVVCCells(fx->Resource);
@@ -6037,12 +6070,6 @@ int fx_play_visual_effect (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		}
 		if (! fx->FirstApply) return FX_NOT_APPLIED;
 	}
-
-	if (target->fxqueue.HasEffectWithResource(fx_protection_from_animation_ref, fx->Resource)) {
-		// effect supressed by opcode 0x128
-		return FX_APPLIED;
-	}
-
 
 	ScriptedAnimation* sca = gamedata->GetScriptedAnimation(fx->Resource, false);
 
@@ -6900,7 +6927,7 @@ int fx_berserkstage2_modifier (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 }
 
 // 0xf8 set melee effect
-// adds effect to melee attacks (for monks, asssasins, fighter hlas, ...)
+// adds effect to melee attacks (for monks, assassins, fighter hlas, ...)
 // it is cumulative
 
 // 0xf9 set missile effect
@@ -7013,8 +7040,11 @@ int fx_remove_map_note (Scriptable* Owner, Actor* target, Effect* fx)
 // 0xff Item:CreateDays
 int fx_create_item_days (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
-	// print("fx_create_item_days(%2d)", fx->Opcode);
-	target->inventory.AddSlotItemRes( fx->Resource, SLOT_ONLYINVENTORY, fx->Parameter1, fx->Parameter3, fx->Parameter4 );
+	Actor* receiver = target;
+	if (target->GetBase(IE_EA) == EA_FAMILIAR) {
+		receiver = core->GetGame()->FindPC(1);
+	}
+	receiver->inventory.AddSlotItemRes(fx->Resource, SLOT_ONLYINVENTORY, fx->Parameter1, fx->Parameter3, fx->Parameter4);
 
 	int ret = MaybeTransformTo(fx_remove_inventory_item_ref, fx);
 	// duration needs recalculating for days
@@ -7206,7 +7236,14 @@ int fx_remove_immunity(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	return FX_NOT_APPLIED;
 }
 
-// 0x10b protection from display string is a generic effect
+// 0x10b protection from display string
+// we can't use a generic effect, because the unused Parameter2 differs with uses in fx_display_string
+int fx_protection_from_string(Scriptable* /*Owner*/, Actor* /*target*/, Effect* fx)
+{
+	fx->Parameter2 = 0;
+	return FX_APPLIED;
+}
+
 // 0x10c ExploreModifier
 int fx_explore_modifier (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
@@ -7615,7 +7652,7 @@ int fx_offscreenai_modifier (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 }
 
 //0x126 ExistanceDelayModifier
-int fx_existance_delay_modifier (Scriptable* /*Owner*/, Actor* target, Effect* fx)
+int fx_existence_delay_modifier(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
 	STAT_SET(IE_EXISTANCEDELAY, fx->Parameter2);
 	return FX_APPLIED;

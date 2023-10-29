@@ -41,6 +41,8 @@
 
 #include "GameScript/GameScript.h"
 
+#include "voodooconst.h"
+
 #include "Game.h"
 #include "GameData.h"
 #include "Interface.h"
@@ -421,6 +423,8 @@ static const TriggerLink triggernames[] = {
 	{"reserved1", nullptr, 0},
 	{"reserved2", nullptr, 0},
 	{"reserved3", nullptr, 0},
+	{"reset", GameScript::Reset, 0},
+	{"said", GameScript::False, 0},
 	{"school", GameScript::School, 0}, //similar to kit
 	{"secretdoordetected", GameScript::SecretDoorDetected, 0},
 	{"see", GameScript::See, 0},
@@ -439,6 +443,7 @@ static const TriggerLink triggernames[] = {
 	{"storymodeon", GameScript::StoryModeOn, 0},
 	{"stuffglobalrandom", GameScript::StuffGlobalRandom, 0},//hm, this is a trigger
 	{"subrace", GameScript::SubRace, 0},
+	{"summoned", GameScript::Summoned, 0},
 	{"summoninglimit", GameScript::SummoningLimit, 0},
 	{"summoninglimitgt", GameScript::SummoningLimitGT, 0},
 	{"summoninglimitlt", GameScript::SummoningLimitLT, 0},
@@ -489,7 +494,7 @@ static const TriggerLink triggernames[] = {
 
 //Make this an ordered list, so we could use bsearch!
 static const ActionLink actionnames[] = {
-	{"actionoverride",NULL, AF_INVALID}, //will this function ever be reached
+	{"actionoverride", GameScript::NoAction, AF_INVALID}, // will never be reached, but this sooths other references
 	{"activate", GameScript::Activate, 0},
 	{"activateportalcursor", GameScript::ActivatePortalCursor, 0},
 	{"addareaflag", GameScript::AddAreaFlag, 0},
@@ -497,6 +502,7 @@ static const ActionLink actionnames[] = {
 	{"addexperienceparty", GameScript::AddExperienceParty, 0},
 	{"addexperiencepartycr", GameScript::AddExperiencePartyCR, 0},
 	{"addexperiencepartyglobal", GameScript::AddExperiencePartyGlobal, 0},
+	{"addfamiliar", GameScript::AddFamiliar, 0},
 	{"addfeat", GameScript::AddFeat, 0},
 	{"addglobals", GameScript::AddGlobals, 0},
 	{"addhp", GameScript::AddHP, 0},
@@ -540,6 +546,7 @@ static const ActionLink actionnames[] = {
 	{"bitglobal", GameScript::BitGlobal,AF_MERGESTRINGS},
 	{"bitset", GameScript::GlobalBOr,AF_MERGESTRINGS}, //probably the same
 	{"breakinstants", GameScript::BreakInstants, AF_BLOCKING},//delay execution of instants to the next AI cycle???
+	{"buystuff", GameScript::NoAction, 0},
 	{"calllightning", GameScript::Kill, 0}, // just an instant death with Param2 = 0x100
 	{"calm", GameScript::Calm, 0},
 	{"changeaiscript", GameScript::ChangeAIScript, 0},
@@ -603,6 +610,9 @@ static const ActionLink actionnames[] = {
 	{"damage", GameScript::Damage, 0},
 	{"daynight", GameScript::DayNight, 0},
 	{"deactivate", GameScript::Deactivate, 0},
+	{"deathmatchpositionarea", nullptr, 0},
+	{"deathmatchpositionglobal", nullptr, 0},
+	{"deathmatchpositionlocal", nullptr, 0},
 	{"debug", GameScript::Debug, 0},
 	{"debugoutput", GameScript::Debug, 0},
 	{"deletejournalentry", GameScript::RemoveJournalEntry, 0},
@@ -769,6 +779,7 @@ static const ActionLink actionnames[] = {
 	{"jumptosavedlocation", GameScript::JumpToSavedLocation, 0},
 	{"kill", GameScript::Kill, 0},
 	{"killfloatmessage", GameScript::KillFloatMessage, 0},
+	{"layhands", GameScript::NoAction, 0}, // broken in released engines; likely on purpose, since a spell is cleaner
 	{"leader", GameScript::Leader, AF_ALIVE},
 	{"leavearea", GameScript::LeaveAreaLUA, 0}, //so far the same
 	{"leavearealua", GameScript::LeaveAreaLUA, 0},
@@ -824,10 +835,14 @@ static const ActionLink actionnames[] = {
 	{"nidspecial5", GameScript::UseItem, AF_BLOCKING|AF_DIRECT|AF_ALIVE},
 	{"nidspecial6", GameScript::Spell, AF_BLOCKING|AF_DIRECT|AF_ALIVE},
 	{"nidspecial7", GameScript::SpellNoDec, AF_BLOCKING|AF_DIRECT|AF_ALIVE},
-	//{"nidspecial8", GameScript::SpellPoint, AF_BLOCKING|AF_ALIVE}, //not needed
+	{"nidspecial8", GameScript::SpellPoint, AF_BLOCKING | AF_ALIVE}, // not needed, but avoids warning
 	{"nidspecial9", GameScript::ToggleDoor, AF_BLOCKING},//another internal hack, maybe we should use UseDoor instead
+	{"nidspecial10", GameScript::NoAction, 0},
+	{"nidspecial11", GameScript::NoAction, 0},
+	{"nidspecial12", GameScript::NoAction, 0},
 	{"noaction", GameScript::NoAction, 0},
 	{"opendoor", GameScript::OpenDoor,0},
+	{"overrideareadifficulty", GameScript::OverrideAreaDifficulty, 0},
 	{"panic", GameScript::Panic, AF_ALIVE},
 	{"permanentstatchange", GameScript::PermanentStatChange, 0}, //pst
 	{"pausegame", GameScript::PauseGame, AF_BLOCKING}, //this is almost surely blocking
@@ -836,7 +851,7 @@ static const ActionLink actionnames[] = {
 	{"pickupitem", GameScript::PickUpItem, 0},
 	{"playbardsong", GameScript::PlayBardSong, AF_ALIVE},
 	{"playdead", GameScript::PlayDead,AF_BLOCKING|AF_ALIVE},
-	{"playdeadinterruptable", GameScript::PlayDeadInterruptable,AF_BLOCKING|AF_ALIVE},
+	{"playdeadinterruptable", GameScript::PlayDeadInterruptible, AF_BLOCKING | AF_ALIVE},
 	{"playerdialog", GameScript::PlayerDialogue,AF_BLOCKING},
 	{"playerdialogue", GameScript::PlayerDialogue,AF_BLOCKING},
 	{"playsequence", GameScript::PlaySequence, 0},
@@ -874,6 +889,7 @@ static const ActionLink actionnames[] = {
 	{"regainrangerhood", GameScript::RegainRangerHood, 0},
 	{"removeareaflag", GameScript::RemoveAreaFlag, 0},
 	{"removeareatype", GameScript::RemoveAreaType, 0},
+	{"removefamiliar", GameScript::RemoveFamiliar, 0},
 	{"removejournalentry", GameScript::RemoveJournalEntry, 0},
 	{"removemapnote", GameScript::RemoveMapnote, 0},
 	{"removepaladinhood", GameScript::RemovePaladinHood, 0},
@@ -886,6 +902,7 @@ static const ActionLink actionnames[] = {
 	{"reputationset", GameScript::ReputationSet, 0},
 	{"reserved", nullptr, 0},
 	{"resetfogofwar", GameScript::UndoExplore, 0}, //pst
+	{"resetjoinrequests", nullptr, 0},
 	{"resetmorale", GameScript::ResetMorale, 0},
 	{"resetplayerai", GameScript::ResetPlayerAI, 0},
 	{"rest", GameScript::Rest, AF_ALIVE},
@@ -968,6 +985,7 @@ static const ActionLink actionnames[] = {
 	{"setname", GameScript::SetApparentName, 0},
 	{"setnamelessclass", GameScript::SetNamelessClass, 0},
 	{"setnamelessdeath", GameScript::SetNamelessDeath, 0},
+	{"setnamelessdeathparty", GameScript::SetNamelessDeathParty, 0},
 	{"setnamelessdisguise", GameScript::SetNamelessDisguise, 0},
 	{"setnooneontrigger", GameScript::SetNoOneOnTrigger, 0},
 	{"setnumtimestalkedto", GameScript::SetNumTimesTalkedTo, 0},
@@ -1044,6 +1062,7 @@ static const ActionLink actionnames[] = {
 	{"staticsequence", GameScript::PlaySequence, 0},//bg2 animation sequence
 	{"staticstart", GameScript::StaticStart, 0},
 	{"staticstop", GameScript::StaticStop, 0},
+	{"stopjoinrequests", GameScript::NoAction, 0},
 	{"stickysinisterpoof", GameScript::CreateVisualEffectObjectSticky, 0},
 	{"stopmoving", GameScript::StopMoving, 0},
 	{"storepartylocations", GameScript::StorePartyLocation, 0},
@@ -1768,7 +1787,11 @@ void InitializeIEScript()
 	NoCreate = core->HasFeature(GFFlags::NO_NEW_VARIABLES);
 	HasKaputz = core->HasFeature(GFFlags::HAS_KAPUTZ);
 
-	InitScriptTables();
+	// see note in voodooconst.h
+	if (core->HasFeature(GFFlags::AREA_OVERRIDE)) {
+		MAX_OPERATING_DISTANCE = 40 * 3;
+	}
+
 	int tT = core->LoadSymbol("trigger");
 	int aT = core->LoadSymbol("action");
 	int oT = core->LoadSymbol("object");
@@ -2470,7 +2493,7 @@ static void HandleActionOverride(Scriptable* target, const Action* aC)
 		target->ClearActions(1);
 	} else if (core->HasFeature(GFFlags::RULES_3ED)) { // iwd2
 		// it was more complicated, always releasing if the game was paused — not something to replicate
-		if (target->CurrentActionInterruptable) {
+		if (target->CurrentActionInterruptible) {
 			target->ReleaseCurrentAction();
 		}
 	} else { // for all the games we don't understand fully yet
@@ -2482,7 +2505,7 @@ static void HandleActionOverride(Scriptable* target, const Action* aC)
 		assert(target->GetNextAction());
 		// there are plenty of places where it's vital that ActionOverride is not interrupted,
 		// so make double sure it doesn't happen
-		target->CurrentActionInterruptable = false;
+		target->CurrentActionInterruptible = false;
 	}
 }
 
@@ -2521,7 +2544,7 @@ void GameScript::ExecuteAction(Scriptable* Sender, Action* aC)
 	}
 
 	// check for ActionOverride
-	// actions use the second and third object, so this is only set when overriden (see GenerateActionCore)
+	// actions use the second and third object, so this is only set when overridden (see GenerateActionCore)
 	if (aC->objects[0]) {
 		Scriptable* scr = GetScriptableFromObject(Sender, aC->objects[0]);
 		if (CheckDeadException(scr, actionID)) {
@@ -2558,8 +2581,8 @@ void GameScript::ExecuteAction(Scriptable* Sender, Action* aC)
 	}
 	ActionFunction func = actions[actionID];
 	if (func) {
-		//turning off interruptable flag
-		//uninterruptable actions will set it back
+		// turning off interruptible flag
+		// uninterruptible actions will set it back
 		if (Sender->Type==ST_ACTOR) {
 			Sender->Activate();
 			if (actionflags[actionID] & AF_ALIVE && Sender->GetInternalFlag() & IF_STOPATTACK) {

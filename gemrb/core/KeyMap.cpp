@@ -19,6 +19,7 @@
  */
 
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 
 #include "KeyMap.h"
@@ -48,6 +49,7 @@ bool KeyMap::InitializeKeyMap(const path_t& inifile, const ResRef& tablefile)
 		return false;
 	}
 
+	std::unordered_set<std::string> reservedKeyNames { "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "tab", "space" };
 	const ieVariable defaultModuleName = kmtable->QueryField("Default", "MODULE");
 	const ieVariable defaultFunction = kmtable->QueryField("Default", "FUNCTION");
 	int defaultGroup = kmtable->QueryFieldSigned<int>("Default", "GROUP");
@@ -67,18 +69,23 @@ bool KeyMap::InitializeKeyMap(const path_t& inifile, const ResRef& tablefile)
 		if (parts.size() < 2) {
 			parts.emplace_back();
 		}
-		
+
+		auto& key = parts[0];
+		RTrim(key);
+		if (key.substr(0, 10) == "unmappable") {
+			continue;
+		}
+
 		auto& val = parts[1];
 		if (val.length() == 0) continue;
 		LTrim(val);
 
-		if (val.length() > 1 || keymap.Get(val) != nullptr) {
+		if (reservedKeyNames.count(val) > 0) continue;
+		if (val.length() > 1 || keymap.Get(val) != nullptr) { // "win1", "win2", "menu"
 			Log(WARNING, "KeyMap", "Ignoring key {}", val);
 			continue;
 		}
-		
-		auto& key = parts[0];
-		RTrim(key);
+
 		//change internal spaces to underscore
 		std::replace(key.begin(), key.end(), ' ', '_');
 

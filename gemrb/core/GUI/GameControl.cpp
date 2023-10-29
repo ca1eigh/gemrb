@@ -385,7 +385,7 @@ void GameControl::DrawTargetReticle(uint16_t size, const Color& color, const Poi
 	}
 	
 	// the current points are the ends of the top/bottom segments
-	VideoDriver->DrawLine(points[i++] + offsetV, p + offsetV, color); // begin top segement
+	VideoDriver->DrawLine(points[i++] + offsetV, p + offsetV, color); // begin top segment
 	VideoDriver->DrawLine(points[i++] + offsetV, p + offsetV, color); // end top segment
 	VideoDriver->DrawLine(points[i++] - offsetV, p - offsetV, color); // begin bottom segment
 	VideoDriver->DrawLine(points[i++] - offsetV, p - offsetV, color); // end bottom segment
@@ -910,10 +910,10 @@ bool GameControl::OnKeyRelease(const KeyboardEvent& Key, unsigned short Mod)
 				} else {
 					DumpActorInfo(ActorDump::Stats, area);
 				}
-				core->GetGame()->GetCurrentArea()->dump(false);
+				game->GetCurrentArea()->dump(false);
 				break;
 			case 'n': //prints a list of all the live actors in the area
-				core->GetGame()->GetCurrentArea()->dump(true);
+				game->GetCurrentArea()->dump(true);
 				break;
 			// o
 			case 'p': //center on actor
@@ -1841,7 +1841,7 @@ void GameControl::TryToTalk(Actor *source, const Actor *tgt) const
 	//Nidspecial1 is just an unused action existing in all games
 	//(non interactive demo)
 	//i found no fitting action which would emulate this kind of
-	//dialog initation
+	// dialog initiation
 	source->SetModal(Modal::None);
 	dialoghandler->SetTarget(tgt); //this is a hack, but not so deadly
 	source->CommandActor(GenerateActionDirect( "NIDSpecial1()", tgt));
@@ -1873,6 +1873,12 @@ void GameControl::HandleContainer(Container *container, Actor *actor)
 
 	if (targetMode == TargetMode::Pick) {
 		TryToPick(actor, container);
+		return;
+	}
+
+	// familiars can not pick up items
+	if (actor->GetBase(IE_EA) == EA_FAMILIAR) {
+		displaymsg->DisplayConstantString(HCStrings::FamiliarNoHands, GUIColors::WHITE, actor);
 		return;
 	}
 
@@ -2318,6 +2324,28 @@ void GameControl::Scroll(const Point& amt)
 	MoveViewportTo(vpOrigin + amt, false);
 }
 
+// only party members and familiars can start conversations from the GUI
+static Actor* GetTalkInitiator()
+{
+	const Game* game = core->GetGame();
+	Actor* source;
+	if (core->HasFeature(GFFlags::PROTAGONIST_TALKS)) {
+		source = game->GetPC(0, false); // protagonist
+	} else {
+		source = core->GetFirstSelectedPC(false);
+		if (!source) {
+			// check also for familiars
+			for (auto& npc : game->selected) {
+				if (npc->GetBase(IE_EA) == EA_FAMILIAR) {
+					source = npc;
+					break;
+				}
+			}
+		}
+	}
+	return source;
+}
+
 void GameControl::PerformActionOn(Actor *actor)
 {
 	const Game* game = core->GetGame();
@@ -2374,16 +2402,9 @@ void GameControl::PerformActionOn(Actor *actor)
 				return;
 			}
 
-			//talk (first selected talks)
+			// talk (first selected talks)
 			if (!game->selected.empty()) {
-				//if we are in PST modify this to NO!
-				Actor *source;
-				if (core->HasFeature(GFFlags::PROTAGONIST_TALKS) ) {
-					source = game->GetPC(0, false); //protagonist
-				} else {
-					source = core->GetFirstSelectedPC(false);
-				}
-				// only party members can start conversations
+				Actor* source = GetTalkInitiator();
 				if (source) {
 					TryToTalk(source, actor);
 				}

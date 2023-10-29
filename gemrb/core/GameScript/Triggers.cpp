@@ -1167,7 +1167,7 @@ int GameScript::HasItemEquipped(Scriptable * Sender, const Trigger *parameters)
 }
 
 // this is only used for Lilarcor in the originals, where it matter that the weapon is actually being used
-// same as HasItemEquiped, but only the currently equipped weapon slot is checked alongside the rest
+// same as HasItemEquipped, but only the currently equipped weapon slot is checked alongside the rest
 int GameScript::HasItemEquippedReal(Scriptable* Sender, const Trigger* parameters)
 {
 	const Scriptable* scr = GetScriptableFromObject(Sender, parameters->objectParameter);
@@ -4800,6 +4800,23 @@ int GameScript::Switch(Scriptable* Sender, const Trigger* parameters)
 	ieDword value = CheckVariable(Sender, parameters->string0Parameter, parameters->string1Parameter);
 	Sender->weightsAsCases = static_cast<unsigned char>(value);
 	return 0;
+}
+
+int GameScript::Summoned(Scriptable* Sender, const Trigger* parameters)
+{
+	const Scriptable* summon = GetScriptableFromObject(Sender, parameters->objectParameter);
+	if (!summon) return 0;
+
+	return Sender->MatchTrigger(trigger_summoned, summon->GetGlobalID());
+}
+
+int GameScript::Reset(Scriptable* Sender, const Trigger* parameters)
+{
+	const Scriptable* target = GetScriptableFromObject(Sender, parameters->objectParameter);
+	const Highlightable* trap = Scriptable::As<Highlightable>(target);
+	if (!trap) return 0;
+
+	return Sender->MatchTrigger(trigger_reset, trap->GetGlobalID());
 }
 
 }

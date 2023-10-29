@@ -128,7 +128,7 @@ enum ProHeights {
 #define PAF_VISIBLE    1      //the travel projectile is visible until explosion; CPROJECTILEAREAFILEFORMAT_FLAGS_CENTERBAM
 #define PAF_INANIMATE  2      //target inanimates
 #define PAF_TRIGGER    4      //explosion needs to be triggered
-#define PAF_SYNC       8      //one explosion at a time
+#define PAF_DELAYED    8 // one explosion at a time, a delayed trigger
 #define PAF_SECONDARY  16     //secondary projectiles at explosion
 #define PAF_FRAGMENT   32     //fragments (charanimation) at explosion
 #define PAF_ENEMY      64     //target party or not party
@@ -454,13 +454,13 @@ private:
 	//calculate target and destination points for a firewall
 	void SetupWall();
 	void BendPosition(Point& pos) const;
-	void DrawPopping(unsigned int face, const Point& pos, BlitFlags flags, const Color& tint);
+	void DrawPopping(unsigned int face, const Point& pos, BlitFlags flags, const Color& popTint);
 	void DrawLine(const Region &screen, int face, BlitFlags flag);
 	void DrawTravel(const Region& screen, BlitFlags flags);
 	bool DrawChildren(const Region& screen, BlitFlags flags);
 	void DrawExplodingPhase1() const;
 	void DrawSpread();
-	void DrawSpreadChild(size_t idx, bool firstExplosion);
+	void DrawSpreadChild(size_t idx, bool firstExplosion, const Point& offset);
 	void DrawExplosion(const Region& screen, BlitFlags flags);
 	void SpawnFragment(Point& pos) const;
 	void SpawnFragments(const Holder<ProjectileExtension>& extension) const;

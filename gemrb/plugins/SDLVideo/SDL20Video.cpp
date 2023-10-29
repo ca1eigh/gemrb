@@ -181,7 +181,7 @@ int SDL20VideoDriver::CreateSDLDisplay(const char* title, bool vsync)
 
 	// Moved this here to fix a weird rendering issue
 
-	// we set logical size so that platforms where the window can be a diffrent size then requested
+	// we set logical size so that platforms where the window can be a different size then requested
 	// function properly. eg iPhone and Android the requested size may be 640x480,
 	// but the window will always be the size of the screen
 	SDL_RenderSetLogicalSize(renderer, screenSize.w, screenSize.h);
@@ -504,7 +504,7 @@ int SDL20VideoDriver::RenderCopyShaded(SDL_Texture* texture, const SDL_Rect* src
 		}
 
 #if !SDL_VERSION_ATLEAST(2, 0, 18)
-		// In versions earler, SDL uses a different vertex setup in case
+		// In versions earlier, SDL uses a different vertex setup in case
 		// of flipping: (-w/2, -h/2) to (w/2, h/2) that are transformed by
 		// the OpenGL backend via matrices.
 		if (flags & BlitFlags::MIRRORX) {
@@ -780,7 +780,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 			}
 			break;
 #endif
-		case SDL_FINGERDOWN: // fallthough
+		case SDL_FINGERDOWN: // fallthrough
 		case SDL_FINGERUP:
 			{
 				TouchEvent::Finger fingers[1] = { };
@@ -795,7 +795,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 				EvntManager->DispatchEvent(std::move(e));
 			}
 			break;
-		// For swipes only. gestures requireing pinch or rotate need to use SDL_MULTIGESTURE or SDL_DOLLARGESTURE
+		// For swipes only. Gestures requiring pinch or rotate need to use SDL_MULTIGESTURE or SDL_DOLLARGESTURE
 		case SDL_FINGERMOTION:
 			{
 				TouchEvent::Finger fingers[FINGER_MAX] = { }; // 0 init
@@ -835,7 +835,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 				
 				// HACK: some mouse devices report the delta in pixels, but others (like regular mouse wheels) are going to be in "clicks"
 				// there is no good way to find which is the case so heuristically we will just switch if we see a delta larger than one
-				// hopefully no devices will be merging several repeated whell clicks together
+				// hopefully no devices will be merging several repeated wheel clicks together
 				static bool unitIsPixels = false;
 				if (event.wheel.y > 1 || event.wheel.x > 1) {
 					unitIsPixels = true;
@@ -862,7 +862,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 		case SDL_RENDER_DEVICE_RESET:
 			// TODO: must destroy all SDLTextureSprite2D textures
 
-			// fallthough
+			// fallthrough
 		case SDL_APP_DIDENTERFOREGROUND:
 		case SDL_RENDER_TARGETS_RESET:
 			e = EventMgr::CreateRedrawRequestEvent();
@@ -870,6 +870,12 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 			break;
 		case SDL_WINDOWEVENT://SDL 1.2
 			switch (event.window.event) {
+				case SDL_WINDOWEVENT_LEAVE:
+					if (core->config.GUIEnhancements & 8) core->DisableGameControl(true);
+					break;
+				case SDL_WINDOWEVENT_ENTER:
+					if (core->config.GUIEnhancements & 8) core->DisableGameControl(false);
+					break;
 				case SDL_WINDOWEVENT_MINIMIZED://SDL 1.3
 					// We pause the game and audio when the window is minimized.
 					// on iOS/Android this happens when leaving the application or when play is interrupted (ex phone call)
@@ -882,12 +888,9 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 				case SDL_WINDOWEVENT_RESTORED: //SDL 1.3
 					core->GetAudioDrv()->Resume();//this is for ANDROID mostly
 					break;
-					/*
-				case SDL_WINDOWEVENT_RESIZED: //SDL 1.2
-					// this event exists in SDL 1.2, but this handler is only getting compiled under 1.3+
-					Log(WARNING, "SDL 2 Driver",  "Window resized so your window surface is now invalid.");
+				// SDL_WINDOWEVENT_RESIZED and SDL_WINDOWEVENT_SIZE_CHANGED are handled automatically
+				default:
 					break;
-					 */
 			}
 			break;
 

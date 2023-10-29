@@ -209,7 +209,7 @@ ItemDragOp::ItemDragOp(CREItem* item)
 
 	cursor = pic;
 
-	// FIXME: this VarName is not consistant
+	// FIXME: this VarName is not consistent
 	dragDummy.BindDictVariable("itembutton", Control::INVALID_VALUE);
 }
 
@@ -312,16 +312,20 @@ Interface::Interface(CoreSettings&& cfg)
 	path = PathJoin(config.GamePath, config.GameDataPath);
 	gamedata->AddSource(path, "Data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
 
-	// accomodating silly installers that create a data/Data/.* structure
+	// accommodating silly installers that create a data/Data/.* structure
 	path = PathJoin(config.GamePath, config.GameDataPath, "Data");
-	gamedata->AddSource(path, "Data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
+	if (DirExists(path)) {
+		gamedata->AddSource(path, "Data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
+	}
 
 	// IWD2 movies are on the CD but not in the BIF
 	for (size_t i = 0; i < MAX_CD; i++) {
 		const std::string description = fmt::format("CD{}/data", i);
 		for (size_t j = 0; j < config.CD[i].size(); j++) {
 			path = PathJoin(config.CD[i][j], config.GameDataPath);
-			gamedata->AddSource(path, description, PLUGIN_RESOURCE_CACHEDDIRECTORY);
+			if (DirExists(path)) {
+				gamedata->AddSource(path, description, PLUGIN_RESOURCE_CACHEDDIRECTORY);
+			}
 		}
 	}
 
@@ -428,8 +432,8 @@ Interface::Interface(CoreSettings&& cfg)
 	GameNameResRef = tmp;
 
 	Log(MESSAGE, "Core", "Reading Encoding Table...");
-	if (!LoadEncoding()) {
-		Log(ERROR, "Core", "Cannot Load Encoding.");
+	if (!LoadEncoding() && config.Encoding != "default") {
+		Log(ERROR, "Core", "Cannot load encoding from {}.", config.Encoding);
 	}
 
 	Log(MESSAGE, "Core", "Creating Projectile Server...");
@@ -930,7 +934,7 @@ void Interface::DisableMusicPlaylist(size_t SongType)
 void Interface::Main()
 {
 	int speed = vars.Get("Mouse Scroll Speed", 10);
-	SetMouseScrollSpeed(speed);
+	SetMouseScrollSpeed(speed + 1);
 
 	// We had 36 at 30fps originally, so more fps
 	// should not speed this up unless adjusted
@@ -1486,7 +1490,7 @@ void Interface::LoadGemRBINI()
 /** Load the encoding table selected in gemrb.cfg */
 bool Interface::LoadEncoding()
 {
-	DataStream* inifile = gamedata->GetResourceStream(config.Encoding, IE_INI_CLASS_ID);
+	DataStream* inifile = gamedata->GetResourceStream(config.Encoding, IE_INI_CLASS_ID, true);
 	if (! inifile) {
 		return false;
 	}
@@ -1913,7 +1917,7 @@ int Interface::LoadSymbol(const ResRef& ref)
 	if (ind != -1) {
 		return ind;
 	}
-	DataStream* str = gamedata->GetResourceStream(ref, IE_IDS_CLASS_ID);
+	DataStream* str = gamedata->GetResourceStream(ref, IE_IDS_CLASS_ID, true);
 	if (!str) {
 		return -1;
 	}
@@ -2027,7 +2031,7 @@ int Interface::PlayMovie(const ResRef& movieRef)
 	public:
 		// default color taken from BGEE.lua
 		IESubtitles(Holder<Font> fnt, const AutoTable& sttable, const Color& col = Color(0xe9, 0xe2, 0xca, 0xff))
-		: MoviePlayer::SubtitleSet(fnt, col)
+			: MoviePlayer::SubtitleSet(std::move(fnt), col)
 		{
 			for (TableMgr::index_t i = 0; i < sttable->GetRowCount(); ++i) {
 				const auto& rowName = sttable->GetRowName(i);
@@ -2573,7 +2577,7 @@ void Interface::InitItemTypes()
 			itemtypedata[i][IDT_SKILLPENALTY] = 0; // skill check malus
 		}
 	}
-	AutoTable af = gamedata->LoadTable("itemdata");
+	AutoTable af = gamedata->LoadTable("itemdata", true);
 	if (af) {
 		TableMgr::index_t armcount = af->GetRowCount();
 		TableMgr::index_t colcount = af->GetColumnCount();
@@ -3365,7 +3369,7 @@ Store *Interface::SetCurrentStore(const ResRef &resName, ieDword owner)
 }
 
 void Interface::SetMouseScrollSpeed(int speed) {
-	mousescrollspd = (speed+1)*2;
+	mousescrollspd = speed * 2;
 }
 
 int Interface::GetMouseScrollSpeed() const {
@@ -3459,6 +3463,12 @@ Holder<Sprite2D> Interface::GetScrollCursorSprite(orient_t orient, int spriteNum
 	uint8_t frame = 6 - (orient / 2);
 	frame = Clamp<uint8_t>(frame, 0, 7);
 	return gamedata->GetBAMSprite(ScrollCursorBam, frame, spriteNum, true);
+}
+
+void Interface::DisableGameControl(bool disable) const
+{
+	if (!gamectrl) return;
+	gamectrl->SetFlags(View::IgnoreEvents, disable ? BitOp::OR : BitOp::NAND);
 }
 
 /* we should return -1 if it isn't gold, otherwise return the gold value */

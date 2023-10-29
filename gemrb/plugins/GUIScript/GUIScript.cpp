@@ -187,7 +187,7 @@ const ScriptingRefBase* GUIScript::GetScriptingRef(PyObject* obj) const
 	ScriptingGroup_t group = ASCIIStringFromPy<ScriptingGroup_t>(attr);
 	Py_DecRef(attr);
 
-	return GetScripingRef(group, id);
+	return ScriptEngine::GetScriptingRef(group, id);
 }
 
 template <class RETURN = View>
@@ -1125,7 +1125,7 @@ static PyObject* GemRB_View_AddAlias(PyObject* self, PyObject* args)
 	View* view = GetView<View>(self);
 	ABORT_IF_NULL(view);
 	if (overwrite) {
-		const ViewScriptingRef* delref = static_cast<const ViewScriptingRef*>(ScriptEngine::GetScripingRef(group, controlId));
+		const ViewScriptingRef* delref = static_cast<const ViewScriptingRef*>(ScriptEngine::GetScriptingRef(group, controlId));
 		if (delref) {
 			delref = delref->GetObject()->RemoveScriptingRef(delref);
 			ABORT_IF_NULL(delref);
@@ -1161,7 +1161,7 @@ static PyObject* GemRB_GetView(PyObject* /*self*/, PyObject* args)
 	PyObject* lookup = nullptr;
 	PARSE_ARGS(args, "O|O", &lookup, &pyid);
 
-	// for convinience we allow an alias to default to the lowest valid id
+	// for convenience we allow an alias to default to the lowest valid id
 	// the typical use case is typically wanting to specify a string name for a single control
 	ScriptingId id = 0;
 	if (pyid && pyid != Py_None) {
@@ -1175,7 +1175,7 @@ static PyObject* GemRB_GetView(PyObject* /*self*/, PyObject* args)
 	const View* view = nullptr;
 	if (PyUnicode_Check(lookup)) {
 		const ScriptingGroup_t group = ASCIIStringFromPy<ScriptingGroup_t>(lookup);
-		view = ScriptingRefCast<View>(ScriptEngine::GetScripingRef(group, id));
+		view = ScriptingRefCast<View>(ScriptEngine::GetScriptingRef(group, id));
 	} else {
 		const Window* win = GetView<Window>(lookup);
 		if (win) {
@@ -1184,7 +1184,7 @@ static PyObject* GemRB_GetView(PyObject* /*self*/, PyObject* args)
 	}
 
 	if (view) {
-		// return retView->GetScriptingRef() so that Python objects compare correctly (instread of returning the alias ref)
+		// return retView->GetScriptingRef() so that Python objects compare correctly (instead of returning the alias ref)
 		return gs->ConstructObjectForScriptable(view->GetScriptingRef());
 	}
 	Py_RETURN_NONE;
@@ -1397,7 +1397,7 @@ PyDoc_STRVAR( GemRB_TextArea_Append__doc,
 **Metaclass Prototype:** Append (String|Strref [, Row[, Flag]])\n\
 \n\
 **Description:** Appends the Text to the TextArea Control in the Window. \n\
-If row is specificed, it can also append text to existing rows.\n\
+If row is specified, it can also append text to existing rows.\n\
 \n\
 **Parameters:**\n\
   * String - literal text, it could have embedded colour codes\n\
@@ -3722,16 +3722,16 @@ static PyObject* GemRB_Button_SetAnimation(PyObject* self, PyObject* args)
 	ABORT_IF_NULL(anim);
 
 	if (cols) {
-		ieDword indicies[8]{};
+		ieDword indices[8] {};
 		Py_ssize_t min = std::min<Py_ssize_t>(8, PyList_Size(cols));
 		for (Py_ssize_t i = 0; i < min; i++) {
 			PyObject* item = PyList_GetItem(cols, i);
-			indicies[i] = static_cast<ieDword>(PyLong_AsLong(item));
+			indices[i] = static_cast<ieDword>(PyLong_AsLong(item));
 		}
 		// assumes all sprites share a palette
 		auto spr = anim->GetFrame(0);
 		auto pal = spr->GetPalette();
-		*pal = SetupPaperdollColours(indicies, 0);
+		*pal = SetupPaperdollColours(indices, 0);
 	}
 
 	constexpr auto GAMEANIM = Animation::Flags::Unused; // repurpose the unused bit
@@ -4209,7 +4209,7 @@ PyDoc_STRVAR( GemRB_SetGlobal__doc,
 \n\
 **Prototype:** GemRB.SetGlobal (VariableName, Context, Value)\n\
 \n\
-**Description:** Sets a gamescript variable to the specificed numeric value.\n\
+**Description:** Sets a gamescript variable to the specified numeric value.\n\
 \n\
 **Parameters:** \n\
   * VariableName - name of the variable\n\
@@ -6071,7 +6071,7 @@ static PyObject* GemRB_GetPlayerPortrait(PyObject * /*self*/, PyObject* args)
 	if (actor) {
 		Holder<Sprite2D> portrait = actor->CopyPortrait(which);
 		PyObject* dict = PyDict_New();
-		PyDict_SetItemString(dict, "Sprite", PyObject_FromHolder(portrait));
+		PyDict_SetItemString(dict, "Sprite", PyObject_FromHolder(std::move(portrait)));
 		PyObject* pystr = PyString_FromResRef(which ? actor->SmallPortrait : actor->LargePortrait);
 		PyDict_SetItemString(dict, "ResRef", pystr);
 		Py_DecRef(pystr);
@@ -11070,7 +11070,7 @@ jump_label:
 		}
 		btn->SetState(state);
 		//you have to set this overlay up
-		// this state check looks bizzare, but without it most buttons get misrendered
+		// this state check looks bizarre, but without it most buttons get misrendered
 		btn->EnableBorder(1, state == Button::DISABLED);
 	}
 	Py_RETURN_NONE;
@@ -13319,7 +13319,7 @@ GUIScript::~GUIScript(void)
 	GUIAction[0]=UNINIT_IEDWORD;
 
 	// free the memory from the global scrollbar template
-	auto view = ScriptingRefCast<View>(ScriptEngine::GetScripingRef("SBGLOB", 0));
+	auto view = ScriptingRefCast<View>(ScriptEngine::GetScriptingRef("SBGLOB", 0));
 	delete view;
 }
 
