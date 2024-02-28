@@ -707,7 +707,10 @@ static const ActionLink actionnames[] = {
 	{"forcerandomencounter", GameScript::ForceRandomEncounter, 0},
 	{"forcerandomencounterentry", GameScript::ForceRandomEncounter, 0},
 	{"forcespell", GameScript::ForceSpell, AF_BLOCKING|AF_ALIVE|AF_IWD2_OVERRIDE},
+	{"forcespellres", GameScript::ForceSpell, AF_BLOCKING | AF_ALIVE | AF_IWD2_OVERRIDE},
+	{"forcespellresnofeedback", GameScript::ForceSpell, AF_BLOCKING | AF_ALIVE | AF_IWD2_OVERRIDE},
 	{"forcespellpoint", GameScript::ForceSpellPoint, AF_BLOCKING|AF_ALIVE|AF_IWD2_OVERRIDE},
+	{"forcespellpointres", GameScript::ForceSpellPoint, AF_BLOCKING | AF_ALIVE | AF_IWD2_OVERRIDE},
 	{"forcespellpointrange", GameScript::ForceSpellPointRange, AF_BLOCKING|AF_ALIVE},
 	{"forcespellpointrangeres", GameScript::ForceSpellPointRange, AF_BLOCKING|AF_ALIVE},
 	{"forcespellrange", GameScript::ForceSpellRange, AF_BLOCKING|AF_ALIVE},
@@ -1838,13 +1841,6 @@ void InitializeIEScript()
 	ObjectFieldsCount = ObjectIDSCount - ExtraParametersCount;
 
 	/* Initializing the Script Engine */
-
-	memset(triggers, 0, sizeof(triggers));
-	memset(triggerflags, 0, sizeof(triggerflags));
-	memset(actions, 0, sizeof(actions));
-	memset(actionflags, 0, sizeof(actionflags));
-	memset(objects, 0, sizeof(objects));
-
 	SetupTriggers();
 	SetupActions();
 

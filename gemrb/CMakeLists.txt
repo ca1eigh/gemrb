@@ -2,7 +2,7 @@ ADD_SUBDIRECTORY( core )
 
 # GUIScripts and override go directly in the bundle
 SET(RESOURCE_LIST "GUIScripts" "override" "unhardcoded" "../demo")
-IF (OPENGL_BACKEND)
+IF (NOT OPENGL_BACKEND STREQUAL "None")
 	LIST(APPEND RESOURCE_LIST "plugins/SDLVideo/Shaders")
 ENDIF()
 SET(RESOURCE_FILES "")
@@ -62,17 +62,17 @@ IF(APPLE) #application bundle generation
 	
 	get_filename_component(SDL_BASENAME "${SDL2_LIBDIR}" NAME)
 	
-	
 	IF(NOT SDL_BASENAME MATCHES ".framework")
 		SET(SDL_BASENAME "libSDL2.dylib")
 		SET(SDL_LIB "${SDL2_LIBDIR}/${SDL_BASENAME}")
 		get_filename_component(SDL_FULL_PATH "${SDL_LIB}" REALPATH)
+
 		FILE(COPY ${SDL_FULL_PATH} DESTINATION ${BUNDLE_FRAMEWORK_PATH} FOLLOW_SYMLINK_CHAIN FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
 		
 		# change the "install name" of the copied SDL
 		ADD_CUSTOM_COMMAND(TARGET gemrb PRE_BUILD COMMAND ${CMAKE_INSTALL_NAME_TOOL} -id "@loader_path/../Frameworks/${SDL_BASENAME}" "${SDL_FULL_PATH}")
 		IF(USE_SDLMIXER)
-			FILE(COPY "${SDL2_MIXER_LIBRARIES}" DESTINATION ${BUNDLE_FRAMEWORK_PATH} FOLLOW_SYMLINK_CHAIN FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
+			FILE(COPY "${SDL_MIXER_LIBRARIES}" DESTINATION ${BUNDLE_FRAMEWORK_PATH} FOLLOW_SYMLINK_CHAIN FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
 		ENDIF()
 	ELSE()
 		SET(SDL_LIB "${SDL2_LIBDIR}")
@@ -132,21 +132,21 @@ IF(APPLE)
 
   if (STATIC_LINK)
     TARGET_LINK_LIBRARIES(gemrb
-        ${COCOA_LIBRARY_PATH} ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT}
+        ${COCOA_LIBRARY_PATH} ${CMAKE_DL_LIBS} Threads::Threads
        gemrb_core ${plugins}  -Wl,-all_load)
   else (STATIC_LINK)
     TARGET_LINK_LIBRARIES(gemrb gemrb_core
-        ${COCOA_LIBRARY_PATH} ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT})
+        ${COCOA_LIBRARY_PATH} ${CMAKE_DL_LIBS} Threads::Threads)
   endif (STATIC_LINK)
 ELSE(APPLE)
   if (STATIC_LINK)
-    TARGET_LINK_LIBRARIES(gemrb ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT}
+    TARGET_LINK_LIBRARIES(gemrb ${CMAKE_DL_LIBS} Threads::Threads
       -Wl,--whole-archive gemrb_core ${plugins} -Wl,--no-whole-archive)
   else (STATIC_LINK)
     IF (MSVC)
       TARGET_LINK_LIBRARIES(gemrb gemrb_core)
     ELSE (MSVC)
-      TARGET_LINK_LIBRARIES(gemrb gemrb_core ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT})
+      TARGET_LINK_LIBRARIES(gemrb gemrb_core ${CMAKE_DL_LIBS} Threads::Threads)
     ENDIF (MSVC)
   endif (STATIC_LINK)
 ENDIF(APPLE)

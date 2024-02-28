@@ -1013,7 +1013,6 @@ void Map::DrawHighlightables(const Region& viewport) const
 		if (!d) continue;
 
 		if (d->Highlight) {
-			d->outlineColor = displaymsg->GetColor(GUIColors::HOVERDOOR);
 			d->DrawOutline(viewport.origin);
 		} else if (debugFlags & DEBUG_SHOW_DOORS && !(d->Flags & DOOR_SECRET)) {
 			d->outlineColor = displaymsg->GetColor(GUIColors::ALTDOOR);
@@ -1033,7 +1032,7 @@ void Map::DrawHighlightables(const Region& viewport) const
 			p->DrawOutline(viewport.origin);
 		} else if (debugFlags & DEBUG_SHOW_INFOPOINTS) {
 			if (p->VisibleTrap(true)) {
-				p->outlineColor = ColorRed;
+				p->outlineColor = displaymsg->GetColor(GUIColors::TRAPCOLOR);
 			} else {
 				p->outlineColor = ColorBlue;
 			}
@@ -1885,7 +1884,7 @@ bool Map::AnyEnemyNearPoint(const Point &p) const
 		if (!actor->Schedule(gametime, true) ) {
 			continue;
 		}
-		if (actor->IsDead() ) {
+		if (actor->ShouldStopAttack()) {
 			continue;
 		}
 		if (actor->GetStat(IE_AVATARREMOVAL)) {
@@ -3382,6 +3381,7 @@ void Map::ExploreMapChunk(const Point &Pos, int range, int los)
 
 void Map::UpdateFog()
 {
+	TRACY(ZoneScoped);
 	VisibleBitmap.fill(0);
 	
 	std::set<Spawn*> potentialSpawns;
@@ -3930,5 +3930,30 @@ void Map::SetBackground(const ResRef &bgResRef, ieDword duration)
 	Background = bmp->GetSprite2D();
 	BgDuration = duration;
 }
+
+Actor* Map::GetRandomEnemySeen(const Actor* origin) const
+{
+	int type = GetGroup(origin);
+	if (type == 2) {
+		return nullptr; //no enemies
+	}
+
+	int flags = GA_NO_HIDDEN | GA_NO_DEAD | GA_NO_UNSCHEDULED | GA_NO_SELF;
+	std::vector<Actor*> neighbours = GetAllActorsInRadius(origin->Pos, flags, origin->GetBase(IE_VISUALRANGE), origin);
+	Actor* victim = neighbours[RAND<size_t>(0, neighbours.size() - 1)];
+
+	if (type) { // origin is PC
+		if (victim->GetStat(IE_EA) >= EA_EVILCUTOFF) {
+			return victim;
+		}
+	} else {
+		if (victim->GetStat(IE_EA) <= EA_GOODCUTOFF) {
+			return victim;
+		}
+	}
+
+	return nullptr;
+}
+
 
 }

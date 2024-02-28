@@ -528,6 +528,15 @@ Actor::stat_t Actor::GetSafeStat(unsigned int StatIndex) const
 	return Modified[StatIndex];
 }
 
+// BG2 colours ground circles as follows:
+// - dark green for unselected party members
+// - bright green for selected party members
+// - bright red for enemies
+// - yellow for panicked actors
+// - flashing green/white for a party member the mouse is over
+// - flashing red/white for enemies the mouse is over
+// - flashing cyan/white for neutrals the mouse is over
+// - flashing white for speakers
 void Actor::SetCircleSize()
 {
 	if (!anims)
@@ -857,6 +866,7 @@ static void pcf_morale (Actor *actor, ieDword /*oldValue*/, ieDword /*newValue*/
 static void UpdateHappiness(Actor *actor) {
 	if (!actor->InParty) return;
 	if (!core->HasFeature(GFFlags::HAPPINESS)) return;
+	if (!actor->PCStats) return;
 
 	ieWordSigned newHappiness = GetHappiness(actor, core->GetGame()->Reputation);
 	if (newHappiness == actor->PCStats->Happiness) return;
@@ -2909,7 +2919,7 @@ void Actor::RefreshPCStats() {
 			if (morale < 10) {
 				NewBase(IE_MORALE, 1, MOD_ADDITIVE);
 			} else if (morale > 10) {
-				NewBase(IE_MORALE, (stat_t) -1, MOD_ADDITIVE);
+				SetBase(IE_MORALE, GetBase(IE_MORALE) - 1);
 			}
 		}
 	}
@@ -3143,6 +3153,7 @@ bool Actor::GetSavingThrow(ieDword type, int modifier, const Effect *fx)
 	// NOTE: assuming criticals apply to iwd2 too
 	if (ret == 1) return false;
 	if (ret == saveDiceSides) return true;
+	if (Modified[IE_STATE_ID] & STATE_DEAD) return false; // just to shut some errant feedback, should be fine
 	const Effect* sfx = fxqueue.HasEffect(fx_save_vs_school_bonus_ref);
 
 	if (!third) {
@@ -3510,7 +3521,7 @@ tick_t Actor::ReactToDeath(const ieVariable& deadname) const
 
 	tick_t len = 0;
 	unsigned int channel = SFX_CHAN_CHAR0 + InParty - 1;
-	core->GetAudioDrv()->PlayRelative(resRef, channel, &len);
+	core->GetAudioDrv()->Play(resRef, channel, &len);
 	return len;
 }
 
@@ -3642,7 +3653,7 @@ void Actor::PlaySelectionSound(bool force)
 	if (!found) {
 		ResRef sound;
 		GetSoundFromFile(sound, Verbal::Select);
-		core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos);
+		core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos, GEM_SND_EFX);
 	}
 }
 
@@ -3655,7 +3666,7 @@ void Actor::PlayWarCry(int range) const
 	if (!found && !InParty) {
 		ResRef sound;
 		GetSoundFromFile(sound, Verbal::BattleCry);
-		core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos);
+		core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos, GEM_SND_SPATIAL);
 	}
 }
 
@@ -3895,11 +3906,14 @@ bool Actor::OverrideActions()
 
 void Actor::Panic(const Scriptable *attacker, int panicmode)
 {
-	if (GetStat(IE_STATE_ID)&STATE_PANIC) {
+	auto PanicAction = [](unsigned short actionID) {
+		return actionID == 184 || actionID == 85 || actionID == 124;
+	};
+	if (GetStat(IE_STATE_ID) & STATE_PANIC && (!CurrentAction || PanicAction(CurrentAction->actionID))) {
 		Log(DEBUG, "Actor", "Already panicked!");
-		//already in panic
 		return;
 	}
+
 	if (InParty) core->GetGame()->SelectActor(this, false, SELECT_NORMAL);
 	VerbalConstant(Verbal::Panic, gamedata->GetVBData("SPECIAL_COUNT"));
 
@@ -3910,7 +3924,11 @@ void Actor::Panic(const Scriptable *attacker, int panicmode)
 
 	switch(panicmode) {
 	case PANIC_RUNAWAY:
-		action = GenerateActionDirect("RunAwayFromNoInterrupt([-1])", attacker);
+		if (core->HasFeature(GFFlags::IWD_MAP_DIMENSIONS)) { // iwd troll scripts are incompatible with full panic
+			action = GenerateActionDirect("RunAwayFrom([-1],300)", attacker);
+		} else {
+			action = GenerateActionDirect("RunAwayFromNoInterrupt([-1],300)", attacker);
+		}
 		SetBaseBit(IE_STATE_ID, STATE_PANIC, true);
 		break;
 	case PANIC_RANDOMWALK:
@@ -3926,6 +3944,7 @@ void Actor::Panic(const Scriptable *attacker, int panicmode)
 		return;
 	}
 	if (action) {
+		ReleaseCurrentAction();
 		AddActionInFront(action);
 	} else {
 		Log(ERROR, "Actor", "Cannot generate panic action");
@@ -3948,7 +3967,7 @@ void Actor::DialogInterrupt() const
 	/* this part is unsure */
 	if (Modified[IE_EA]>=EA_EVILCUTOFF) {
 		VerbalConstant(Verbal::Hostile);
-	} else if (TalkCount) {
+	} else if (TalkCount && GetVerbalConstant(Verbal::Dialog) != ieStrRef::INVALID) {
 		VerbalConstant(Verbal::Dialog);
 	} else {
 		VerbalConstant(Verbal::InitialMeet);
@@ -3963,7 +3982,7 @@ void Actor::GetHit(int damage, bool killingBlow)
 		if (!VerbalConstant(Verbal::Damage, beingHitCount)) {
 			ResRef sound;
 			GetSoundFromFile(sound, Verbal::Damage);
-			core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos);
+			core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos, GEM_SND_SPATIAL);
 		}
 	}
 
@@ -4242,11 +4261,11 @@ int Actor::Damage(int damage, int damagetype, Scriptable* hitter, int modtype, i
 		int newRatio = 100 * (chp + damage) / (signed) BaseStats[IE_MAXHITPOINTS];
 		if (ShouldModifyMorale()) {
 			if (currentRatio > 50 && newRatio < 25) {
-				NewBase(IE_MORALE, (stat_t) -4, MOD_ADDITIVE);
+				SetBase(IE_MORALE, GetBase(IE_MORALE) - 4);
 			} else if (currentRatio > 50 && newRatio < 50) {
-				NewBase(IE_MORALE, (stat_t) -2, MOD_ADDITIVE);
+				SetBase(IE_MORALE, GetBase(IE_MORALE) - 2);
 			} else if (currentRatio > 25 && newRatio < 25) {
-				NewBase(IE_MORALE, (stat_t) -2, MOD_ADDITIVE);
+				SetBase(IE_MORALE, GetBase(IE_MORALE) - 2);
 			}
 		}
 
@@ -4262,7 +4281,7 @@ int Actor::Damage(int damage, int damagetype, Scriptable* hitter, int modtype, i
 	// can be negative if we're healing on 100%+ resistance
 	// do this after GetHit, so VB_HURT isn't overridden by VB_DAMAGE, just (dis)played later
 	if (damage != 0) {
-		NewBase(IE_HITPOINTS, (stat_t) -damage, MOD_ADDITIVE);
+		SetBase(IE_HITPOINTS, GetBase(IE_HITPOINTS) - damage);
 		// unstun for that one special stun type
 		// run fx_cure_stun_state instead if it turns out not to be enough
 		if (HasSpellState(SS_AWAKE)) fxqueue.RemoveAllEffectsWithParam(fx_set_stun_state_ref, 1);
@@ -4466,7 +4485,7 @@ void Actor::PlayHitSound(const DataFileMgr *resdata, int damagetype, bool suffix
 		case DAMAGE_STUNNING: type = -3; break;
 		case DAMAGE_FIRE: // the only odd one out
 		case DAMAGE_MAGICFIRE:
-			core->GetAudioDrv()->Play("FIRE", SFX_CHAN_HITS, Pos);
+			core->GetAudioDrv()->Play("FIRE", SFX_CHAN_HITS, Pos, GEM_SND_SPATIAL);
 			return;
 		default: return;                       //other
 	}
@@ -4517,7 +4536,7 @@ void Actor::PlayHitSound(const DataFileMgr *resdata, int damagetype, bool suffix
 			Sound.Format("HIT_0{}{:c}", type, suffix ? '1' : 0);
 		}
 	}
-	core->GetAudioDrv()->Play(Sound, SFX_CHAN_HITS, Pos);
+	core->GetAudioDrv()->Play(Sound, SFX_CHAN_HITS, Pos, GEM_SND_SPATIAL);
 }
 
 // Play swing sounds
@@ -4550,7 +4569,7 @@ void Actor::PlaySwingSound(const WeaponInfo &wi) const
 	// this extra ATTACK in 2das was always played, together with anything else
 	ResRef sound;
 	GetSoundFrom2DA(sound, Verbal::Attack0);
-	if (!IsStar(sound)) core->GetAudioDrv()->Play(sound, SFX_CHAN_SWINGS, Pos);
+	if (!IsStar(sound)) core->GetAudioDrv()->Play(sound, SFX_CHAN_SWINGS, Pos, GEM_SND_SPATIAL);
 
 	// the CRE attack was played only if the itemtype was 0/misc to avoid clashes with the hardcoded exceptions
 	// TobExAL and Infinity Sounds prefer both to be played, so we match that, giving more choice to modders
@@ -4580,7 +4599,7 @@ void Actor::PlaySwingSound(const WeaponInfo &wi) const
 		if (!found) {
 			ResRef sound2;
 			GetSoundFromFile(sound2, *vb);
-			if (sound != sound2) core->GetAudioDrv()->Play(sound2, SFX_CHAN_SWINGS, Pos);
+			if (sound != sound2) core->GetAudioDrv()->Play(sound2, SFX_CHAN_SWINGS, Pos, GEM_SND_SPATIAL);
 		}
 	}
 
@@ -4592,7 +4611,7 @@ void Actor::PlaySwingSound(const WeaponInfo &wi) const
 		int isChoice = core->Roll(1, isCount, -1) + 2;
 		if (!gamedata->GetItemSound(sound, itemType, AnimRef(), isChoice)) return;
 	}
-	core->GetAudioDrv()->Play(sound, SFX_CHAN_SWINGS, Pos);
+	core->GetAudioDrv()->Play(sound, SFX_CHAN_SWINGS, Pos, GEM_SND_SPATIAL);
 }
 
 //Just to quickly inspect debug maximum values
@@ -4992,8 +5011,8 @@ void Actor::Turn(Scriptable *cleric, ieDword turnlevel)
 		evilcleric = true;
 	}
 
-	//a little adjustment of the level to get a slight randomness on who is turned
-	unsigned int level = GetXPLevel(true)-(GetGlobalID()&3);
+	ieDword level = GetXPLevel(true);
+	turnlevel += RAND(0, 3);
 
 	//this is safely hardcoded i guess
 	if (Modified[IE_GENERAL]!=GEN_UNDEAD) {
@@ -5025,7 +5044,7 @@ void Actor::Turn(Scriptable *cleric, ieDword turnlevel)
 				fx = EffectQueue::CreateEffect(control_undead_ref, GEN_UNDEAD, 3, FX_DURATION_INSTANT_LIMITED);
 			}
 			if (fx) {
-				fx->Duration = core->Time.round_sec;
+				fx->Duration = core->Time.round_sec * 10;
 				fx->Target = FX_TARGET_PRESET;
 				core->ApplyEffect(fx, this, cleric);
 				return;
@@ -5135,9 +5154,9 @@ void Actor::SendDiedTrigger() const
 		if (!neighbour->ShouldModifyMorale()) continue;
 		int pea = neighbour->GetStat(IE_EA);
 		if (ea == EA_PC && pea == EA_PC) {
-			neighbour->NewBase(IE_MORALE, (stat_t) -1, MOD_ADDITIVE);
+			neighbour->SetBase(IE_MORALE, neighbour->GetBase(IE_MORALE) - 1);
 		} else if (OfType(this, neighbour)) {
-			neighbour->NewBase(IE_MORALE, (stat_t) -1, MOD_ADDITIVE);
+			neighbour->SetBase(IE_MORALE, neighbour->GetBase(IE_MORALE) - 1);
 		// are we an enemy of neighbour, regardless if we're good or evil?
 		} else if (abs(ea - pea) > 30) {
 			neighbour->NewBase(IE_MORALE, 2, MOD_ADDITIVE);
@@ -5178,7 +5197,7 @@ void Actor::Die(Scriptable *killer, bool grantXP)
 	if (found) {
 		ResRef sound;
 		GetSoundFromFile(sound, Verbal::Die);
-		core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos);
+		core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos, GEM_SND_SPATIAL);
 	}
 
 	// remove poison, hold, casterhold, stun and its icon
@@ -5539,7 +5558,7 @@ void Actor::GetItemSlotInfo(ItemExtHeader *item, int which, int header) const
 	item->itemName = slot->ItemResRef;
 	item->slot = idx;
 	item->headerindex = headerindex;
-	if (headerindex>=CHARGE_COUNTERS) {
+	if (headerindex >= slot->Usages.size()) {
 		item->Charges=0;
 	} else {
 		item->Charges=slot->Usages[headerindex];
@@ -6053,8 +6072,8 @@ std::list<int> Actor::ListLevels() const
 	}
 
 	std::list<int> levels;
-	for (ieDword isclass = 0; isclass < ISCLASSES; ++isclass) {
-		auto level = GetClassLevel(isclass);
+	for (ieDword i = 0; i < ISCLASSES; ++i) {
+		auto level = GetClassLevel(i);
 		if (level) {
 			levels.push_back(level);
 		}
@@ -6860,7 +6879,7 @@ void Actor::PerformAttack(ieDword gameTime)
 		return;
 	}
 
-	if (IsDead()) {
+	if (ShouldStopAttack()) {
 		// this should be avoided by the AF_ALIVE check by all the calling actions
 		Log(ERROR, "Actor", "Attack by dead actor!");
 		return;
@@ -7343,7 +7362,7 @@ void Actor::UpdateActorState()
 		//IN BG1 and BG2, this is at the ninth frame... (depends on the combat bitmap, which we don't handle yet)
 		// however some critters don't have that long animations (eg. squirrel 0xC400)
 		if ((frameCount > 8 && currentFrame == 8) || (frameCount <= 8 && currentFrame == frameCount/2)) {
-			GetCurrentArea()->AddProjectile(attackProjectile, Pos, objects.LastTarget, false);
+			GetCurrentArea()->AddProjectile(attackProjectile, Pos, objects.LastTargetPersistent, false);
 			attackProjectile = NULL;
 		}
 	}
@@ -7882,7 +7901,7 @@ bool Actor::AdvanceAnimations()
 	return true;
 }
 
-bool Actor::IsDead() const
+bool Actor::ShouldStopAttack() const
 {
 	return InternalFlags & IF_STOPATTACK;
 }
@@ -7921,6 +7940,10 @@ bool Actor::ShouldDrawCircle() const
 	}
 
 	bool drawcircle = true; // we always show circle/target on pause
+	if (gc->InDialog() && gc->dialoghandler->IsTarget(this)) {
+		return true;
+	}
+
 	if (!(gc->GetDialogueFlags() & DF_FREEZE_SCRIPTS)) {
 		// check marker feedback level
 		ieDword markerfeedback = core->GetDictionary().Get("GUI Feedback Level", 4);
@@ -9318,6 +9341,7 @@ bool Actor::UseItem(ieDword slot, ieDword header, const Scriptable* target, ieDw
 			pro->TFlags |= PTF_TIMELESS;
 		}
 		attackProjectile = pro;
+		attackProjectile->SFlags &= ~PSF_FLYING;
 	} else { // launch it now as we are not attacking
 		SetOrientation(target->Pos, Pos, false);
 		GetCurrentArea()->AddProjectile(pro, Pos, tar->GetGlobalID(), false);
@@ -9442,7 +9466,7 @@ void Actor::ClearCurrentStanceAnims()
 	currentStance.shadow.clear();
 }
 
-void Actor::SetUsedWeapon(AnimRef AnimationType, const ieWord* MeleeAnimation, unsigned char wt)
+void Actor::SetUsedWeapon(AnimRef AnimationType, const std::array<ieWord, 3>& meleeAnimation, unsigned char wt)
 {
 	WeaponRef = AnimationType;
 	if (wt != IE_ANI_WEAPON_INVALID) WeaponType = wt;
@@ -9452,7 +9476,7 @@ void Actor::SetUsedWeapon(AnimRef AnimationType, const ieWord* MeleeAnimation, u
 	anims->SetWeaponRef(AnimationType);
 	anims->SetWeaponType(WeaponType);
 	ClearCurrentStanceAnims();
-	SetAttackMoveChances(MeleeAnimation);
+	SetAttackMoveChances(meleeAnimation);
 	if (InParty) {
 		//update the paperdoll weapon animation
 		core->SetEventFlag(EF_UPDATEANIM);
@@ -11148,7 +11172,7 @@ void Actor::PlayArmorSound() const
 
 	const ResRef armorSound = GetArmorSound();
 	if (!armorSound.IsEmpty()) {
-		core->GetAudioDrv()->Play(armorSound, SFX_CHAN_ARMOR, Pos);
+		core->GetAudioDrv()->Play(armorSound, SFX_CHAN_ARMOR, Pos, GEM_SND_SPATIAL);
 	}
 }
 

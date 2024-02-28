@@ -34,8 +34,7 @@ TextEdit::TextEdit(const Region& frame, unsigned short maxLength, Point p)
 {
 	ControlType = IE_GUI_EDIT;
 
-	// FIXME: should we set IE_FONT_SINGLE_LINE?
-	textContainer.SetAlignment(IE_FONT_ALIGN_MIDDLE | IE_FONT_ALIGN_LEFT);
+	textContainer.SetAlignment(IE_FONT_ALIGN_MIDDLE | IE_FONT_ALIGN_LEFT | IE_FONT_SINGLE_LINE);
 	textContainer.SetColors(ColorWhite, ColorBlack);
 	AddSubviewInFrontOfView(&textContainer);
 
@@ -62,7 +61,7 @@ void TextEdit::SetAlignment(unsigned char align)
 /** Set Font */
 void TextEdit::SetFont(Holder<Font> f)
 {
-	textContainer.SetFont(f);
+	textContainer.SetFont(std::move(f));
 }
 
 /** Key Press Event */
@@ -138,6 +137,20 @@ void TextEdit::TextChanged(const TextContainer& /*tc*/)
 String TextEdit::QueryText() const
 {
 	return textContainer.Text();
+}
+
+void TextEdit::SetBackground(const ResRef& bg, TextEditBG type)
+{
+	bgMos[type] = bg;
+}
+
+void TextEdit::SetBackground(TextEditBG type)
+{
+	auto mos = gamedata->GetResourceHolder<ImageMgr>(bgMos[type]);
+	if (mos) {
+		Holder<Sprite2D> img = mos->GetSprite2D();
+		View::SetBackground(std::move(img));
+	}
 }
 
 }

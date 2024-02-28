@@ -68,7 +68,7 @@ PathListNode *Map::RunAway(const Point &s, const Point &d, unsigned int size, in
 	char xSign = 1, ySign = 1;
 	size_t tries = 0;
 	NormalizeDeltas(dx, dy, double(gamedata->GetStepTime()) / caller->GetSpeed());
-	if (dx <= 0.333 && dy <= 0.333) return nullptr;
+	if (std::abs(dx) <= 0.333 && std::abs(dy) <= 0.333) return nullptr;
 	while (SquaredDistance(p, s) < unsigned(maxPathLength * maxPathLength * SEARCHMAP_SQUARE_DIAGONAL * SEARCHMAP_SQUARE_DIAGONAL)) {
 		Point rad(std::lround(p.x + 3 * xSign * dx), std::lround(p.y + 3 * ySign * dy));
 		if (!(GetBlockedInRadius(rad, size) & PathMapFlags::PASSABLE)) {
@@ -297,6 +297,7 @@ PathListNode *Map::GetLine(const Point &p, int steps, orient_t orient) const
 // target (the goal must be in sight of the end, if PF_SIGHT is specified)
 PathListNode *Map::FindPath(const Point &s, const Point &d, unsigned int size, unsigned int minDistance, int flags, const Actor *caller) const
 {
+	TRACY(ZoneScoped);
 	if (InDebugMode(DebugMode::PATHFINDER))
 		Log(DEBUG, "FindPath", "s = {}, d = {}, caller = {}, dist = {}, size = {}",
 			s, d,

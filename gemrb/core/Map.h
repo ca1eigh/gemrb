@@ -411,7 +411,7 @@ private:
 
 	private:
 		using profile_t = uint8_t;
-		profile_t loadProperties(const AutoTable &reverbs, id_t reverbID);
+		profile_t loadProperties(const AutoTable& reverbs, id_t reverbIdx);
 		static id_t obtainProfile(const ResRef& mapref);
 	};
 	
@@ -522,6 +522,7 @@ public:
 	bool HasActor(const Actor *actor) const;
 	bool SpawnsAlive() const;
 	void RemoveActor(Actor* actor);
+	Actor* GetRandomEnemySeen(const Actor* origin) const;
 
 	int GetActorCount(bool any) const;
 	//fix actors position if required

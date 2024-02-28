@@ -22,6 +22,7 @@
 #include "GameData.h"
 #include "Interface.h"
 #include "ImageMgr.h"
+#include "Tooltip.h"
 #include "Window.h"
 #include "GUI/GameControl.h"
 #include "GUI/GUIFactory.h"
@@ -41,11 +42,12 @@ Holder<Sprite2D> WindowManager::CursorMouseDown;
 
 void WindowManager::SetTooltipDelay(int delay)
 {
-	ToolTipDelay = delay;
+	// Max setting disables tooltips in originals, we just set it to an extremely high value for simplicity.
+	ToolTipDelay = (delay == 10 * Tooltip::DELAY_FACTOR) ? 10000000 : delay;
 }
 
 WindowManager::WindowManager(PluginHolder<Video> vid, std::shared_ptr<GUIFactory> fact)
-: guifact(fact), video(vid), tooltip(core->CreateTooltip())
+	: guifact(std::move(fact)), video(std::move(vid)), tooltip(core->CreateTooltip())
 {
 	assert(video);
 	assert(guifact);
@@ -593,6 +595,7 @@ WindowManager::HUDLock WindowManager::DrawHUD() const
 
 void WindowManager::DrawWindows() const
 {
+	TRACY(ZoneScoped);
 	HUDBuf->Clear();
 
 	if (windows.empty()) {

@@ -654,10 +654,12 @@ static PyObject* GemRB_Table_GetValue(PyObject* self, PyObject* args)
 		return AttributeError("RowIndex/RowString and ColIndex/ColString must be the same type.");
 	}
 	
-	auto GetIndex = [&tm](PyObject* obj, bool row) -> TableMgr::index_t {
+	auto GetIndex = [&tm](PyObject* obj, bool isRow) -> TableMgr::index_t {
 		if (PyUnicode_Check(obj)) {
-			auto str = PyString_AsStringView(obj);
-			return row ? tm->GetRowIndex(str) : tm->GetColumnIndex(str);
+			if (isRow) {
+				return tm->GetRowIndex(PyString_AsStringView(obj));
+			}
+			return tm->GetColumnIndex(PyString_AsStringView(obj));
 		} else if (PyLong_Check(obj)) {
 			return static_cast<TableMgr::index_t>(PyLong_AsLong(obj));
 		}
@@ -1917,10 +1919,10 @@ static PyObject* GemRB_Control_SetVarAssoc(PyObject* self, PyObject* args)
 		val = static_cast<Control::value_t>(PyLong_AsUnsignedLongMask(Value));
 	}
 
-	StringView VarName = PyString_AsStringView(pyVar);
+	auto VarName = PyString_AsStringView(pyVar);
 
 	Control::value_t realVal = core->GetDictionary().Get(VarName, 0);
-	Control::varname_t varname = Control::varname_t(VarName);
+	Control::varname_t varname = Control::varname_t(StringView(VarName));
 
 	ctrl->BindDictVariable(varname, val, Control::ValueRange(min, max));
 	// restore variable for sliders, since it's only a multiplier for them
@@ -2456,10 +2458,8 @@ static PyObject* GemRB_Button_SetSprites(PyObject* self, PyObject* args)
 	) {
 		Button* btn = GetView<Button>(self);
 		ABORT_IF_NULL(btn);
-		
-		auto wrapper = PyString_AsStringView(pyref);
-		StringView ResRef = wrapper;
 
+		ResRef ResRef = ResRefFromPy(pyref);
 		if (ResRef[0] == 0) {
 			btn->SetImage(ButtonImage::None, nullptr);
 			Py_RETURN_NONE;
@@ -3060,11 +3060,10 @@ static PyObject* GemRB_Button_SetHotKey(PyObject* self, PyObject* args)
 		PyObject* pyStr = nullptr;
 		PARSE_ARGS(args, "OO|i", &self, &pyStr, &global);
 
-		StringView keymap = PyString_AsStringView(pyStr);
-
+		auto keymap = PyString_AsStringView(pyStr);
 		auto func = core->GetKeyMap()->LookupFunction(keymap);
 		if (!func) {
-			Log(DEBUG, "GUIScript", "Couldn't find keymap entry for {}", keymap);
+			Log(DEBUG, "GUIScript", "Couldn't find keymap entry for {}", StringView(keymap));
 			Py_RETURN_NONE;
 		}
 
@@ -3809,7 +3808,7 @@ static PyObject* GemRB_VerbalConstant(PyObject * /*self*/, PyObject* args)
 	//get soundset based string constant
 	std::string sound = fmt::format("{}{}{}{:02d}", fmt::WideToChar{actor->PCStats->SoundFolder}, PathDelimiter, actor->PCStats->SoundSet, str);
 	channel = actor->InParty ? SFX_CHAN_CHAR0 + actor->InParty - 1 : SFX_CHAN_DIALOG;
-	core->GetAudioDrv()->Play(sound, channel, Point(), GEM_SND_RELATIVE|GEM_SND_SPEECH);
+	core->GetAudioDrv()->Play(sound, channel, Point(), GEM_SND_SPEECH | GEM_SND_EFX);
 	Py_RETURN_NONE;
 }
 
@@ -3842,7 +3841,7 @@ static PyObject* GemRB_PlaySound(PyObject * /*self*/, PyObject* args)
 {
 	char *channel_name = NULL;
 	Point pos;
-	unsigned int flags = GEM_SND_RELATIVE;
+	unsigned int flags = 0;
 	unsigned int channel = SFX_CHAN_GUI;
 	int index;
 
@@ -3862,7 +3861,9 @@ static PyObject* GemRB_PlaySound(PyObject * /*self*/, PyObject* args)
 			channel = core->GetAudioDrv()->GetChannel(channel_name);
 		}
 
-		if (PyUnicode_Check(pyref)) {
+		if (pyref == Py_None) {
+			core->GetAudioDrv()->Play("", channel, pos, flags);
+		} else if (PyUnicode_Check(pyref)) {
 			core->GetAudioDrv()->PlayMB(PyString_AsStringObj(pyref), channel, pos, flags);
 		} else {
 			core->GetAudioDrv()->Play(PyString_AsStringView(pyref), channel, pos, flags);
@@ -4272,13 +4273,12 @@ is what gamescripts know as GLOBAL variables. \n\
 
 static PyObject* GemRB_GetGameVar(PyObject * /*self*/, PyObject* args)
 {
-	PyObject* Variable;
-	PARSE_ARGS( args,  "O", &Variable );
+	PyObject* variable;
+	PARSE_ARGS(args,  "O", &variable);
 
 	GET_GAME();
 
-	StringView lookupVariable = static_cast<StringView>(PyString_AsStringView(Variable));
-	return PyLong_FromLong((unsigned long) game->GetGlobal(lookupVariable, 0));
+	return PyLong_FromLong((unsigned long) game->GetGlobal(ieVariableFromPy(variable), 0));
 }
 
 PyDoc_STRVAR( GemRB_PlayMovie__doc,
@@ -5715,15 +5715,16 @@ static PyObject* GemRB_GetSlotType(PyObject * /*self*/, PyObject* args)
 	PyDict_SetItemString(dict, "Tip", DecRef(PyLong_FromLong, (int)core->QuerySlottip(tmp)));
 	PyDict_SetItemString(dict, "Flags", PyLong_FromLong((int)core->QuerySlotFlags(tmp)));
 	//see if the actor shouldn't have some slots displayed
+	int weaponSlot;
 	if (!actor || !actor->PCStats) {
 		goto has_slot;
 	}
-	//WARNING:idx isn't used any more, recycling it
-	idx = Inventory::GetWeaponSlot();
-	if (tmp<idx || tmp>idx+3) {
+
+	weaponSlot = Inventory::GetWeaponSlot();
+	if (tmp < weaponSlot || tmp > weaponSlot + 3) {
 		goto has_slot;
 	}
-	if (actor->GetQuickSlot(tmp-idx)==0xffff) {
+	if (actor->GetQuickSlot(tmp - weaponSlot) == 0xffff) {
 		PyDict_SetItemString(dict, "ResRef", DecRef(PyString_FromString, ""));
 		goto continue_quest;
 	}
@@ -7021,7 +7022,7 @@ static PyObject* GemRB_ChangeContainerItem(PyObject * /*self*/, PyObject* args)
 	}
 
 	if (Sound && Sound[0]) {
-		core->GetAudioDrv()->PlayRelative(Sound, SFX_CHAN_GUI);
+		core->GetAudioDrv()->Play(Sound, SFX_CHAN_GUI);
 	}
 	Py_RETURN_NONE;
 }
@@ -7554,7 +7555,7 @@ static PyObject* ChangeStoreItem(Store* store, int slot, Actor* actor, StoreActi
 		OverrideSound(itemResRef, SoundItem, IS_DROP);
 		if (!SoundItem.IsEmpty()) {
 			// speech means we'll only play the last sound if multiple items were bought
-			core->GetAudioDrv()->Play(SoundItem, SFX_CHAN_GUI, Point(), GEM_SND_SPEECH | GEM_SND_RELATIVE);
+			core->GetAudioDrv()->Play(SoundItem, SFX_CHAN_GUI, Point(), GEM_SND_SPEECH);
 		}
 		res = ASI_SUCCESS;
 		break;
@@ -9358,7 +9359,7 @@ static PyObject* GemRB_DragItem(PyObject * /*self*/, PyObject* args)
 
 	OverrideSound(si->ItemResRef, Sound, IS_GET);
 	if (!Sound.IsEmpty()) {
-		core->GetAudioDrv()->PlayRelative(Sound, SFX_CHAN_GUI);
+		core->GetAudioDrv()->Play(Sound, SFX_CHAN_GUI);
 	}
 
 	//if res is positive, it is gold!
@@ -9432,7 +9433,7 @@ static PyObject* GemRB_DropDraggedItem(PyObject * /*self*/, PyObject* args)
 		int res = cc->AddItem(si);
 		OverrideSound(si->ItemResRef, Sound, IS_DROP);
 		if (!Sound.IsEmpty()) {
-			core->GetAudioDrv()->PlayRelative(Sound, SFX_CHAN_GUI);
+			core->GetAudioDrv()->Play(Sound, SFX_CHAN_GUI);
 		}
 		if (res == 2) {
 			// Whole amount was placed
@@ -9563,7 +9564,7 @@ static PyObject* GemRB_DropDraggedItem(PyObject * /*self*/, PyObject* args)
 	}
 
 	if (Sound && Sound[0]) {
-		core->GetAudioDrv()->PlayRelative(Sound, SFX_CHAN_GUI);
+		core->GetAudioDrv()->Play(Sound, SFX_CHAN_GUI);
 	}
 	return PyLong_FromLong(res);
 }

@@ -48,9 +48,9 @@ class Projectile;
 #define IE_ITEM_MOVABLE      0x00000004
 #define IE_ITEM_DISPLAYABLE  0x00000008
 #define IE_ITEM_CURSED       0x00000010
-#define IE_ITEM_NOT_COPYABLE 0x00000020
+#define IE_ITEM_NOT_COPYABLE 0x00000020 // unused, ITMExtHeader dictates this
 #define IE_ITEM_MAGICAL      0x00000040
-#define IE_ITEM_BOW          0x00000080 // TODO: ee lefthanded
+#define IE_ITEM_BOW          0x00000080 // TODO: ee lefthanded (same?), disallow offhand use (similar IE_ITEM_NOT_OFFHAND)
 #define IE_ITEM_SILVER       0x00000100
 #define IE_ITEM_COLD_IRON    0x00000200
 #define IE_ITEM_STOLEN       0x00000400 // TODO: ee offhanded
@@ -59,11 +59,11 @@ class Projectile;
 #define IE_ITEM_UNSELLABLE   ( IE_ITEM_CRITICAL | IE_ITEM_STOLEN ) // beware: StoreActionFlags::BUYCRITS may override the first half
 // see IESDP for details
 #define IE_ITEM_FORCE_2H     0x00002000 // TODO: ee, Force two-handed animation DISABLE_OFFHAND
-#define IE_ITEM_NOT_OFFHAND  0x00004000 // TODO: ee, Not usable in off-hand
-#define IE_ITEM_INV_USABLE   0x00008000 // TODO: ee ADAMANTINE (itemflag.ids); pstee, usable in inventory
-#define IE_ITEM_ADAMANTINE   0x00010000 // RECHECK vs IE_ITEM_INV_USABLE (missing from ids)
+#define IE_ITEM_NOT_OFFHAND  0x00004000 // ee, not usable in off-hand
+#define IE_ITEM_INV_USABLE   0x00008000 // TODO: ee, only pstee: usable in inventory, shared with IE_ITEM_ADAMANTINE
+#define IE_ITEM_ADAMANTINE   0x00008000 // bgee: adamantine (itemflag.ids)
 //tobex modder extensions, please note, these are not copied into the local slot bits
-#define IE_ITEM_NO_DISPEL    0x01000000 // disables destruction by dispelling; named BODYPART in ee - different?
+#define IE_ITEM_NO_DISPEL    0x01000000 // disables destruction by dispelling; named BODYPART in ee
 #define IE_ITEM_TOGGLE_CRITS 0x02000000 //toggles critical hit avertion
 #define IE_ITEM_NO_INVIS     0x04000000
 
@@ -160,7 +160,7 @@ public:
 	ieWord ChargeDepletion = 0;
 	ieDword RechargeFlags = 0; // this is a bitfield with many bits
 	ieWord ProjectileAnimation = 0;
-	ieWord MeleeAnimation[3]{};
+	std::array<ieWord, 3> MeleeAnimation;
 	//this value is set in projectiles and launchers too
 	int ProjectileQualifier = 0; // this is a derived value determined on load time
 	std::vector<Effect*> features;
@@ -237,7 +237,7 @@ public:
 	ieStrRef GetItemDesc(bool identified) const;
 
 	//returns if the item is usable, expend will also expend a charge
-	int UseCharge(ieWord *Charges, int header, bool expend) const;
+	int UseCharge(std::array<ieWord, CHARGE_COUNTERS>& charges, int header, bool expend) const;
 
 	ieDword GetWieldedGradient() const
 	{

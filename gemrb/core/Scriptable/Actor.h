@@ -949,7 +949,7 @@ public:
 	int GetFeat(unsigned int feat) const;
 	void SetFeat(unsigned int feat, BitOp mode);
 	void SetFeatValue(unsigned int feat, int value, bool init = true);
-	void SetUsedWeapon(AnimRef, const ieWord *MeleeAnimation,
+	void SetUsedWeapon(AnimRef, const std::array<ieWord, 3>& meleeAnimation,
 		unsigned char WeaponType = IE_ANI_WEAPON_INVALID);
 	void SetUsedShield(AnimRef, unsigned char WeaponType = IE_ANI_WEAPON_INVALID);
 	void SetUsedHelmet(AnimRef);
@@ -1061,7 +1061,7 @@ public:
 	int GetArmorWeightClass(ieWord armorType) const;
 	int GetTotalArmorFailure() const;
 	int GetArmorFailure(int &armor, int &shield) const;
-	bool IsDead() const;
+	bool ShouldStopAttack() const;
 	bool IsInvisibleTo(const Scriptable *checker) const;
 	int UpdateAnimationID(bool derived);
 	void MovementCommand(std::string command);

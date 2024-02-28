@@ -265,9 +265,6 @@ Interface::Interface(CoreSettings&& cfg)
 	Control::ActionRepeatDelay = config.ActionRepeatDelay;
 	GameControl::DebugFlags = config.DebugFlags;
 
-	ieDword brightness = vars.Get("Brightness Correction", 10);
-	ieDword contrast = vars.Get("Gamma Correction", 5);
-
 	Log(MESSAGE, "Core", "Initializing search path...");
 	if (!IsAvailable(PLUGIN_RESOURCE_DIRECTORY)) {
 		throw CIE("no DirectoryImporter!");
@@ -375,24 +372,6 @@ Interface::Interface(CoreSettings&& cfg)
 	Log(MESSAGE, "Core", "Reading Game Options...");
 	LoadGemRBINI();
 
-	// SDL2 driver requires the display to be created prior to sprite creation (opengl context)
-	// we also need the display to exist to create sprites using the display format
-	ieDword fullscreen = vars.Get("Full Screen", 0);
-
-	int createDisplayResult =
-	VideoDriver->CreateDisplay(
-				Size(config.Width, config.Height),
-				config.Bpp,
-				fullscreen,
-				config.GameName.c_str(),
-				config.CapFPS == 0
-		);
-
-	if (createDisplayResult == GEM_ERROR) {
-		throw CIE("Cannot initialize shaders.");
-	}
-	VideoDriver->SetGamma(brightness, contrast);
-
 	// load the game ini (baldur.ini, torment.ini, icewind.ini ...)
 	// read from our version of the config if it is present
 	path_t gemrbINI = "gem-" + INIConfig;
@@ -411,6 +390,27 @@ Interface::Interface(CoreSettings&& cfg)
 	if (!InitializeVarsWithINI(ini_path)) {
 		Log(WARNING, "Core", "Unable to set dictionary default values!");
 	}
+
+	// SDL2 driver requires the display to be created prior to sprite creation (opengl context)
+	// we also need the display to exist to create sprites using the display format
+	ieDword fullscreen = vars.Get("Full Screen", 0);
+	// Brightness and contrast are specified in gem-INICONFIG, so display must be initialized after reading it.
+	ieDword brightness = vars.Get("Brightness Correction", 0);
+	ieDword contrast = vars.Get("Gamma Correction", 0);
+
+	int createDisplayResult =
+	VideoDriver->CreateDisplay(
+				Size(config.Width, config.Height),
+				config.Bpp,
+				fullscreen,
+				config.GameName.c_str(),
+				config.CapFPS == 0
+		);
+
+	if (createDisplayResult == GEM_ERROR) {
+		throw CIE("Cannot initialize shaders.");
+	}
+	VideoDriver->SetGamma(brightness, contrast);
 
 	// We use this for the game's state exclusively
 	ieDword maxRefreshRate = vars.Get("Maximum Frame Rate", 30);
@@ -1014,6 +1014,8 @@ void Interface::Main()
 			VideoDriver->DrawRect( fpsRgn, ColorBlack );
 			fps->Print(fpsRgn, String(fpsstring), IE_FONT_ALIGN_MIDDLE | IE_FONT_SINGLE_LINE, {ColorWhite, ColorBlack});
 		}
+
+		TRACY(FrameMark);
 	} while (VideoDriver->SwapBuffers(config.CapFPS) == GEM_OK && !(QuitFlag&QF_KILL));
 	QuitGame(0);
 }
@@ -1123,7 +1125,7 @@ void Interface::LoadPlugins() const
 void Interface::LoadSprites()
 {
 	Log(MESSAGE, "Core", "Loading Cursors...");
-	auto anim = gamedata->GetFactoryResourceAs<const AnimationFactory>(MainCursorsImage, IE_BAM_CLASS_ID);
+	auto anim = gamedata->GetFactoryResourceAs<const AnimationFactory>(MainCursorsImage, IE_BAM_CLASS_ID, true);
 	size_t CursorCount = 0;
 	if (anim) {
 		CursorCount = anim->GetCycleCount();
@@ -1299,90 +1301,90 @@ bool Interface::HasFeature(GFFlags flag) const
 }
 
 static const EnumArray<GFFlags, StringView> game_flags {
-		"HasKaputz",          //0 GF_HAS_KAPUTZ
-		"AllStringsTagged",   //1 GF_ALL_STRINGS_TAGGED
-		"HasSongList",        //2 GF_HAS_SONGLIST
-		"TeamMovement",       //3 GF_TEAM_MOVEMENT
-		"UpperButtonText",    //4 GF_UPPER_BUTTON_TEXT
-		"LowerLabelText",     //5 GF_LOWER_LABEL_TEXT
-		"HasPartyIni",        //6 GF_HAS_PARTY_INI
-		"SoundFolders",       //7 GF_SOUNDFOLDERS
-		"IgnoreButtonFrames", //8 GF_IGNORE_BUTTON_FRAMES
-		"OneByteAnimationID", //9 GF_ONE_BYTE_ANIMID
-		"HasDPLAYER",         //10GF_HAS_DPLAYER
-		"HasEXPTABLE",        //11GF_HAS_EXPTABLE
-		"HasBeastsIni",       //12GF_HAS_BEASTS_INI
-		"HasEEEffects",       //13GF_HAS_EE_EFFECTS
-		"HasPickSound",       //14GF_HAS_PICK_SOUND
-		"IWDMapDimensions",   //15GF_IWD_MAP_DIMENSIONS
-		"AutomapINI",         //16GF_AUTOMAP_INI
-		"SmallFog",           //17GF_SMALL_FOG
-		"ReverseDoor",        //18GF_REVERSE_DOOR
-		"ProtagonistTalks",   //19GF_PROTAGONIST_TALKS
-		"HasSpellList",       //20GF_HAS_SPELLLIST
-		"IWD2ScriptName",     //21GF_IWD2_SCRIPTNAME
-		"DialogueScrolls",    //22GF_DIALOGUE_SCROLLS
-		"KnowWorld",          //23GF_KNOW_WORLD
-		"ReverseToHit",       //24GF_REVERSE_TOHIT
-		"SaveForHalfDamage",  //25GF_SAVE_FOR_HALF
-		"CharNameIsGabber",   //26GF_CHARNAMEISGABBER
-		"MagicBit",           //27GF_MAGICBIT
-		"CheckAbilities",     //28GF_CHECK_ABILITIES
-		"ChallengeRating",    //29GF_CHALLENGERATING
-		"SpellBookIconHack",  //30GF_SPELLBOOKICONHACK
-		"EnhancedEffects",    //31GF_ENHANCED_EFFECTS
-		"DeathOnZeroStat",    //32GF_DEATH_ON_ZERO_STAT
-		"SpawnIni",           //33GF_SPAWN_INI
-		"IWD2DeathVarFormat", //34GF_IWD2_DEATHVARFORMAT
-		"HasResDataIni",      //35GF_RESDATA_INI
-		"OverrideCursorPos",  //36GF_OVERRIDE_CURSORPOS
-		"BreakableWeapons",   //37GF_BREAKABLE_WEAPONS
-		"3EdRules",           //38GF_3ED_RULES
-		"LevelslotPerClass",  //39GF_LEVELSLOT_PER_CLASS
-		"SelectiveMagicRes",  //40GF_SELECTIVE_MAGIC_RES
-		"HasHideInShadows",   //41GF_HAS_HIDE_IN_SHADOWS
-		"AreaVisitedVar",     //42GF_AREA_VISITED_VAR
-		"ProperBackstab",     //43GF_PROPER_BACKSTAB
-		"OnScreenText",       //44GF_ONSCREEN_TEXT
-		"HasSpecificDamageBonus", //45GF_SPECIFIC_DMG_BONUS
-		"StrrefSaveGame",     //46GF_STRREF_SAVEGAME
-		"SimplifiedDisruption",//47GF_SIMPLE_DISRUPTION
-		"BiographyIsRes",     //48GF_BIOGRAPHY_RES
-		"NoBiography",        //49GF_NO_BIOGRAPHY
-		"StealIsAttack",      //50GF_STEAL_IS_ATTACK
-		"CutsceneAreascripts",//51GF_CUTSCENE_AREASCRIPTS
-		"FlexibleWorldmap",   //52GF_FLEXIBLE_WMAP
-		"AutoSearchHidden",   //53GF_AUTOSEARCH_HIDDEN
-		"PSTStateFlags",      //54GF_PST_STATE_FLAGS
-		"NoDropCanMove",      //55GF_NO_DROP_CAN_MOVE
-		"JournalHasSections", //56GF_JOURNAL_HAS_SECTIONS
-		"CastingSounds",      //57GF_CASTING_SOUNDS
-		"EnhancedCastingSounds", //58GF_CASTING_SOUNDS2
-		"ForceAreaScript",    //59GF_FORCE_AREA_SCRIPT
-		"AreaOverride",       //60GF_AREA_OVERRIDE
-		"NoNewVariables",     //61GF_NO_NEW_VARIABLES
-		"HasSoundsIni",       //62GF_SOUNDS_INI
-		"HasNoNPCFlag",       //63GF_USEPOINT_400
-		"HasUsePointFlag",    //64GF_USEPOINT_200
-		"HasFloatMenu",       //65GF_HAS_FLOAT_MENU
-		"NoUndroppable",      //67GF_NO_UNDROPPABLE
-		"StartActive",        //68GF_START_ACTIVE
-		"HasInfopointDialogs", //69GF_INFOPOINT_DIALOGS
-		"ImplicitAreaAnimBackground", //70GF_IMPLICIT_AREAANIM_BACKGROUND
-		"HealOn100Plus",      //71GF_HEAL_ON_100PLUS
-		"InPartyAllowsDead",  //72GF_IN_PARTY_ALLOWS_DEAD
-		"ZeroTimerIsValid",   //73GF_ZERO_TIMER_IS_VALID
-		"ShopsRechargeItems", //74GF_SHOP_RECHARGE
-		"MeleeHeaderUsesProjectile", //75GF_MELEEHEADER_USESPROJECTILE
-		"ForceDialogPause",   //76GF_FORCE_DIALOGPAUSE
-		"RandomBanterDialogs",//77GF_RANDOM_BANTER_DIALOGS
-		"FixedMoraleOpcode",  //79GF_FIXED_MORALE_OPCODE
-		"Happiness",          //80GF_HAPPINESS
-		"EfficientORTrigger", //81GF_EFFICIENT_OR
-		"LayeredWaterTiles",  //82GF_LAYERED_WATER_TILES
-		"ClearingActionOverride", //83GF_CLEARING_ACTIONOVERRIDE
-		"DamageInnocentRep",  //84GF_DAMAGE_INNOCENT_REP
-		"HasWeaponSets" // GF_HAS_WEAPON_SETS
+	"HasKaputz", // GFFlags::HAS_KAPUTZ
+	"AllStringsTagged", // GFFlags::ALL_STRINGS_TAGGED
+	"HasSongList", // GFFlags::HAS_SONGLIST
+	"TeamMovement", // GFFlags::TEAM_MOVEMENT
+	"UpperButtonText", // GFFlags::UPPER_BUTTON_TEXT
+	"LowerLabelText", // GFFlags::LOWER_LABEL_TEXT
+	"HasPartyIni", // GFFlags::HAS_PARTY_INI
+	"SoundFolders", // GFFlags::SOUNDFOLDERS
+	"IgnoreButtonFrames", // GFFlags::IGNORE_BUTTON_FRAMES
+	"OneByteAnimationID", // GFFlags::ONE_BYTE_ANIMID
+	"HasDPLAYER", // GFFlags::HAS_DPLAYER
+	"HasEXPTABLE", // GFFlags::HAS_EXPTABLE
+	"HasBeastsIni", // GFFlags::HAS_BEASTS_INI
+	"HasEEEffects", // GFFlags::HAS_EE_EFFECTS
+	"HasPickSound", // GFFlags::HAS_PICK_SOUND
+	"IWDMapDimensions", // GFFlags::IWD_MAP_DIMENSIONS
+	"AutomapINI", // GFFlags::AUTOMAP_INI
+	"SmallFog", // GFFlags::SMALL_FOG
+	"ReverseDoor", // GFFlags::REVERSE_DOOR
+	"ProtagonistTalks", // GFFlags::PROTAGONIST_TALKS
+	"HasSpellList", // GFFlags::HAS_SPELLLIST
+	"IWD2ScriptName", // GFFlags::IWD2_SCRIPTNAME
+	"DialogueScrolls", // GFFlags::DIALOGUE_SCROLLS
+	"KnowWorld", // GFFlags::KNOW_WORLD
+	"ReverseToHit", // GFFlags::REVERSE_TOHIT
+	"SaveForHalfDamage", // GFFlags::SAVE_FOR_HALF
+	"CharNameIsGabber", // GFFlags::CHARNAMEISGABBER
+	"MagicBit", // GFFlags::MAGICBIT
+	"CheckAbilities", // GFFlags::CHECK_ABILITIES
+	"ChallengeRating", // GFFlags::CHALLENGERATING
+	"SpellBookIconHack", // GFFlags::SPELLBOOKICONHACK
+	"EnhancedEffects", // GFFlags::ENHANCED_EFFECTS
+	"DeathOnZeroStat", // GFFlags::DEATH_ON_ZERO_STAT
+	"SpawnIni", // GFFlags::SPAWN_INI
+	"IWD2DeathVarFormat", // GFFlags::IWD2_DEATHVARFORMAT
+	"HasResDataIni", // GFFlags::RESDATA_INI
+	"BreakableWeapons", // GFFlags::BREAKABLE_WEAPONS
+	"3EdRules", // GFFlags::3ED_RULES
+	"LevelslotPerClass", // GFFlags::LEVELSLOT_PER_CLASS
+	"SelectiveMagicRes", // GFFlags::SELECTIVE_MAGIC_RES
+	"HasHideInShadows", // GFFlags::HAS_HIDE_IN_SHADOWS
+	"AreaVisitedVar", // GFFlags::AREA_VISITED_VAR
+	"ProperBackstab", // GFFlags::PROPER_BACKSTAB
+	"OnScreenText", // GFFlags::ONSCREEN_TEXT
+	"HasSpecificDamageBonus", // GFFlags::SPECIFIC_DMG_BONUS
+	"StrrefSaveGame", // GFFlags::STRREF_SAVEGAME
+	"SimplifiedDisruption", // GFFlags::SIMPLE_DISRUPTION
+	"BiographyIsRes", // GFFlags::BIOGRAPHY_RES
+	"NoBiography", // GFFlags::NO_BIOGRAPHY
+	"StealIsAttack", // GFFlags::STEAL_IS_ATTACK
+	"CutsceneAreascripts", // GFFlags::CUTSCENE_AREASCRIPTS
+	"FlexibleWorldmap", // GFFlags::FLEXIBLE_WMAP
+	"AutoSearchHidden", // GFFlags::AUTOSEARCH_HIDDEN
+	"PSTStateFlags", // GFFlags::PST_STATE_FLAGS
+	"NoDropCanMove", // GFFlags::NO_DROP_CAN_MOVE
+	"JournalHasSections", // GFFlags::JOURNAL_HAS_SECTIONS
+	"CastingSounds", // GFFlags::CASTING_SOUNDS
+	"EnhancedCastingSounds", // GFFlags::CASTING_SOUNDS2
+	"ForceAreaScript", // GFFlags::FORCE_AREA_SCRIPT
+	"AreaOverride", // GFFlags::AREA_OVERRIDE
+	"NoNewVariables", // GFFlags::NO_NEW_VARIABLES
+	"HasSoundsIni", // GFFlags::SOUNDS_INI
+	"HasNoNPCFlag", // GFFlags::USEPOINT_400
+	"HasUsePointFlag", // GFFlags::USEPOINT_200
+	"HasFloatMenu", // GFFlags::HAS_FLOAT_MENU
+	"NoUndroppable", // GFFlags::NO_UNDROPPABLE
+	"StartActive", // GFFlags::START_ACTIVE
+	"HasInfopointDialogs", // GFFlags::INFOPOINT_DIALOGS
+	"ImplicitAreaAnimBackground", // GFFlags::IMPLICIT_AREAANIM_BACKGROUND
+	"HealOn100Plus", // GFFlags::HEAL_ON_100PLUS
+	"InPartyAllowsDead", // GFFlags::IN_PARTY_ALLOWS_DEAD
+	"ZeroTimerIsValid", // GFFlags::ZERO_TIMER_IS_VALID
+	"ShopsRechargeItems", // GFFlags::SHOP_RECHARGE
+	"MeleeHeaderUsesProjectile", // GFFlags::MELEEHEADER_USESPROJECTILE
+	"ForceDialogPause", // GFFlags::FORCE_DIALOGPAUSE
+	"RandomBanterDialogs", // GFFlags::RANDOM_BANTER_DIALOGS
+	"FixedMoraleOpcode", // GFFlags::FIXED_MORALE_OPCODE
+	"Happiness", // GFFlags::HAPPINESS
+	"EfficientORTrigger", // GFFlags::EFFICIENT_OR
+	"LayeredWaterTiles", // GFFlags::LAYERED_WATER_TILES
+	"ClearingActionOverride", // GFFlags::CLEARING_ACTIONOVERRIDE
+	"DamageInnocentRep", // GFFlags::DAMAGE_INNOCENT_REP
+	"HasWeaponSets", // GFFlags::GF_HAS_WEAPON_SETS
+	"HighlightOutlineOnly", // GFFlags::HIGHLIGHT_OUTLINE_ONLY
 };
 
 /** Loads gemrb.ini */
@@ -1773,6 +1775,7 @@ bool Interface::IsFreezed() const
 
 void Interface::GameLoop(void)
 {
+	TRACY(ZoneScoped);
 	update_scripts = false;
 	GameControl *gc = GetGameControl();
 	if (gc) {
@@ -2079,7 +2082,7 @@ int Interface::PlayMovie(const ResRef& movieRef)
 
 	Holder<SoundHandle> sound_override;
 	if (!sound_resref.empty()) {
-		sound_override = AudioDriver->PlayRelative(sound_resref, SFX_CHAN_NARRATOR);
+		sound_override = AudioDriver->Play(sound_resref, SFX_CHAN_NARRATOR);
 	}
 
 	// clear whatever is currently on screen
@@ -3133,6 +3136,8 @@ void Interface::SanitizeItem(CREItem *item) const
 	if (!itm) return;
 
 	if (itm->Flags & IE_ITEM_NO_DISPEL) item->Flags |= IE_INV_ITEM_NO_DISPEL;
+	if (itm->Flags & IE_ITEM_NOT_OFFHAND) item->Flags |= IE_INV_ITEM_NOT_OFFHAND;
+	if (itm->Flags & IE_ITEM_ADAMANTINE) item->Flags |= IE_INV_ITEM_ADAMANTINE;
 
 	item->MaxStackAmount = itm->MaxStackAmount;
 	//if item is stacked mark it as so
@@ -3144,7 +3149,7 @@ void Interface::SanitizeItem(CREItem *item) const
 	} else {
 		//set charge counters for non-rechargeable items if their charge is zero
 		//set charge counters for items not using charges to one
-		for (int i = 0; i < CHARGE_COUNTERS; i++) {
+		for (size_t i = 0; i < item->Usages.size(); i++) {
 			const ITMExtHeader *h = itm->GetExtHeader(i);
 			if (!h) {
 				item->Usages[i] = 0;
@@ -3296,7 +3301,7 @@ bool Interface::ResolveRandomItem(CREItem *itm) const
 			if (itm->ItemResRef == "no_drop") {
 				return false;
 			}
-			itm->Usages[0] = static_cast<ieWord>(Roll(1, diceSides, 0));
+			itm->Usages[0] = RAND<ieWord>(1, diceSides);
 		}
 	}
 	Log(ERROR, "Interface", "Loop detected while generating random item: {}", itm->ItemResRef);
@@ -3402,8 +3407,13 @@ ieStrRef Interface::GetRumour(const ResRef& dlgref)
 //plays stock sound listed in defsound.2da
 Holder<SoundHandle> Interface::PlaySound(size_t index, unsigned int channel) const
 {
+	return PlaySound(index, channel, Point(), 0);
+}
+
+Holder<SoundHandle> Interface::PlaySound(size_t index, unsigned int channel, const Point& p, unsigned int flags) const
+{
 	if (index <= gamedata->defaultSounds.size()) {
-		return AudioDriver->PlayRelative(gamedata->defaultSounds[index], channel);
+		return AudioDriver->Play(gamedata->defaultSounds[index], channel, p, flags);
 	}
 	return NULL;
 }
@@ -3445,15 +3455,10 @@ bool Interface::HasCurrentArea() const
 	return game->GetCurrentArea() != nullptr;
 }
 
-//this is used only for the console
+// this is used by our console and editable textareas (textedits provide their own cursor)
 Holder<Sprite2D> Interface::GetCursorSprite() const
 {
-	Holder<Sprite2D> spr = gamedata->GetBAMSprite(TextCursorBam, 0, 0);
-	if (spr && HasFeature(GFFlags::OVERRIDE_CURSORPOS)) {
-		spr->Frame.x = 1;
-		spr->Frame.y = spr->Frame.h - 1;
-	}
-	return spr;
+	return gamedata->GetBAMSprite(TextCursorBam, 0, 0);
 }
 
 Holder<Sprite2D> Interface::GetScrollCursorSprite(orient_t orient, int spriteNum) const

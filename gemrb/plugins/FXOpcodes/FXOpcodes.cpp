@@ -982,7 +982,7 @@ static inline void HandleMainStatBonus(const Actor *target, int stat, Effect *fx
 static inline void PlayRemoveEffect(const Actor *target, const Effect* fx, StringView defsound = StringView())
 {
 	core->GetAudioDrv()->Play(fx->Resource.IsEmpty() ? defsound : StringView(fx->Resource),
-			SFX_CHAN_ACTIONS, target->Pos);
+			SFX_CHAN_ACTIONS, target->Pos, GEM_SND_SPATIAL);
 }
 
 //resurrect code used in many places
@@ -1493,7 +1493,7 @@ int fx_death (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		// Actor::CheckOnDeath handles the actual chunking
 		damagetype = DAMAGE_CRUSHING|DAMAGE_CHUNKING;
 		// bg1 & iwds have this file, bg2 & pst none
-		core->GetAudioDrv()->Play("GORE", SFX_CHAN_HITS, target->Pos);
+		core->GetAudioDrv()->Play("GORE", SFX_CHAN_HITS, target->Pos, GEM_SND_SPATIAL);
 		break;
 	case 16:
 		BASE_STATE_SET(STATE_PETRIFIED);
@@ -1507,12 +1507,12 @@ int fx_death (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		if (!target->GetStat(IE_DISABLECHUNKING)) BASE_STATE_SET(STATE_PETRIFIED);
 		damagetype = DAMAGE_CRUSHING|DAMAGE_CHUNKING;
 		// file only in iwds
-		core->GetAudioDrv()->Play("GORE2", SFX_CHAN_HITS, target->Pos);
+		core->GetAudioDrv()->Play("GORE2", SFX_CHAN_HITS, target->Pos, GEM_SND_SPATIAL);
 		break;
 	case 128:
 		if (!target->GetStat(IE_DISABLECHUNKING)) BASE_STATE_SET(STATE_FROZEN);
 		damagetype = DAMAGE_COLD|DAMAGE_CHUNKING;
-		core->GetAudioDrv()->Play("GORE2", SFX_CHAN_HITS, target->Pos);
+		core->GetAudioDrv()->Play("GORE2", SFX_CHAN_HITS, target->Pos, GEM_SND_SPATIAL);
 		break;
 	case 256:
 		damagetype = DAMAGE_ELECTRICITY;
@@ -1903,7 +1903,11 @@ int fx_set_panic_state(Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		Action* action;
 		const Actor* caster = GetCasterObject();
 		if (caster) {
-			action = GenerateActionDirect("RunAwayFromNoInterruptNoLeaveArea([-1])", caster);
+			if (core->HasFeature(GFFlags::IWD_MAP_DIMENSIONS)) { // iwd troll scripts are incompatible with full panic
+				action = GenerateActionDirect("RunAwayFrom([-1],300)", caster);
+			} else {
+				action = GenerateActionDirect("RunAwayFromNoInterrupt([-1],300)", caster);
+			}
 		} else {
 			action = GenerateAction("RandomWalk()");
 		}
@@ -1936,8 +1940,9 @@ int fx_set_poisoned_state (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		return FX_ABORT;
 	}
 
-	int count = target->fxqueue.CountEffects(fx_poisoned_state_ref, fx->Parameter1, fx->Parameter2, fx->Resource);
-	if (count > 1) {
+	// don't stack, only run one of the same at a time
+	ieDword count = target->fxqueue.CountEffects(fx_poisoned_state_ref, fx->Parameter1, fx->Parameter2, fx->Resource);
+	if (count > 1 && target->fxqueue.GetEffectOrder(fx_poisoned_state_ref, fx) < count) {
 		return FX_APPLIED;
 	}
 
@@ -2033,39 +2038,35 @@ int fx_set_poisoned_state (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 // gemrb extension: if the resource field is filled, it will remove curse only from the specified item
 int fx_remove_curse (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
-	// print("fx_remove_curse(%2d): Resource: %s Type: %d", fx->Opcode, fx->Resource, fx->Parameter2);
-
-	switch(fx->Parameter2)
-	{
-	case 1:
-		//this is pst specific
+	if (fx->Parameter2 == 1) {
+		// this is pst specific, other games don't use parameters
 		target->fxqueue.RemoveAllEffects(fx_pst_jumble_curse_ref);
-		break;
-	default:
-		Inventory *inv = &target->inventory;
-		int i = target->inventory.GetSlotCount();
-		while(i--) {
-			//does this slot need unequipping
-			if (core->QuerySlotEffects(i) ) {
-				if (!fx->Resource.IsEmpty() && inv->GetSlotItem(i)->ItemResRef != fx->Resource) {
-					continue;
-				}
-				if (!(inv->GetItemFlag(i)&IE_INV_ITEM_CURSED)) {
-					continue;
-				}
-				if (inv->UnEquipItem(i,true)) {
-					CREItem *tmp = inv->RemoveItem(i);
-					if(inv->AddSlotItem(tmp,-3)!=ASI_SUCCESS) {
-						//if the item couldn't be placed in the inventory, then put it back to the original slot
-						inv->SetSlotItem(tmp,i);
-						//and drop it in the area. (If there is no area, then the item will stay in the inventory)
-						target->DropItem(i,0);
-					}
-				}
+		return FX_NOT_APPLIED;
+	}
+
+	Inventory* inv = &target->inventory;
+	int i = target->inventory.GetSlotCount();
+	while (i--) {
+		// does this slot need unequipping
+		if (!core->QuerySlotEffects(i)) continue;
+		if (!fx->Resource.IsEmpty() && inv->GetSlotItem(i)->ItemResRef != fx->Resource) {
+			continue;
+		}
+		if (!(inv->GetItemFlag(i) & IE_INV_ITEM_CURSED)) {
+			continue;
+		}
+
+		if (inv->UnEquipItem(i, true)) {
+			CREItem* tmp = inv->RemoveItem(i);
+			if (inv->AddSlotItem(tmp, -3) != ASI_SUCCESS) {
+				// if the item couldn't be placed in the inventory, then put it back to the original slot
+				inv->SetSlotItem(tmp, i);
+				// and drop it in the area. (If there is no area, then the item will stay in the inventory)
+				target->DropItem(i, 0);
 			}
 		}
-		target->fxqueue.RemoveAllEffects(fx_apply_effect_curse_ref);
 	}
+	target->fxqueue.RemoveAllEffects(fx_apply_effect_curse_ref);
 
 	//this is an instant effect
 	return FX_NOT_APPLIED;
@@ -3687,7 +3688,7 @@ int fx_turn_undead (Scriptable* Owner, Actor* target, Effect* fx)
 {
 	// print("fx_turn_undead(%2d): Level %d", fx->Opcode, fx->Parameter1);
 
-	if (target->GetStat(IE_NOTURNABLE)) {
+	if (target->GetStat(IE_NOTURNABLE) || Owner == target) {
 		return FX_NOT_APPLIED;
 	}
 	if (fx->Parameter1) {
@@ -3755,9 +3756,9 @@ int fx_remove_item (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		if (fx->Parameter1 == 0) {
 			core->PlaySound(DS_ITEM_GONE, SFX_CHAN_GUI);
 		} else if (fx->Parameter1 == 1) {
-			core->GetAudioDrv()->PlayRelative("AMB_D02B", SFX_CHAN_GUI);
+			core->GetAudioDrv()->Play("AMB_D02B", SFX_CHAN_GUI);
 		} else if (fx->Parameter1 == 2) {
-			core->GetAudioDrv()->PlayRelative(fx->Resource2, SFX_CHAN_GUI);
+			core->GetAudioDrv()->Play(fx->Resource2, SFX_CHAN_GUI);
 		}
 	}
 
@@ -3924,17 +3925,14 @@ int fx_mirror_image (Scriptable* Owner, Actor* target, Effect* fx)
 }
 
 // 0x78 Protection:Weapons
+// gemrb extension: modes 12 and 13 - arbitrary checks
 int fx_immune_to_weapon (Scriptable* /*Owner*/, Actor* /*target*/, Effect* fx)
 {
-	// print("fx_immune_to_weapon(%2d): Mod: %d, Type: %d", fx->Opcode, fx->Parameter1, fx->Parameter2);
 	if (!fx->FirstApply) return FX_APPLIED;
 
-	int level;
-	ieDword mask, value;
-
-	level = -1;
-	mask = 0;
-	value = 0;
+	int level = -1;
+	ieDword mask = 0;
+	ieDword value = 0;
 	switch(fx->Parameter2) {
 	case 0: //enchantment level
 		level = fx->Parameter1;
@@ -4533,7 +4531,7 @@ int fx_display_string (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 			// mrttaunt.src has placeholder text, but valid audio, so enable just sound
 			if (fx->IsVariable) {
 				StringBlock sb = core->strings->GetStringBlock(str);
-				core->GetAudioDrv()->Play(StringView(sb.Sound), SFX_CHAN_ACTIONS, target->Pos);
+				core->GetAudioDrv()->Play(StringView(sb.Sound), SFX_CHAN_ACTIONS, target->Pos, GEM_SND_SPATIAL);
 			} else {
 				fx->Parameter1 = ieDword(str);
 				DisplayStringCore(target, str, DS_HEAD);
@@ -4744,13 +4742,8 @@ int fx_cast_spell (Scriptable* Owner, Actor* target, Effect* fx)
 
 	if (fx->Parameter2 == 0 || target->Type == ST_CONTAINER) {
 		// no deplete, no interrupt, caster or provided level
-		// ForceSpell doesn't have a RES variant, so there's more work
-		std::string tmp = fmt::format("ForceSpell([-1],{})", ResolveSpellNumber(fx->Resource));
-		Action *forceSpellAction = GenerateActionDirect(std::move(tmp), target);
-		if (fx->Parameter1 != 0) {
-			// override casting level
-			forceSpellAction->int1Parameter = fx->Parameter1;
-		}
+		std::string tmp = fmt::format("ForceSpellRES(\"{}\",[-1],{})", fx->Resource, fx->Parameter1);
+		Action* forceSpellAction = GenerateActionDirect(std::move(tmp), target);
 		Owner->AddActionInFront(forceSpellAction);
 		Owner->ImmediateEvent();
 	} else if (fx->Parameter2 == 1) {
@@ -4784,13 +4777,8 @@ int fx_cast_spell_point (Scriptable* Owner, Actor* /*target*/, Effect* fx)
 {
 	if (fx->Parameter2 == 0) {
 		// no deplete, no interrupt, caster or provided level
-		// ForceSpellPoint doesn't have a RES variant, so there's more work
-		std::string tmp = fmt::format("ForceSpellPoint([{}.{}],{})", fx->Pos.x, fx->Pos.y, ResolveSpellNumber(fx->Resource));
-		Action *forceSpellAction = GenerateAction(std::move(tmp));
-		if (fx->Parameter1 != 0) {
-			// override casting level
-			forceSpellAction->int1Parameter = fx->Parameter1;
-		}
+		std::string tmp = fmt::format("ForceSpellPointRES(\"{}\",[{}.{}],{})", fx->Resource, fx->Pos.x, fx->Pos.y, fx->Parameter1);
+		Action* forceSpellAction = GenerateAction(std::move(tmp));
 		Owner->AddActionInFront(forceSpellAction);
 		Owner->ImmediateEvent();
 	} else if (fx->Parameter2 == 1) {
@@ -5271,9 +5259,9 @@ int fx_playsound (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 
 	//this is probably inaccurate
 	if (target) {
-		core->GetAudioDrv()->Play(fx->Resource, SFX_CHAN_HITS, target->Pos);
+		core->GetAudioDrv()->Play(fx->Resource, SFX_CHAN_HITS, target->Pos, GEM_SND_SPATIAL);
 	} else {
-		core->GetAudioDrv()->PlayRelative(fx->Resource, SFX_CHAN_HITS);
+		core->GetAudioDrv()->Play(fx->Resource, SFX_CHAN_HITS);
 	}
 	//this is an instant, it shouldn't stick
 	return FX_NOT_APPLIED;
@@ -5602,7 +5590,7 @@ int fx_find_familiar (Scriptable* Owner, Actor* target, Effect* fx)
 	}
 
 	//The protagonist is ALWAYS in the first slot
-	if (game->GetPC(0, false)!=target) {
+	if (game->protagonist != PM_TEAM && game->GetPC(0, false) != target) {
 		displaymsg->DisplayConstantStringName(HCStrings::FamiliarProtagonistOnly, GUIColors::RED, target);
 		return FX_NOT_APPLIED;
 	}
@@ -6108,7 +6096,8 @@ int fx_play_visual_effect (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 			sca->Pos = fx->Pos;
 		}
 	} else {
-		sca->Pos = target->Pos;
+		// add also its offset, so drawing order is ok (eg. with stoneskin)
+		sca->Pos = target->Pos + Point(sca->XOffset, sca->YOffset);
 	}
 	sca->PlayOnce();
 	map->AddVVCell(sca);
@@ -8372,7 +8361,7 @@ int fx_iwdee_monster_summoning(Scriptable* Owner, Actor* target, Effect* fx)
 // 0x14d (333) Spell Effect: Static Charge, ee
 int fx_static_charge(Scriptable* Owner, Actor* target, Effect* fx)
 {
-	// if the target is dead, this effect ceases to exist
+	// if the owner (target) is dead, this effect ceases to exist
 	if (STATE_GET(STATE_DEAD | STATE_PETRIFIED | STATE_FROZEN)) {
 		displaymsg->DisplayConstantStringName(HCStrings::StaticDissipate, GUIColors::WHITE, target);
 		return FX_NOT_APPLIED;
@@ -8389,32 +8378,41 @@ int fx_static_charge(Scriptable* Owner, Actor* target, Effect* fx)
 
 	// ee level param and unhardcoded delay
 	ieDword level = std::max(1U, fx->Parameter2);
-	ieWord delay = fx->IsVariable;
-	if (!delay) delay = static_cast<ieWord>(core->Time.round_size);
+	ieWord delay = fx->IsVariable * 10;
+	if (!delay) delay = static_cast<ieWord>(core->Time.rounds_per_turn * core->Time.round_size);
 	ResRef spell = fx->Resource;
 
 	// timing
 	fx->TimingMode = FX_DURATION_DELAY_PERMANENT;
-	fx->Duration = core->GetGame()->GameTime + 10 * delay;
+	fx->Duration = core->GetGame()->GameTime + delay;
 	fx->Parameter1--;
+
+	// this effect is targeted on the caster, so we need to manually find a damage target
+	const Map* map = target->GetCurrentArea();
+	if (!map) return FX_APPLIED;
+	Actor* victim = map->GetRandomEnemySeen(target);
+	if (!victim) {
+		displaymsg->DisplayConstantStringName(HCStrings::StaticDissipate, GUIColors::WHITE, target);
+		return FX_APPLIED;
+	}
 
 	// ee style
 	if (fx->Opcode == 0x14d) {
 		if (spell.IsEmpty()) {
 			spell.Format("{:.7}B", fx->SourceRef);
 		}
-		core->ApplySpell(spell, target, Owner, level);
+		core->ApplySpell(spell, victim, Owner, level);
 		return ret;
 	}
 
 	// iwd2 style
 	if (!spell.IsEmpty()) {
-		core->ApplySpell(spell, target, Owner, fx->Power);
+		core->ApplySpell(spell, victim, Owner, fx->Power);
 		return ret;
 	}
 
 	// how style
-	target->Damage(DICE_ROLL(0), DAMAGE_ELECTRICITY, Owner, MOD_ADDITIVE, fx->SavingThrowType);
+	victim->Damage(DICE_ROLL(0), DAMAGE_ELECTRICITY, Owner, MOD_ADDITIVE, fx->SavingThrowType);
 	return ret;
 }
 

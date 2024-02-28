@@ -948,7 +948,7 @@ void Scriptable::CastSpellPointEnd(int level, bool keepStance)
 
 	if (!keepStance) {
 		// yep, the original didn't use the casting channel for this!
-		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos);
+		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
 	}
 
 	CreateProjectile(SpellResRef, 0, level, false);
@@ -1021,7 +1021,7 @@ void Scriptable::CastSpellEnd(int level, bool keepStance)
 	}
 
 	if (!keepStance) {
-		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos);
+		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
 	}
 
 	//if the projectile doesn't need to follow the target, then use the target position
@@ -1630,16 +1630,6 @@ int Selectable::CircleSize2Radius() const
 
 void Selectable::DrawCircle(const Point& p) const
 {
-	/* BG2 colours ground circles as follows:
-	dark green for unselected party members
-	bright green for selected party members
-	flashing green/white for a party member the mouse is over
-	bright red for enemies
-	yellow for panicked actors
-	flashing red/white for enemies the mouse is over
-	flashing cyan/white for neutrals the mouse is over
-	*/
-
 	if (circleSize <= 0) {
 		return;
 	}
@@ -1737,11 +1727,17 @@ void Highlightable::DrawOutline(Point origin) const
 	}
 	origin = outline->BBox.origin - origin;
 
-	if (core->HasFeature(GFFlags::PST_STATE_FLAGS)) {
-		VideoDriver->DrawPolygon(outline.get(), origin, outlineColor, true, BlitFlags::MOD | BlitFlags::HALFTRANS);
-	} else {
-		VideoDriver->DrawPolygon( outline.get(), origin, outlineColor, true, BlitFlags::BLENDED|BlitFlags::HALFTRANS );
-		VideoDriver->DrawPolygon( outline.get(), origin, outlineColor, false );
+	bool highlightOutlineOnly = core->HasFeature(GFFlags::HIGHLIGHT_OUTLINE_ONLY);
+	bool pstStateFlags = core->HasFeature(GFFlags::PST_STATE_FLAGS);
+
+	if (!highlightOutlineOnly) {
+		BlitFlags flag = BlitFlags::HALFTRANS | (pstStateFlags ? BlitFlags::MOD : BlitFlags::BLENDED);
+
+		VideoDriver->DrawPolygon(outline.get(), origin, outlineColor, true, flag);
+	}
+
+	if (highlightOutlineOnly || !pstStateFlags) {
+		VideoDriver->DrawPolygon(outline.get(), origin, outlineColor, false);
 	}
 }
 
@@ -1975,11 +1971,9 @@ void Movable::SetOrientation(const Point& from, const Point& to, bool slow)
 	SetOrientation(GetOrient(from, to), slow);
 }
 
-void Movable::SetAttackMoveChances(const ieWord *amc)
+void Movable::SetAttackMoveChances(const std::array<ieWord, 3>& amc)
 {
-	AttackMovements[0]=amc[0];
-	AttackMovements[1]=amc[1];
-	AttackMovements[2]=amc[2];
+	AttackMovements = amc;
 }
 
 //this could be used for WingBuffet as well
@@ -2087,6 +2081,14 @@ void Movable::DoStep(unsigned int walkScale, ieDword time) {
 		double dx = nmptStep.x - Pos.x;
 		double dy = nmptStep.y - Pos.y;
 		Map::NormalizeDeltas(dx, dy, double(gamedata->GetStepTime()) / double(walkScale));
+		if (dx == 0 && dy == 0) {
+			// probably shouldn't happen, but it does when running bg2's cut28a set of cutscenes
+			ClearPath(true);
+			Log(DEBUG, "PathFinderWIP", "Abandoning because I'm exactly at the goal");
+			pathAbandoned = true;
+			return;
+		}
+
 		Actor *actorInTheWay = nullptr;
 		// We can't use GetActorInRadius because we want to only check directly along the way
 		// and not be blocked by actors who are on the sides

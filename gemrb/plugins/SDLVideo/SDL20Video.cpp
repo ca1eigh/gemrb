@@ -23,6 +23,10 @@
 #include "Audio.h"
 #include "Interface.h"
 
+#ifdef USE_TRACY
+#include <tracy/TracyOpenGL.hpp>
+#endif
+
 using namespace GemRB;
 
 #ifdef BAKE_ICON
@@ -216,6 +220,8 @@ int SDL20VideoDriver::CreateSDLDisplay(const char* title, bool vsync)
 	glewInit();
 #endif
 
+	TRACY(TracyGpuContext);
+
 	scratchBuffer = CreateBuffer(Region(Point(), screenSize), BufferFormat::DISPLAY_ALPHA);
 	scratchBuffer->Clear();
 
@@ -279,6 +285,8 @@ void SDL20VideoDriver::SwapBuffers(VideoBuffers& buffers)
 	blitRGBAShader->SetUniformValue("u_stencil", 1, 0);
 	blitRGBAShader->SetUniformValue("u_dither", 1, 0);
 	blitRGBAShader->SetUniformValue("u_rgba", 1, 1);
+	blitRGBAShader->SetUniformValue("u_brightness", 1, 1);
+	blitRGBAShader->SetUniformValue("u_contrast", 1, 1);
 #endif
 
 	SDL_SetRenderTarget(renderer, NULL);
@@ -291,6 +299,9 @@ void SDL20VideoDriver::SwapBuffers(VideoBuffers& buffers)
 		(*it)->RenderOnDisplay(renderer);
 	}
 
+#if USE_OPENGL_BACKEND
+	TRACY(TracyGpuCollect);
+#endif
 	SDL_RenderPresent( renderer );
 }
 
@@ -370,6 +381,7 @@ void SDL20VideoDriver::BlitSpriteNativeClipped(const SDLTextureSprite2D* spr, co
 
 void SDL20VideoDriver::BlitSpriteNativeClipped(SDL_Texture* texSprite, const Region& srgn, const Region& drgn, BlitFlags flags, const SDL_Color* tint)
 {
+	TRACY(ZoneScoped);
 	SDL_Rect srect = RectFromRegion(srgn);
 	SDL_Rect drect = RectFromRegion(drgn);
 	
@@ -460,6 +472,9 @@ int SDL20VideoDriver::RenderCopyShaded(SDL_Texture* texture, const SDL_Rect* src
 	}
 
 	blitRGBAShader->SetUniformValue("u_greyMode", 1, greyMode);
+
+	blitRGBAShader->SetUniformValue("u_brightness", 1, brightness);
+	blitRGBAShader->SetUniformValue("u_contrast", 1, contrast);
 
 	GLint channel = 3;
 	if (flags & BlitFlags::STENCIL_RED) {
@@ -589,12 +604,20 @@ void SDL20VideoDriver::DrawRawGeometry(
 		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	}
 
+	#if !SDL_VERSION_ATLEAST(2, 0, 20)
+	static_assert(sizeof(int) == sizeof(SDL_Color), "Incompatible types to cast");
+	#endif
+
 	SDL_RenderGeometryRaw(
 		renderer,
 		nullptr,
 		vertices.data(),
 		2 * sizeof(float),
+		#if SDL_VERSION_ATLEAST(2, 0, 20)
 		reinterpret_cast<const SDL_Color*>(colors.data()),
+		#else
+		reinterpret_cast<const int*>(colors.data()),
+		#endif
 		sizeof(Color),
 		nullptr,
 		0,
@@ -989,11 +1012,11 @@ bool SDL20VideoDriver::CanDrawRawGeometry() const {
 #endif
 }
 
-void SDL20VideoDriver::SetGamma(int brightness, int /*contrast*/)
+void SDL20VideoDriver::SetGamma(int newBrightness, int newContrast)
 {
-	// FIXME: hardcoded hack. in in Interface our default brigtness value is 10
-	// so we assume that to be "normal" (1.0) value.
-	SDL_SetWindowBrightness(window, (float)brightness/10.0);
+	// Steps chosen empirically to give ranges close to originals.
+	brightness = 1.0 + (float)newBrightness * 0.0015;
+	contrast = 1.0 + (float)newContrast * 0.05;
 }
 
 bool SDL20VideoDriver::SetFullscreenMode(bool set)

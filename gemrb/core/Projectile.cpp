@@ -120,14 +120,14 @@ Projectile::AnimArray Projectile::CreateOrientedAnimations(const AnimationFactor
 		case 5:
 			c = SixteenToFive[cycle];
 			// orientations go counter-clockwise, starting south
-			if (cycle <= 8) {
-				// top-right quadrant
-				mirrorFlags = BlitFlags::MIRRORY;
-			} else if (cycle < 12) {
+			if (cycle > 4 && cycle <= 8) {
 				// top-left quadrant
+				mirrorFlags = BlitFlags::MIRRORY;
+			} else if (cycle > 8 && cycle < 12) {
+				// top-right quadrant
 				mirrorFlags = BlitFlags::MIRRORX | BlitFlags::MIRRORY;
-			} else if (cycle > 4) {
-				// bottom-left quadrant
+			} else if (cycle >= 12 && cycle <= 15) {
+				// bottom-right quadrant
 				mirrorFlags = BlitFlags::MIRRORX;
 			}
 			break;
@@ -342,8 +342,12 @@ void Projectile::Setup()
 	}
 
 	phase = P_TRAVEL;
-	travel_handle.sound = core->GetAudioDrv()->Play(FiringSound, SFX_CHAN_MISSILE,
-				Pos, (SFlags & PSF_LOOPING ? GEM_SND_LOOPING : 0));
+	unsigned int flags = GEM_SND_SPATIAL;
+	if (SFlags & PSF_LOOPING) {
+		flags |= GEM_SND_LOOPING;
+	}
+
+	travel_handle.sound = core->GetAudioDrv()->Play(FiringSound, SFX_CHAN_MISSILE, Pos, flags);
 
 	//create more projectiles
 	if(ExtFlags&PEF_ITERATION) {
@@ -553,8 +557,12 @@ void Projectile::UpdateSound()
 		StopSound();
 	}
 	if (!travel_handle || !travel_handle->Playing()) {
-		travel_handle.sound = core->GetAudioDrv()->Play(ArrivalSound, SFX_CHAN_MISSILE,
-				Pos, (SFlags & PSF_LOOPING2 ? GEM_SND_LOOPING : 0));
+		unsigned int flags = GEM_SND_SPATIAL;
+		if (SFlags & PSF_LOOPING2) {
+			flags |= GEM_SND_LOOPING;
+		}
+
+		travel_handle.sound = core->GetAudioDrv()->Play(ArrivalSound, SFX_CHAN_MISSILE, Pos, flags);
 		SFlags|=PSF_SOUND2;
 	}
 }
@@ -1113,7 +1121,8 @@ void Projectile::SecondaryTarget()
 		ieDword targetID = actor->GetGlobalID();
 
 		//this flag is actually about ignoring the caster (who is at the center)
-		if ((SFlags & PSF_IGNORE_CENTER) && Caster == targetID) {
+		// the bg2 divine "find traps" spell has both set and fx_find_traps is expected to run on the caster
+		if ((SFlags & PSF_IGNORE_CENTER) && Caster == targetID && !(Extension->AFlags & PAF_INANIMATE)) {
 			continue;
 		}
 
@@ -1352,7 +1361,7 @@ void Projectile::SpawnFragments(const Holder<ProjectileExtension>& extension) co
 
 void Projectile::DrawExplodingPhase1() const
 {
-	core->GetAudioDrv()->Play(Extension->SoundRes, SFX_CHAN_MISSILE, Pos);
+	core->GetAudioDrv()->Play(Extension->SoundRes, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
 
 	// play VVC in center
 	if (!(Extension->AFlags & PAF_VVC)) {
@@ -1647,7 +1656,7 @@ void Projectile::DrawExplosion(const Region& vp, BlitFlags flags)
 		DrawExplodingPhase1();
 		phase=P_EXPLODING2;
 	} else {
-		core->GetAudioDrv()->Play(Extension->AreaSound, SFX_CHAN_MISSILE, Pos);
+		core->GetAudioDrv()->Play(Extension->AreaSound, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
 	}
 	
 	if (Extension->Spread) {

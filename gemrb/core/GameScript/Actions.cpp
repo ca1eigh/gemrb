@@ -1725,11 +1725,14 @@ void GameScript::DisplayString(Scriptable* Sender, Action* parameters)
 	if (!target) {
 		target=Sender;
 	}
-	if (Sender->Type==ST_ACTOR) {
-		DisplayStringCore(target, ieStrRef(parameters->int0Parameter), DS_CONSOLE);
-	} else {
-		DisplayStringCore(target, ieStrRef(parameters->int0Parameter), DS_AREA);
+
+	int flags = DS_CONSOLE;
+
+	if (Sender->Type != ST_ACTOR) {
+		flags |= DS_AREA;
 	}
+
+	DisplayStringCore(target, ieStrRef(parameters->int0Parameter), flags);
 }
 
 //DisplayStringHead, but wait until done
@@ -1904,13 +1907,13 @@ void GameScript::PlaySoundPoint(Scriptable* /*Sender*/, Action* parameters)
 {
 	Log(MESSAGE, "Actions", "PlaySound({})", parameters->string0Parameter);
 	core->GetAudioDrv()->Play(parameters->string0Parameter, SFX_CHAN_ACTIONS,
-		parameters->pointParameter);
+		parameters->pointParameter, GEM_SND_SPATIAL);
 }
 
 void GameScript::PlaySoundNotRanged(Scriptable* /*Sender*/, Action* parameters)
 {
 	Log(MESSAGE, "Actions", "PlaySound({})", parameters->string0Parameter);
-	core->GetAudioDrv()->PlayRelative(parameters->string0Parameter, SFX_CHAN_ACTIONS);
+	core->GetAudioDrv()->Play(parameters->string0Parameter, SFX_CHAN_ACTIONS);
 }
 
 void GameScript::Continue(Scriptable* /*Sender*/, Action* /*parameters*/)
@@ -2619,14 +2622,14 @@ void GameScript::ToggleDoor(Scriptable* Sender, Action* /*parameters*/)
 			door->AddTrigger(TriggerEntry(trigger_failedtoopen, actor->GetGlobalID()));
 
 			//playsound unsuccessful opening of door
-			core->PlaySound(door->IsOpen() ? DS_CLOSE_FAIL : DS_OPEN_FAIL, SFX_CHAN_ACTIONS);
+			core->PlaySound(door->IsOpen() ? DS_CLOSE_FAIL : DS_OPEN_FAIL, SFX_CHAN_ACTIONS, *otherp, GEM_SND_SPATIAL);
 			Sender->ReleaseCurrentAction();
 			actor->TargetDoor = 0;
 			return; //don't open door
 		}
 
 		//trap scripts are triggered by SetDoorOpen
-		door->SetDoorOpen(!door->IsOpen(), false, actor->GetGlobalID());
+		door->SetDoorOpen(!door->IsOpen(), true, actor->GetGlobalID());
 	} else {
 		MoveNearerTo(Sender, *p, MAX_OPERATING_DISTANCE,0);
 		return;
@@ -2667,14 +2670,12 @@ void GameScript::MoveBetweenAreas(Scriptable* Sender, Action* parameters)
 }
 
 //spell is depleted, casting time is calculated, interruptible
-//FIXME The caster must meet the level requirements as set in the spell file
 void GameScript::Spell(Scriptable* Sender, Action* parameters)
 {
 	SpellCore(Sender, parameters, SC_NO_DEAD|SC_RANGE_CHECK|SC_DEPLETE|SC_AURA_CHECK);
 }
 
 //spell is depleted, casting time is calculated, interruptible
-//FIXME The caster must meet the level requirements as set in the spell file
 void GameScript::SpellPoint(Scriptable* Sender, Action* parameters)
 {
 	SpellPointCore(Sender, parameters, SC_RANGE_CHECK|SC_DEPLETE|SC_AURA_CHECK);
@@ -2682,7 +2683,6 @@ void GameScript::SpellPoint(Scriptable* Sender, Action* parameters)
 
 //spell is not depleted (doesn't need to be memorised or known)
 //casting time is calculated, interruptible
-//FIXME The caster must meet the level requirements as set in the spell file
 void GameScript::SpellNoDec(Scriptable* Sender, Action* parameters)
 {
 	SpellCore(Sender, parameters, SC_NO_DEAD|SC_RANGE_CHECK|SC_AURA_CHECK);
@@ -2690,23 +2690,21 @@ void GameScript::SpellNoDec(Scriptable* Sender, Action* parameters)
 
 //spell is not depleted (doesn't need to be memorised or known)
 //casting time is calculated, interruptible
-//FIXME The caster must meet the level requirements as set in the spell file
 void GameScript::SpellPointNoDec(Scriptable* Sender, Action* parameters)
 {
 	SpellPointCore(Sender, parameters, SC_RANGE_CHECK|SC_AURA_CHECK);
 }
 
+// this one has many signatures:
+// ForceSpell(O:Target*,I:Spell*Spell)
+// ForceSpellRES(S:RES*,O:Target*)
+// ForceSpellRES(S:RES*,O:Target*,I:CastingLevel*)
+// ForceSpellRESNoFeedback(S:RES*,O:Target*) - no logging or overhead text; add another SC_ flag once understood
 //spell is not depleted (doesn't need to be memorised or known)
 // casting time is calculated, not interruptible
-//FIXME The caster must meet the level requirements as set in the spell file
 void GameScript::ForceSpell(Scriptable* Sender, Action* parameters)
 {
-	// gemrb extension for internal use
-	if (parameters->int1Parameter) {
-		SpellCore(Sender, parameters, SC_NOINTERRUPT | SC_SETLEVEL);
-	} else {
-		SpellCore(Sender, parameters, SC_NOINTERRUPT);
-	}
+	SpellCore(Sender, parameters, SC_NOINTERRUPT | SC_SETLEVEL);
 }
 
 void GameScript::ForceSpellRange(Scriptable* Sender, Action* parameters)
@@ -2716,15 +2714,9 @@ void GameScript::ForceSpellRange(Scriptable* Sender, Action* parameters)
 
 //spell is not depleted (doesn't need to be memorised or known)
 // casting time is calculated, not interruptible
-//FIXME The caster must meet the level requirements as set in the spell file
 void GameScript::ForceSpellPoint(Scriptable* Sender, Action* parameters)
 {
-	// gemrb extension for internal use
-	if (parameters->int1Parameter) {
-		SpellPointCore(Sender, parameters, SC_NOINTERRUPT | SC_SETLEVEL);
-	} else {
-		SpellPointCore(Sender, parameters, SC_NOINTERRUPT);
-	}
+	SpellPointCore(Sender, parameters, SC_NOINTERRUPT | SC_SETLEVEL);
 }
 
 void GameScript::ForceSpellPointRange(Scriptable* Sender, Action* parameters)
@@ -2734,7 +2726,6 @@ void GameScript::ForceSpellPointRange(Scriptable* Sender, Action* parameters)
 
 //ForceSpell with zero casting time
 // zero casting time, no depletion, not interruptible
-//FIXME The caster must meet the level requirements as set in the spell file
 void GameScript::ReallyForceSpell(Scriptable* Sender, Action* parameters)
 {
 	SpellCore(Sender, parameters, SC_NOINTERRUPT|SC_SETLEVEL|SC_INSTANT);
@@ -2743,7 +2734,6 @@ void GameScript::ReallyForceSpell(Scriptable* Sender, Action* parameters)
 //ForceSpellPoint with zero casting time
 // zero casting time, no depletion (finish casting at point), not interruptible
 //no CFB
-//FIXME The caster must meet the level requirements as set in the spell file
 void GameScript::ReallyForceSpellPoint(Scriptable* Sender, Action* parameters)
 {
 	SpellPointCore(Sender, parameters, SC_NOINTERRUPT|SC_SETLEVEL|SC_INSTANT);
@@ -6826,8 +6816,8 @@ void GameScript::UseItem(Scriptable* Sender, Action* parameters)
 		return;
 	}
 
-	act->UseItem(Slot, header, tar, flags);
 	Sender->ReleaseCurrentAction();
+	act->UseItem(Slot, header, tar, flags);
 }
 
 void GameScript::UseItemPoint(Scriptable* Sender, Action* parameters)
@@ -6876,8 +6866,10 @@ void GameScript::UseItemPoint(Scriptable* Sender, Action* parameters)
 		return;
 	}
 
-	act->UseItemPoint(Slot, header, parameters->pointParameter, flags);
+	Point targetPos = parameters->pointParameter;
+
 	Sender->ReleaseCurrentAction();
+	act->UseItemPoint(Slot, header, targetPos, flags);
 }
 
 //addfeat will be able to remove feats too
@@ -7351,9 +7343,9 @@ void GameScript::SpellCastEffect(Scriptable* Sender, Action* parameters)
 	}
 
 	// voice
-	core->GetAudioDrv()->Play(parameters->string0Parameter, channel, Sender->Pos, GEM_SND_SPEECH | GEM_SND_QUEUE);
+	core->GetAudioDrv()->Play(parameters->string0Parameter, channel, Sender->Pos, GEM_SND_SPEECH | GEM_SND_QUEUE | GEM_SND_SPATIAL);
 	// starting sound, played at the same time, but on a different channel
-	core->GetAudioDrv()->Play(parameters->string1Parameter, SFX_CHAN_CASTING, Sender->Pos, GEM_SND_QUEUE);
+	core->GetAudioDrv()->Play(parameters->string1Parameter, SFX_CHAN_CASTING, Sender->Pos, GEM_SND_QUEUE | GEM_SND_SPATIAL);
 	// NOTE: only a few uses have also an ending sound that plays when the effect ends (also stopping Sound1)
 	// but we don't even read all three string parameters, as Action stores just two
 	// seems like a waste of memory to impose it on everyone, just for these few users
@@ -7642,9 +7634,11 @@ void GameScript::DestroyAllFragileEquipment(Scriptable* Sender, Action* paramete
 		return;
 	}
 
-	// TODO: ensure it's using the inventory/CREItem flags, not Item — IE_ITEM_ADAMANTINE won't work as an input otherwise
-	// merge with DestroyAllDestructableEquipment
-	actor->inventory.DestroyItem("", parameters->int0Parameter, ~0);
+	// bits are from itemflag.ids and are identical to our Item flags, not CREItem
+	// handling the only known user for now
+	ieDword flags = parameters->int0Parameter;
+	if (flags & IE_ITEM_ADAMANTINE) flags = (flags | IE_INV_ITEM_ADAMANTINE) & ~IE_ITEM_ADAMANTINE;
+	actor->inventory.DestroyItem("", flags, ~0);
 }
 
 void GameScript::SetOriginalClass(Scriptable* Sender, Action* parameters)
@@ -7803,6 +7797,6 @@ void GameScript::MoveToCampaign(Scriptable* /*Sender*/, Action* parameters)
 // 	Delays actions until the voice channel of the active creature is ready to play a new sound.
 //
 // 471 PlaySoundThroughVoice(S:Sound*)
-// 	Plays the specified sound through the actor's voice channel. Uses GEM_SND_RELATIVE.
+// 	Plays the specified sound through the actor's voice channel.
 
 }

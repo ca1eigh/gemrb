@@ -61,12 +61,12 @@ PluginHolder<SymbolMgr> overrideTriggersTable;
 PluginHolder<SymbolMgr> overrideActionsTable;
 PluginHolder<SymbolMgr> objectsTable;
 
-TriggerFunction triggers[MAX_TRIGGERS];
-ActionFunction actions[MAX_ACTIONS];
-short actionflags[MAX_ACTIONS];
-short triggerflags[MAX_TRIGGERS];
-ObjectFunction objects[MAX_OBJECTS];
-IDSFunction idtargets[MAX_OBJECT_FIELDS];
+std::array<TriggerFunction, MAX_TRIGGERS> triggers;
+std::array<ActionFunction, MAX_ACTIONS> actions;
+std::array<ObjectFunction, MAX_OBJECTS> objects;
+std::array<IDSFunction, MAX_OBJECT_FIELDS> idtargets;
+std::array<short, MAX_ACTIONS> actionflags;
+std::array<short, MAX_TRIGGERS> triggerflags;
 ResRefRCCache<Script> BcsCache; //cache for scripts
 int ObjectIDSCount = 7;
 int MaxObjectNesting = 5;
@@ -475,7 +475,9 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 	// PST does not echo verbal constants in the console, their strings
 	// actually contain development related identifying comments
 	// thus the console flag is unset.
-	if (core->HasFeature(GFFlags::ONSCREEN_TEXT) || !charactersubtitles) {
+	// The console flag is also unset when we get a string from an ACTOR without
+	// subtitles enabled, but e.g. AREA strings should still be displayed.
+	if (core->HasFeature(GFFlags::ONSCREEN_TEXT) || (Sender->Type == ST_ACTOR && !charactersubtitles)) {
 		flags &= ~DS_CONSOLE;
 	}
 
@@ -493,7 +495,13 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 				if(flags&DS_NONAME) {
 					displaymsg->DisplayString(sb.text);
 				} else {
-					displaymsg->DisplayStringName(Strref, GUIColors::WHITE, Sender, STRING_FLAGS::NONE);
+					// Default color is white, color for party is different.
+					Actor* actor = Scriptable::As<Actor>(Sender);
+					auto color = GUIColors::MSG;
+					if (actor && actor->InParty) {
+						color = GUIColors::MSGPARTY;
+					}
+					displaymsg->DisplayStringName(Strref, color, Sender, STRING_FLAGS::NONE);
 				}
 			}
 			if (flags & (DS_HEAD | DS_AREA)) {
@@ -506,19 +514,20 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 	}
 
 	if (soundpath && soundpath[0] && !(flags & DS_SILENT)) {
-		ieDword speech = 0;
-		Point pos = Sender->Pos;
-		if (flags&DS_SPEECH) {
-			speech = GEM_SND_SPEECH;
+		ieDword soundFlags = GEM_SND_EFX;
+		Point pos;
+		if (flags & DS_SPEECH) {
+			soundFlags |= GEM_SND_SPEECH;
 		}
-		// disable position, but only for party
+
 		Actor* actor = Scriptable::As<Actor>(Sender);
-		if (!actor || actor->InParty ||
-			core->InCutSceneMode() || core->GetGameControl()->InDialog()) {
-			speech |= GEM_SND_RELATIVE;
-			pos.reset();
+		// Spatial unless PC, cutscene or dialog
+		if (actor && !actor->InParty && !core->InCutSceneMode() && !core->GetGameControl()->InDialog()) {
+			pos = Sender->Pos;
+			soundFlags |= GEM_SND_SPATIAL;
 		}
-		if (flags&DS_QUEUE) speech|=GEM_SND_QUEUE;
+
+		if (flags&DS_QUEUE) soundFlags |= GEM_SND_QUEUE;
 		
 		unsigned int channel = SFX_CHAN_DIALOG;
 		if (flags & DS_CONST && actor) {
@@ -530,7 +539,7 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 		}
 		
 		tick_t len = 0;
-		core->GetAudioDrv()->Play(StringView(soundpath), channel, pos, speech, &len);
+		core->GetAudioDrv()->Play(StringView(soundpath), channel, pos, soundFlags, &len);
 		tick_t counter = (core->Time.defaultTicksPerSec * len) / 1000;
 
 		if (actor && len > 0 && flags & DS_CIRCLE) {
@@ -1580,14 +1589,12 @@ static int GetIdsValue(const char *&symbol, const ResRef& idsname)
 		return -1;
 	}
 
-	char symbolname[64];
-	int x;
-	for (x=0;ismysymbol(*symbol) && x<(int) sizeof(symbolname)-1;x++) {
-		symbolname[x]=*symbol;
+	std::string symbolName(64, '\0');
+	for (int x = 0; ismysymbol(*symbol) && x < 63; x++) {
+		symbolName[x] = *symbol;
 		symbol++;
 	}
-	symbolname[x]=0;
-	return valHook->GetValue(symbolname);
+	return valHook->GetValue(symbolName);
 }
 
 static int ParseIntParam(const char *&src, const char *&str)
@@ -1742,7 +1749,7 @@ Action* GenerateActionCore(const char *src, const char *str, unsigned short acti
 			// Action - only ActionOverride takes such a parameter
 			{
 				SKIP_ARGUMENT();
-				char action[257];
+				std::string action(257, '\0');
 				int i = 0;
 				int openParenthesisCount = 0;
 				while (true) {
@@ -1763,7 +1770,6 @@ Action* GenerateActionCore(const char *src, const char *str, unsigned short acti
 					i++;
 					src++;
 				}
-				action[i] = 0;
 				Action* act = GenerateAction( action);
 				if (!act) {
 					delete newAction;
@@ -2667,11 +2673,12 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 	}
 
 	// use the passed level instead of the caster's casting level
+	// if it's still 0 afterwards, it will revert to the caster's level
 	if (flags&SC_SETLEVEL) {
-		if (!parameters->resref0Parameter.IsEmpty()) {
-			level = parameters->int0Parameter;
+		if (parameters->resref0Parameter.IsEmpty()) {
+			level = parameters->int1Parameter; // int0 was the spell id
 		} else {
-			level = parameters->int1Parameter;
+			level = parameters->int0Parameter;
 		}
 	}
 
@@ -2820,11 +2827,12 @@ void SpellPointCore(Scriptable *Sender, Action *parameters, int flags)
 	}
 
 	// use the passed level instead of the caster's casting level
+	// if it's still 0 afterwards, it will revert to the caster's level
 	if (flags&SC_SETLEVEL) {
-		if (!parameters->resref0Parameter.IsEmpty()) {
-			level = parameters->int0Parameter;
-		} else {
+		if (parameters->resref0Parameter.IsEmpty()) {
 			level = parameters->int1Parameter;
+		} else {
+			level = parameters->int0Parameter;
 		}
 	}
 

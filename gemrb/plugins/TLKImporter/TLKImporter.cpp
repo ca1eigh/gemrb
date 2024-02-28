@@ -106,6 +106,11 @@ bool TLKImporter::Open(DataStream* stream)
 		Log(ERROR, "TLKImporter", "Too many strings ({}), increase OVERRIDE_START.", StrRefCount);
 		return false;
 	}
+
+	if (GetString(ieStrRef(1)).back() == u'\n') {
+		hasEndingNewline = true;
+	}
+
 	return true;
 }
 
@@ -355,7 +360,9 @@ String TLKImporter::GetString(ieStrRef strref, STRING_FLAGS flags)
 		str->ReadDword(l);
 				
 		if (type & 1) {
-			str->Seek( StrOffset + Offset, GEM_STREAM_START );
+			if (str->Seek(StrOffset + Offset, GEM_STREAM_START) == GEM_ERROR) {
+				return u"";
+			}
 			std::string mbstr(l, '\0');
 			str->Read(&mbstr[0], l);
 			string = StringFromTLK(mbstr);
@@ -365,13 +372,19 @@ String TLKImporter::GetString(ieStrRef strref, STRING_FLAGS flags)
 	if (bool(flags & STRING_FLAGS::RESOLVE_TAGS) || (type & 4)) {
 		string = ResolveTags(string);
 	}
-	if (type & 2 && bool(flags & STRING_FLAGS::SOUND) && !SoundResRef.IsEmpty()) {
+	if ((type & 2) && bool(flags & STRING_FLAGS::SOUND) && !SoundResRef.IsEmpty()) {
 		// GEM_SND_SPEECH will stop the previous sound source
-		unsigned int flag = GEM_SND_RELATIVE | (uint32_t(flags) & (GEM_SND_SPEECH | GEM_SND_QUEUE));
-		core->GetAudioDrv()->Play(SoundResRef, SFX_CHAN_DIALOG, Point(), flag);
+		unsigned int flag = (uint32_t(flags) & (GEM_SND_SPEECH | GEM_SND_QUEUE));
+
+		// Narrator's error announcements (ambush, incomplete party)
+		unsigned int channel = SoundResRef.BeginsWith("ERROR") ? SFX_CHAN_NARRATOR : SFX_CHAN_DIALOG;
+		core->GetAudioDrv()->Play(SoundResRef, channel, Point(), flag);
 	}
 	if (bool(flags & STRING_FLAGS::STRREFON)) {
 		string = fmt::format(u"{}: {}", ieDword(strref), string);
+	}
+	if (hasEndingNewline) {
+		RTrim(string, u"\n");
 	}
 	return string;
 }
@@ -389,7 +402,9 @@ StringBlock TLKImporter::GetStringBlock(ieStrRef strref, STRING_FLAGS flags)
 		return StringBlock();
 	}
 	ieWord type;
-	str->Seek( 18 + (ieDword(strref) * 0x1A), GEM_STREAM_START );
+	if (str->Seek(18 + (ieDword(strref) * 0x1A), GEM_STREAM_START) == GEM_ERROR) {
+		return StringBlock();
+	}
 	str->ReadWord(type);
 	ResRef soundRef;
 	str->ReadResRef( soundRef );

@@ -114,7 +114,9 @@ using ieCREItemFlagBits = enum ieCREItemFlagBits : uint32_t {
 	IE_INV_ITEM_CONVERSABLE = 0x80000,
 	IE_INV_ITEM_PULSATING = 0x100000,
 	// gap
-	IE_INV_ITEM_NO_DISPEL = 0x1000000 // matching IE_ITEM_NO_DISPEL for convenience
+	IE_INV_ITEM_NO_DISPEL = 0x1000000, // matching IE_ITEM_NO_DISPEL for convenience
+	IE_INV_ITEM_NOT_OFFHAND = 0x2000000,
+	IE_INV_ITEM_ADAMANTINE = 0x4000000,
 };
 
 #define IE_INV_DEPLETABLE (IE_INV_ITEM_MAGICAL|IE_INV_ITEM_DESTRUCTIBLE)
@@ -125,19 +127,12 @@ using ieCREItemFlagBits = enum ieCREItemFlagBits : uint32_t {
 #define EQUIP_RANGED 2
 #define EQUIP_FORCE 4
 
-//FIXME:
-//actually this header shouldn't be THIS large, i was just
-//lazy to pick the interesting elements
-//it could be possible that some elements need to be added from the
-//item header itself
+// a mash of useful data fields from Item, ITMExtHeader and potentially CREItem
 struct ItemExtHeader {
 	ieDword slot;
 	size_t headerindex;
 	//from itmextheader
 	ieByte AttackType;
-	ieByte IDReq;
-	ieByte Location;
-	ieByte unknown1;
 	ResRef UseIcon;
 	ieStrRef Tooltip;
 	ieByte Target;
@@ -145,20 +140,9 @@ struct ItemExtHeader {
 	ieWord Range;
 	//This was commented out in ITMExtHeader
 	//ieWord ProjectileType;
-	ieWord Speed;
-	ieWord THAC0Bonus;
-	ieWord DiceSides;
-	ieWord DiceThrown;
-	ieWordSigned DamageBonus; //this must be signed!!!
-	ieWord DamageType;
-	ieWord FeatureCount;
-	ieWord FeatureOffset;
 	ieWord Charges;
 	ieWord ChargeDepletion;
-	ieDword RechargeFlags; //this is a bitfield with many bits
 	ieWord ProjectileAnimation;
-	ieWord MeleeAnimation[3];
-	int ProjectileQualifier; //this is a derived value determined on load time
 	//other data
 	ResRef itemName;
 
@@ -179,7 +163,7 @@ public:
 	//recent research showed that this field is used by the create item
 	//for days effect. This field shows the expiration in gametime hours
 	ieWord Expired = 0;
-	ieWord Usages[CHARGE_COUNTERS]{};
+	std::array<ieWord, CHARGE_COUNTERS> Usages;
 	uint32_t Flags = 0;
 	// 2 cached values from associated item. LEAVE IT SIGNED!
 	/** Weight of each item in the stack */
@@ -196,9 +180,7 @@ public:
 	{
 		ItemResRef = item->ItemResRef;
 		Expired = 0; // PurchasedAmount in STOItem
-		Usages[0] = item->Usages[0];
-		Usages[1] = item->Usages[1];
-		Usages[2] = item->Usages[2];
+		Usages = item->Usages;
 		Flags = item->Flags;
 		Weight = item->Weight;
 		MaxStackAmount = item->MaxStackAmount;
@@ -251,7 +233,7 @@ public:
 	int GetSlotCount() const { return (int)Slots.size(); }
 
 	/** sets inventory size, for the first time */
-	void SetSlotCount(unsigned int size);
+	void SetSlotCount(size_t size);
 
 
 	/** Returns CREItem in specified slot. 
@@ -320,7 +302,7 @@ public:
 	/** Returns a slot which might be empty, or capable of holding item (or part of it) */
 	int FindCandidateSlot(int slottype, size_t first_slot, const ResRef& resref = ResRef()) const;
 	/** Creates an item in the slot*/
-	void SetSlotItemRes(const ResRef& ItemResRef, int SlotID, int Charge0 = 1, int Charge1 = 0, int Charge2 = 0);
+	void SetSlotItemRes(const ResRef& ItemResRef, size_t SlotID, int Charge0 = 1, int Charge1 = 0, int Charge2 = 0);
 	/** Adds item to slot*/
 	void AddSlotItemRes(const ResRef& ItemResRef, int Slot, int Charge0 = 1, int Charge1 = 0, int Charge2 = 0);
 	/** returns the itemtype held in the left hand */
@@ -341,8 +323,8 @@ public:
 	ieDword GetEquipExclusion(int index) const;
 	/** returns if a slot is temporarily blocked */
 	bool IsSlotBlocked(int slot) const;
-	/** returns true if a two handed weapon is in slot */
-	bool TwoHandedInSlot(int slot) const;
+	/** returns any HCStrings objection to using the shield slot */
+	HCStrings CanUseShieldSlot(int slot, bool ranged) const;
 	/** returns the strref for the reason why the item cannot be equipped */
 	HCStrings WhyCantEquip(int slot, int twohanded, bool ranged = false) const;
 	/** returns a slot that has a stealable item */
@@ -380,8 +362,8 @@ private:
 	void CalculateWeight(void);
 	int FindRangedProjectile(unsigned int type) const;
 	// called by KillSlot
-	void RemoveSlotEffects(ieDword slot);
-	void KillSlot(unsigned int index);
+	void RemoveSlotEffects(size_t slot);
+	void KillSlot(size_t index);
 	inline Item *GetItemPointer(ieDword slot, CREItem *&Slot) const;
 	void UpdateWeaponAnimation();
 	void UpdateShieldAnimation(const Item *it);
