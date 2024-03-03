@@ -22,6 +22,7 @@
 #include "GameData.h"
 #include "Interface.h"
 #include "ImageMgr.h"
+#include "Tooltip.h"
 #include "Window.h"
 #include "GUI/GameControl.h"
 #include "GUI/GUIFactory.h"
@@ -41,11 +42,12 @@ Holder<Sprite2D> WindowManager::CursorMouseDown;
 
 void WindowManager::SetTooltipDelay(int delay)
 {
-	ToolTipDelay = delay;
+	// Max setting disables tooltips in originals, we just set it to an extremely high value for simplicity.
+	ToolTipDelay = (delay == 10 * Tooltip::DELAY_FACTOR) ? 10000000 : delay;
 }
 
 WindowManager::WindowManager(PluginHolder<Video> vid, std::shared_ptr<GUIFactory> fact)
-: guifact(fact), video(vid), tooltip(core->CreateTooltip())
+	: guifact(std::move(fact)), video(std::move(vid)), tooltip(core->CreateTooltip())
 {
 	assert(video);
 	assert(guifact);
@@ -55,11 +57,11 @@ WindowManager::WindowManager(PluginHolder<Video> vid, std::shared_ptr<GUIFactory
 	cursorFeedback = MOUSE_ALL;
 
 	EventMgr::EventCallback cb = METHOD_CALLBACK(&WindowManager::DispatchEvent, this);
-	eventMgr.RegisterEventMonitor(cb);
+	EventMgr::RegisterEventMonitor(cb);
 
 	cb = METHOD_CALLBACK(&WindowManager::HotKey, this);
-	eventMgr.RegisterHotKeyCallback(cb, 'f', GEM_MOD_CTRL);
-	eventMgr.RegisterHotKeyCallback(cb, GEM_GRAB, 0);
+	EventMgr::RegisterHotKeyCallback(cb, 'f', GEM_MOD_CTRL);
+	EventMgr::RegisterHotKeyCallback(cb, GEM_GRAB, 0);
 
 	screen = Region(Point(), video->GetScreenSize());
 	// FIXME: technically we should unset the current video event manager...
@@ -241,7 +243,7 @@ bool WindowManager::OrderRelativeTo(Window* win, Window* win2, bool front)
 			}
 		}
 
-		auto event = eventMgr.CreateMouseMotionEvent(eventMgr.MousePos());
+		auto event = EventMgr::CreateMouseMotionEvent(EventMgr::MousePos());
 		WindowList::const_iterator it = windows.begin();
 		hoverWin = NextEventWindow(event, it);
 		
@@ -324,9 +326,13 @@ void WindowManager::CloseAllWindows() const
 bool WindowManager::HotKey(const Event& event) const
 {
 	if (event.type == Event::KeyDown && event.keyboard.repeats == 1) {
+		auto& vars = core->GetDictionary();
+		bool fullscreen;
 		switch (event.keyboard.keycode) {
 			case 'f':
 				video->ToggleFullscreenMode();
+				fullscreen = (bool) vars.Get("Full Screen", 0);
+				vars.Set("Full Screen", !fullscreen);
 				return true;
 			case GEM_GRAB:
 				video->ToggleGrabInput();
@@ -351,7 +357,7 @@ Window* WindowManager::GetFocusWindow() const
 	}
 
 	// for all intents and purposes there must always be a window considered to be the focus
-	// gameWin is the "root" window so it will be considered the focus if no eligable windows are
+	// gameWin is the "root" window so it will be considered the focus if no eligible windows are
 	return gameWin;
 }
 
@@ -401,7 +407,7 @@ bool WindowManager::DispatchEvent(const Event& event)
 		return true;
 	}
 
-	if (eventMgr.MouseDown() == false && eventMgr.FingerDown() == false) {
+	if (EventMgr::MouseDown() == false && EventMgr::FingerDown() == false) {
 		if (event.type == Event::MouseUp || event.type == Event::TouchUp) {
 			// we don't deliver mouse up events if there isn't a corresponding mouse down (no trackingWin).
 			if (!trackingWin) return false;
@@ -417,15 +423,15 @@ bool WindowManager::DispatchEvent(const Event& event)
 			trackingWin = NULL;
 		}
 	} else if (event.isScreen && trackingWin) {
-			if (trackingWin->IsDisabled() == false) {
-				trackingWin->DispatchEvent(event);
-			}
-			return true;
+		if (trackingWin->IsDisabled() == false) {
+			trackingWin->DispatchEvent(event);
 		}
+		return true;
+	}
 
 	if (windows.empty()) return false;
 
-	if (event.EventMaskFromType(event.type) & Event::AllMouseMask) {
+	if (Event::EventMaskFromType(event.type) & Event::AllMouseMask) {
 		TooltipTime = GetMilliseconds();
 		
 		// handle when mouse leaves the window
@@ -468,7 +474,7 @@ void WindowManager::DrawMouse() const
 	if (cursorFeedback == MOUSE_NONE)
 		return;
 
-	Point cursorPos = eventMgr.MousePos();
+	Point cursorPos = EventMgr::MousePos();
 	Point tooltipPos = cursorPos;
 
 	// pst displays actor name tooltips overhead, not at the mouse position
@@ -502,7 +508,7 @@ void WindowManager::DrawCursor(const Point& pos) const
 
 	if (!cur) {
 		// no cursor override
-		cur = (eventMgr.MouseDown()) ? CursorMouseDown : CursorMouseUp;
+		cur = (EventMgr::MouseDown()) ? CursorMouseDown : CursorMouseUp;
 	}
 	assert(cur); // must have a cursor
 
@@ -594,6 +600,7 @@ WindowManager::HUDLock WindowManager::DrawHUD() const
 
 void WindowManager::DrawWindows() const
 {
+	TRACY(ZoneScoped);
 	HUDBuf->Clear();
 
 	if (windows.empty()) {
@@ -645,14 +652,10 @@ void WindowManager::DrawWindows() const
 			drawFrame = true;
 		}
 
-		if (win->IsDisabled() && win->NeedsDraw()) {
-			// Important to only draw if the window itself is dirty
-			// controls on greyed out windows shouldn't be updating anyway
-			win->Draw();
+		win->Draw();
+		if (win->IsDisabled()) {
 			Region winrgn(Point(), win->Dimensions());
-			video->DrawRect(winrgn, ColorBlack, true, BlitFlags::HALFTRANS|BlitFlags::BLENDED);
-		} else {
-			win->Draw();
+			video->DrawRect(winrgn, ColorBlack, true, BlitFlags::HALFTRANS | BlitFlags::BLENDED);
 		}
 	}
 

@@ -76,7 +76,7 @@ class Scriptable;
 #define BNC_SECTYPE_DEC 0x1000
 #define BNC_RESOURCE_DEC 0x2000
 
-//normal immunities
+// normal immunities; usually checked against the opcode directly, ignoring IE_IMMUNITY
 #define IMM_PROJECTILE  1
 #define IMM_OPCODE      2
 #define IMM_LEVEL       4
@@ -255,7 +255,7 @@ public:
 	void RemoveAllEffectsWithSource(ieDword opcode, const ResRef &source, int mode);
 
 	/* removes equipping effects with specified inventory slot code */
-	bool RemoveEquippingEffects(ieDwordSigned slotcode);
+	bool RemoveEquippingEffects(size_t slotCode);
 
 	/* removes all effects of a given spell */
 	void RemoveAllEffects(const ResRef &Removed);

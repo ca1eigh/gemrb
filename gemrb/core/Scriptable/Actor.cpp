@@ -80,12 +80,11 @@ static std::vector<int> multiclassIDs;
 static std::vector<int> maxLevelForHpRoll;
 static std::map<TableMgr::index_t, std::vector<int> > skillstats;
 static std::map<int, int> stat2skill;
-static std::vector<std::vector<int>> areaComments;
 static std::vector<std::vector<int>> wmLevelMods;
 static const ieVariable CounterNames[4] = { "GOOD", "LAW", "LADY", "MURDER" };
 
 //verbal constant specific data
-static int VCMap[VCONST_COUNT];
+static EnumArray<Verbal> VCMap;
 static ieDword sel_snd_freq = 0;
 static ieDword cmd_snd_freq = 0;
 static ieDword crit_hit_scr_shake = 1;
@@ -100,20 +99,12 @@ static int DifficultyLuckMod = 0;
 static int DifficultyDamageMod = 0;
 static int DifficultySaveMod = 0;
 
-//the chance to issue one of the rare select verbal constants
-#define RARE_SELECT_CHANCE 5
-//these are the max number of select sounds -- the size of the pool to choose from
-static int NUM_RARE_SELECT_SOUNDS = 2; //in bg and pst it is actually 4
-#define NUM_SELECT_SOUNDS 6 //in bg1 this is 4 but doesn't need to be checked
-#define NUM_MC_SELECT_SOUNDS 4 //number of main charater select sounds
-
 #define MAX_FEATV 4294967295U // 1<<32-1 (used for the triple-stat feat handling)
 
 static ResRef featSpells[ES_COUNT];
 static bool pstflags = false;
 static bool nocreate = false;
 static bool third = false;
-static bool raresnd = false;
 static bool iwd2class = false;
 //used in many places, but different in engines
 static ieDword state_invisible = STATE_INVISIBLE;
@@ -197,12 +188,14 @@ static const char gemrb2iwd[32] = {
 };
 
 //letters for char sound resolution bg1/bg2
-static char csound[VCONST_COUNT];
+static EnumArray<Verbal, char> csound {'\0'};
 
 static void InitActorTables();
 
 #define DAMAGE_LEVELS 19
 
+// ANIMATION1 in dmgtypes.2da, except it only has fire, electricity, cold AND no levels
+// we have both maps in damage.2da, plus the gradient info in d_gradient
 static ResRef d_main[DAMAGE_LEVELS] = {
 	//slot 0 is not used in the original engine
 	"BLOODCR","BLOODS","BLOODM","BLOODL", //blood
@@ -212,6 +205,7 @@ static ResRef d_main[DAMAGE_LEVELS] = {
 	"SHACID","SHACID","SHACID",           //acid
 	"SPDUSTY2","SPDUSTY2","SPDUSTY2"      //disintegrate
 };
+// ANIMATION2 in dmgtypes.2da with the same limitations
 static ResRef d_splash[DAMAGE_LEVELS] = {
 	"","","","",
 	"SPBURN","SPBURN","SPBURN", //flames
@@ -254,7 +248,7 @@ std::map<unsigned int, std::string> raceID2Name;
 ResRefMap<std::vector<BABTable>> IWD2HitTable;
 std::map<int, ResRef> BABClassMap; // maps classis (not id!) to the BAB table
 
-std::vector<ModalStatesStruct> ModalStates;
+EnumArray<Modal, ModalStatesStruct> ModalStates;
 std::map<int, ieByte> numWeaponSlots;
 
 //for every game except IWD2 we need to reverse TOHIT
@@ -349,7 +343,7 @@ Actor::Actor()
 		//This block is executed only once, when the first actor is loaded
 		InitActorTables();
 
-		TranslucentShadows = core->GetVariable("Translucent Shadows", 0);
+		TranslucentShadows = core->GetDictionary().Get("Translucent Shadows", 0);
 	}
 	static size_t maxProjectileCount = core->GetProjectileServer()->GetHighestProjectileNumber();
 	projectileImmunity.resize(maxProjectileCount);
@@ -369,7 +363,6 @@ Actor::Actor()
 Actor::~Actor(void)
 {
 	delete anims;
-	delete PCStats;
 
 	for (ScriptedAnimation* vvc : vfxQueue) {
 		delete vvc;
@@ -535,6 +528,15 @@ Actor::stat_t Actor::GetSafeStat(unsigned int StatIndex) const
 	return Modified[StatIndex];
 }
 
+// BG2 colours ground circles as follows:
+// - dark green for unselected party members
+// - bright green for selected party members
+// - bright red for enemies
+// - yellow for panicked actors
+// - flashing green/white for a party member the mouse is over
+// - flashing red/white for enemies the mouse is over
+// - flashing cyan/white for neutrals the mouse is over
+// - flashing white for speakers
 void Actor::SetCircleSize()
 {
 	if (!anims)
@@ -726,7 +728,7 @@ bool Actor::ApplyKit(bool remove, ieDword baseclass, int diff)
 
 	// iwd2 has support for multikit characters, so we have more work
 	// at the same time each baseclass has its own level stat, so the logic is cleaner
-	// NOTE: in iwd2 there are no pure class options for classes with kits, a kit has to be choosen
+	// NOTE: in iwd2 there are no pure class options for classes with kits, a kit has to be chosen
 	// even generalist mages are a kit the same way as in the older games
 	if (iwd2class) {
 		// callers always pass a baseclass (only exception are actions not present in iwd2: addkit and addsuperkit)
@@ -846,7 +848,7 @@ static void pcf_morale (Actor *actor, ieDword /*oldValue*/, ieDword /*newValue*/
 	if (lowMorale && actor->Modified[IE_MORALEBREAK] != 0 && !overriding) {
 		int panicMode = RAND(0, 2); // PANIC_RANDOMWALK etc.
 		displaymsg->DisplayConstantStringName(HCStrings(int(HCStrings::MoraleBerserk) + panicMode), GUIColors::WHITE, actor);
-		actor->Panic(game->GetActorByGlobalID(actor->LastAttacker), panicMode + 1);
+		actor->Panic(game->GetActorByGlobalID(actor->objects.LastAttacker), panicMode + 1);
 	} else if (actor->Modified[IE_STATE_ID]&STATE_PANIC) {
 		// recover from panic, since morale has risen again
 		// but only if we have really just recovered, so panic from other
@@ -864,6 +866,7 @@ static void pcf_morale (Actor *actor, ieDword /*oldValue*/, ieDword /*newValue*/
 static void UpdateHappiness(Actor *actor) {
 	if (!actor->InParty) return;
 	if (!core->HasFeature(GFFlags::HAPPINESS)) return;
+	if (!actor->PCStats) return;
 
 	ieWordSigned newHappiness = GetHappiness(actor, core->GetGame()->Reputation);
 	if (newHappiness == actor->PCStats->Happiness) return;
@@ -874,13 +877,20 @@ static void UpdateHappiness(Actor *actor) {
 	const Effect* fx;
 	static EffectRef fx_ignore_breaking_point_ref = { "IgnoreReputationBreakingPoint", -1 };
 	switch (newHappiness) {
-		case -80: actor->VerbalConstant(VB_UNHAPPY, 1, DS_QUEUE); break;
-		case -160: actor->VerbalConstant(VB_UNHAPPY_SERIOUS, 1, DS_QUEUE); break;
-		case -300: actor->VerbalConstant(VB_BREAKING_POINT, 1, DS_QUEUE);
+		case -80:
+			actor->VerbalConstant(Verbal::Unhappy, 1, DS_QUEUE);
+			break;
+		case -160:
+			actor->VerbalConstant(Verbal::UnhappySerious, 1, DS_QUEUE);
+			break;
+		case -300:
+			actor->VerbalConstant(Verbal::BreakingPoint, 1, DS_QUEUE);
 			fx = actor->fxqueue.HasEffect(fx_ignore_breaking_point_ref);
 			if (!fx && actor != core->GetGame()->GetPC(0, false)) core->GetGame()->LeaveParty(actor);
 			break;
-		case 80: actor->VerbalConstant(VB_HAPPY, 1, DS_QUEUE); break;
+		case 80:
+			actor->VerbalConstant(Verbal::Happy, 1, DS_QUEUE);
+			break;
 		default: break; // case 0
 	}
 }
@@ -950,9 +960,6 @@ static void pcf_level (Actor *actor, ieDword oldValue, ieDword newValue, ieDword
 		actor->ApplyKit(false, baseClass, newValue-oldValue);
 	}
 	actor->GotLUFeedback = false;
-	if (third && actor->PCStats) {
-		actor->PCStats->UpdateClassLevels(actor->ListLevels());
-	}
 }
 
 static void pcf_level_fighter (Actor *actor, ieDword oldValue, ieDword newValue)
@@ -1133,7 +1140,7 @@ static void pcf_hitpoint(Actor *actor, ieDword oldValue, ieDword hp)
 	} else {
 		// in testing it popped up somewhere between 39% and 25.3% (single run) -> 1/3
 		if (signed(3*oldValue) > maxhp && signed(3*hp) < maxhp) {
-			actor->VerbalConstant(VB_HURT, 1, DS_QUEUE);
+			actor->VerbalConstant(Verbal::Hurt, gamedata->GetVBData("SPECIAL_COUNT"), DS_QUEUE);
 		}
 	}
 
@@ -1227,7 +1234,7 @@ static void pcf_xp(Actor *actor, ieDword /*oldValue*/, ieDword /*newValue*/)
 		ScriptEngine::FunctionParameters params;
 		params.push_back(ScriptEngine::Parameter(pc));
 		core->GetGUIScriptEngine()->RunFunction("GUICommonWindows", "CheckLevelUp", params, true);
-		ieDword NeedsLevelUp = core->GetVariable(varName, 0);
+		ieDword NeedsLevelUp = core->GetDictionary().Get(varName, 0);
 		if (NeedsLevelUp == 1) {
 			displaymsg->DisplayConstantStringName(HCStrings::LevelUp, GUIColors::WHITE, actor);
 			actor->GotLUFeedback = true;
@@ -1500,25 +1507,25 @@ static int IsClassFromName (const std::string& name)
 
 GEM_EXPORT void UpdateActorConfig()
 {
-	crit_hit_scr_shake = core->GetVariable("Critical Hit Screen Shake", 1);
+	crit_hit_scr_shake = core->GetDictionary().Get("Critical Hit Screen Shake", 1);
 
-	unsigned int effectTextLevel = core->GetVariable("Effect Text Level", 0);
+	unsigned int effectTextLevel = core->GetDictionary().Get("Effect Text Level", 0);
 	core->SetFeedbackLevel(effectTextLevel);
 
-	sel_snd_freq = core->GetVariable("Selection Sounds Frequency", 0);
-	cmd_snd_freq = core->GetVariable("Command Sounds Frequency", 0);
+	sel_snd_freq = core->GetDictionary().Get("Selection Sounds Frequency", 0);
+	cmd_snd_freq = core->GetDictionary().Get("Command Sounds Frequency", 0);
 	// only pst has the whole gamut for these two options
 	if (!(effectTextLevel & FT_SELECTION)) sel_snd_freq = 0;
 	if (!(effectTextLevel & FT_ACTIONS)) cmd_snd_freq = 0;
 
-	bored_time = core->GetVariable("Bored Timeout", 3000);
-	footsteps = core->GetVariable("Footsteps", 1);
-	war_cries = core->GetVariable("Attack Sounds", 1);
-	PreferSneakAttack = core->GetVariable("3E Thief Sneak Attack", 0);
+	bored_time = core->GetDictionary().Get("Bored Timeout", 3000);
+	footsteps = core->GetDictionary().Get("Footsteps", 1);
+	war_cries = core->GetDictionary().Get("Attack Sounds", 1);
+	PreferSneakAttack = core->GetDictionary().Get("3E Thief Sneak Attack", 0);
 
 	//Handle Game Difficulty and Nightmare Mode
 	// iwd2 had it saved in the GAM, iwd1 only relied on the ini value
-	GameDifficulty = core->GetVariable("Nightmare Mode", 0);
+	GameDifficulty = core->GetDictionary().Get("Nightmare Mode", 0);
 
 	auto& vars = core->GetDictionary();
 	Game *game = core->GetGame();
@@ -1526,16 +1533,16 @@ GEM_EXPORT void UpdateActorConfig()
 		GameDifficulty = DIFF_INSANE;
 		if (game) game->HOFMode = true;
 		// also set it for GUIOPT
-		vars["Difficulty Level"] = DIFF_INSANE - 1;
+		vars.Set("Difficulty Level", DIFF_INSANE - 1);
 	} else {
-		GameDifficulty = core->GetVariable("Difficulty Level", 0);
+		GameDifficulty = core->GetDictionary().Get("Difficulty Level", 0);
 		GameDifficulty++; // slider starts at 0, real levels at 1
 	}
-	ieDword newMode = core->GetVariable("Story Mode", 0);
+	ieDword newMode = core->GetDictionary().Get("Story Mode", 0);
 	if (newMode != StoryMode) {
 		if (newMode) {
 			GameDifficulty = DIFF_EASY;
-			vars["Difficulty Level"] = DIFF_EASY - 1U;
+			vars.Set("Difficulty Level", DIFF_EASY - 1U);
 
 			// add all the immunities and bonuses to party
 			for (int i = 0; game && i < game->GetPartySize(false); i++) {
@@ -1558,7 +1565,7 @@ GEM_EXPORT void UpdateActorConfig()
 	DifficultySaveMod = gamedata->GetDifficultyMod(3, GameDifficulty);
 
 	// iwd has a config option for leniency
-	NoExtraDifficultyDmg = core->GetVariable("Suppress Extra Difficulty Damage", 0);
+	NoExtraDifficultyDmg = core->GetDictionary().Get("Suppress Extra Difficulty Damage", 0);
 }
 
 static void ReadModalStates()
@@ -1566,16 +1573,18 @@ static void ReadModalStates()
 	AutoTable table = gamedata->LoadTable("modal");
 	if (!table) return;
 
-	ModalStatesStruct ms;
-	for (unsigned short i = 0; i < table->GetRowCount(); i++) {
-		ms.spell = table->QueryField(i, 0);
-		ms.action = table->QueryField(i, 1);
-		ms.entering_str = table->QueryFieldAsStrRef(i, 2);
-		ms.leaving_str = table->QueryFieldAsStrRef(i, 3);
-		ms.failed_str = table->QueryFieldAsStrRef(i, 4);
-		ms.aoe_spell = table->QueryFieldUnsigned<unsigned int>(i, 5);
-		ms.repeat_msg = table->QueryFieldUnsigned<unsigned int>(i, 6);
-		ModalStates.push_back(ms);
+	if (table->GetRowCount() > (size_t) Modal::count) {
+		Log(ERROR, "Actor", "Found new modal state in data! Nothing will happen.");
+	}
+
+	for (unsigned short i = 0; i < (size_t) Modal::count; i++) {
+		ModalStates[i].spell = table->QueryField(i, 0);
+		ModalStates[i].action = table->QueryField(i, 1);
+		ModalStates[i].entering_str = table->QueryFieldAsStrRef(i, 2);
+		ModalStates[i].leaving_str = table->QueryFieldAsStrRef(i, 3);
+		ModalStates[i].failed_str = table->QueryFieldAsStrRef(i, 4);
+		ModalStates[i].aoe_spell = table->QueryFieldUnsigned<unsigned int>(i, 5);
+		ModalStates[i].repeat_msg = table->QueryFieldUnsigned<unsigned int>(i, 6);
 	}
 }
 
@@ -1585,7 +1594,6 @@ static void InitActorTables()
 	pstflags = core->HasFeature(GFFlags::PST_STATE_FLAGS) != 0;
 	nocreate = core->HasFeature(GFFlags::NO_NEW_VARIABLES) != 0;
 	third = core->HasFeature(GFFlags::RULES_3ED) != 0;
-	raresnd = core->HasFeature(GFFlags::RARE_ACTION_VB) != 0;
 	iwd2class = core->HasFeature(GFFlags::LEVELSLOT_PER_CLASS) != 0;
 	// iwd2 has some different base class names
 	if (iwd2class) {
@@ -1608,7 +1616,6 @@ static void InitActorTables()
 	CheckAbilities = core->HasFeature(GFFlags::CHECK_ABILITIES);
 	DeathOnZeroStat = core->HasFeature(GFFlags::DEATH_ON_ZERO_STAT);
 	IWDSound = core->HasFeature(GFFlags::SOUNDS_INI);
-	NUM_RARE_SELECT_SOUNDS = core->GetRareSelectSoundCount();
 
 	//this table lists skill groups assigned to classes
 	//it is theoretically possible to create hybrid classes
@@ -1744,12 +1751,11 @@ static void InitActorTables()
 	}
 
 	//csound for bg1/bg2
-	memset(csound,0,sizeof(csound));
 	if (!core->HasFeature(GFFlags::SOUNDFOLDERS)) {
 		tm = gamedata->LoadTable("csound");
 		if (tm) {
-			for (int i = 0; i < VCONST_COUNT; i++) {
-				const auto& suffix = tm->QueryField(i, 0);
+			for (auto i : EnumIterator<Verbal>()) {
+				const auto& suffix = tm->QueryField(UnderType(i), 0);
 				switch(suffix[0]) {
 					case '*': break;
 					//I have no idea what this ! mean
@@ -2067,9 +2073,8 @@ static void InitActorTables()
 	}
 
 	// verbal constant remapping, if omitted, it is an 1-1 mapping
-	// TODO: allow disabled VC slots
-	for (int i = 0; i < VCONST_COUNT; i++) {
-		VCMap[i]=i;
+	for (auto i : EnumIterator<Verbal>()) {
+		VCMap[i] = i;
 	}
 	tm = gamedata->LoadTable("vcremap");
 	if (tm) {
@@ -2077,10 +2082,10 @@ static void InitActorTables()
 
 		for (TableMgr::index_t i = 0; i < rows; i++) {
 			int row = tm->QueryFieldSigned<int>(i,0);
-			if (row<0 || row>=VCONST_COUNT) continue;
-			int value = tm->QueryFieldSigned<int>(i,1);
-			if (value<0 || value>=VCONST_COUNT) continue;
-			VCMap[row]=value;
+			if (row < 0 || row >= int(Verbal::count)) continue;
+			Verbal value = EnumIndex<Verbal>(tm->QueryFieldUnsigned<under_t<Verbal>>(i, 1));
+			if (value >= Verbal::count) continue;
+			VCMap[row] = value;
 		}
 	}
 
@@ -2103,21 +2108,6 @@ static void InitActorTables()
 					val = tm->QueryFieldSigned<int>(i, j);
 				}
 				skillstats[i].push_back (val);
-			}
-		}
-	}
-
-	//initializing area flag comments
-	tm = gamedata->LoadTable("comment");
-	if (tm) {
-		TableMgr::index_t rowcount = tm->GetRowCount();
-		if (rowcount) {
-			areaComments.resize(rowcount);
-			while(rowcount--) {
-				areaComments[rowcount].resize(3);
-				for (int i = 0; i < 3; i++) {
-					areaComments[rowcount][i] = tm->QueryFieldSigned<int>(rowcount, i);
-				}
 			}
 		}
 	}
@@ -2693,7 +2683,7 @@ void Actor::RefreshEffects(bool first, const stats_t& previous)
 
 		// snap out of charm if the charmer hurt us
 		if (trigger.triggerID == trigger_attackedby) {
-			const Actor* attacker = game->GetActorByGlobalID(LastAttacker);
+			const Actor* attacker = game->GetActorByGlobalID(objects.LastAttacker);
 			if (attacker) {
 				int revertToEA = 0;
 				if (Modified[IE_EA] == EA_CHARMED && attacker->GetStat(IE_EA) <= EA_GOODCUTOFF) {
@@ -2756,6 +2746,8 @@ void Actor::RefreshEffects(bool first, const stats_t& previous)
 			break;
 		case -1: // weak
 			if (apr % 2) apr++; // round up
+			break;
+		default:
 			break;
 		}
 		Modified[IE_NUMBEROFATTACKS] = apr;
@@ -2931,7 +2923,7 @@ void Actor::RefreshPCStats() {
 			if (morale < 10) {
 				NewBase(IE_MORALE, 1, MOD_ADDITIVE);
 			} else if (morale > 10) {
-				NewBase(IE_MORALE, (stat_t) -1, MOD_ADDITIVE);
+				SetBase(IE_MORALE, GetBase(IE_MORALE) - 1);
 			}
 		}
 	}
@@ -3105,7 +3097,7 @@ void Actor::UpdateFatigue()
 	if (FatigueComplaintDelay) {
 		FatigueComplaintDelay--;
 		if (!FatigueComplaintDelay) {
-			VerbalConstant(VB_TIRED);
+			VerbalConstant(Verbal::Tired, gamedata->GetVBData("SPECIAL_COUNT"));
 		}
 	}
 }
@@ -3165,6 +3157,7 @@ bool Actor::GetSavingThrow(ieDword type, int modifier, const Effect *fx)
 	// NOTE: assuming criticals apply to iwd2 too
 	if (ret == 1) return false;
 	if (ret == saveDiceSides) return true;
+	if (Modified[IE_STATE_ID] & STATE_DEAD) return false; // just to shut some errant feedback, should be fine
 	const Effect* sfx = fxqueue.HasEffect(fx_save_vs_school_bonus_ref);
 
 	if (!third) {
@@ -3395,63 +3388,73 @@ int Actor::NewBase(unsigned int StatIndex, stat_t ModifierValue, ieDword Modifie
 
 void Actor::Interact(int type) const
 {
-	int start;
+	EnumIterator<Verbal> start;
 	int count;
 	bool queue = false;
 
 	switch(type&0xff) {
-		case I_INSULT: start=VB_INSULT; break;
-		case I_COMPLIMENT: start=VB_COMPLIMENT; break;
-		case I_SPECIAL: start=VB_SPECIAL; break;
-		case I_INSULT_RESP: start=VB_RESP_INS; queue=true; break;
-		case I_COMPL_RESP: start=VB_RESP_COMP; queue=true; break;
+		case I_INSULT:
+			start = EnumIterator<Verbal>(Verbal::Insult);
+			break;
+		case I_COMPLIMENT:
+			start = EnumIterator<Verbal>(Verbal::Compliment);
+			break;
+		case I_SPECIAL:
+			start = EnumIterator<Verbal>(Verbal::Special);
+			break;
+		case I_INSULT_RESP:
+			start = EnumIterator<Verbal>(Verbal::Resp2Insult);
+			queue = true;
+			break;
+		case I_COMPL_RESP:
+			start = EnumIterator<Verbal>(Verbal::Resp2Compliment);
+			queue = true;
+			break;
 		default:
 			return;
 	}
 	if (type&0xff00) {
 		//PST style fixed slots
-		start+=((type&0xff00)>>8)-1;
+		start = start + (((type & 0xff00) >> 8) - 1);
 		count = 1;
 	} else {
 		//BG1 style random slots
 		count = 3;
 	}
-	VerbalConstant(start, count, queue ? DS_QUEUE : 0);
+	VerbalConstant(*start, count, queue ? DS_QUEUE : 0);
 }
 
-ieStrRef Actor::GetVerbalConstant(size_t index) const
+ieStrRef Actor::GetVerbalConstant(Verbal index) const
 {
-	if (index >= VCONST_COUNT) {
+	if (index >= Verbal::count) {
 		return ieStrRef::INVALID;
 	}
 
-	int idx = VCMap[index];
-	if (idx >= VCONST_COUNT) {
-		return ieStrRef::INVALID;
-	}
-	return StrRefs[idx];
+	return StrRefs[index];
 }
 
-ieStrRef Actor::GetVerbalConstant(int start, int count) const
+ieStrRef Actor::GetVerbalConstant(Verbal start, int count) const
 {
-	while (count > 0 && GetVerbalConstant(start+count-1) == ieStrRef::INVALID) {
-		count--;
-	}
+	auto beg = EnumIterator<Verbal>(start);
+	auto end = beg + count;
+	end = std::find_if(beg, end, [this](Verbal vc) {
+		return GetVerbalConstant(vc) == ieStrRef::INVALID;
+	});
+
+	count = beg.distance(end);
 	if (count > 0) {
-		return GetVerbalConstant(start+RAND(0, count-1));
+		return GetVerbalConstant(*(beg + RAND(0, count - 1)));
 	}
 	return ieStrRef::INVALID;
 }
 
-bool Actor::VerbalConstant(int start, int count, int flags) const
+bool Actor::VerbalConstant(Verbal start, int count, int flags) const
 {
-	if (start!=VB_DIE) {
+	assert(count > 0);
+	start = VCMap[start];
+	if (start != Verbal::Die) {
 		//can't talk when dead
 		if (Modified[IE_STATE_ID] & (STATE_CANTLISTEN)) return false;
-	}
-
-	if (count < 0) {
-		return false;
 	}
 
 	flags ^= DS_CONSOLE|DS_SPEECH|DS_CIRCLE;
@@ -3462,10 +3465,11 @@ bool Actor::VerbalConstant(int start, int count, int flags) const
 		ResRef soundRef;
 		do {
 			count--;
-			GetVerbalConstantSound(soundRef, start + count);
-			std::string chrsound = GetSoundFolder(1, soundRef);
-			if (gamedata->Exists(chrsound, IE_WAV_CLASS_ID, true) || gamedata->Exists(chrsound, IE_OGG_CLASS_ID, true)) {
-				DisplayStringCoreVC((Scriptable *) this, start + RAND(0, count), flags|DS_CONST);
+			int firstVB = static_cast<int>(start);
+			GetVerbalConstantSound(soundRef, Verbal(firstVB + count));
+			auto soundFolder = GetSoundFolder(1, soundRef);
+			if (gamedata->Exists(soundFolder, IE_WAV_CLASS_ID, true) || gamedata->Exists(soundFolder, IE_OGG_CLASS_ID, true)) {
+				DisplayStringCoreVC((Scriptable*) this, Verbal(firstVB + RAND(0, count)), flags | DS_CONST | DS_RESOLVED);
 				found = true;
 				break;
 			}
@@ -3480,71 +3484,49 @@ bool Actor::VerbalConstant(int start, int count, int flags) const
 	return found;
 }
 
-void Actor::DisplayStringOrVerbalConstant(HCStrings str, int vcstat, int vccount) const {
+void Actor::DisplayStringOrVerbalConstant(HCStrings str, Verbal vcStat, int vcCount) const
+{
 	ieStrRef strref = DisplayMessage::GetStringReference(str);
 	if (strref != ieStrRef::INVALID) {
 		DisplayStringCore((Scriptable *) this, strref, DS_CONSOLE|DS_CIRCLE);
 	} else {
-		VerbalConstant(vcstat, vccount);
+		VerbalConstant(vcStat, vcCount);
 	}
 }
 
-bool Actor::HasSpecialDeathReaction(const ieVariable& deadname) const
+tick_t Actor::ReactToDeath(const ieVariable& deadname) const
 {
 	AutoTable tm = gamedata->LoadTable("death");
-	if (!tm) return false;
-	const std::string& value = tm->QueryField(scriptName, deadname);
-	return value[0] != '0';
-}
-
-void Actor::ReactToDeath(const ieVariable& deadname)
-{
-	AutoTable tm = gamedata->LoadTable("death");
-	if (!tm) return;
+	if (!tm) {
+		// iwds don't have joinable npcs, so they don't ship a death.2da
+		VerbalConstant(Verbal::React, gamedata->GetVBData("SPECIAL_COUNT"), DS_QUEUE);
+		return 0;
+	}
 	// lookup value based on died's scriptingname and ours
 	// if value is 0 - use reactdeath
 	// if value is 1 - use reactspecial
 	// if value is string - use playsound instead (pst)
 	std::string value = tm->QueryField(scriptName, deadname);
 	if (value[0] == '0') {
-		VerbalConstant(VB_REACT, 1, DS_QUEUE);
-		return;
+		VerbalConstant(Verbal::React, 1, DS_QUEUE);
+		return 0;
 	} else if (value[0] == '1') {
-		VerbalConstant(VB_REACT_S, 1, DS_QUEUE);
-		return;
+		VerbalConstant(Verbal::ReactSpecific, 1, DS_QUEUE);
+		return 0;
 	}
 
 	// there can be several entries to choose from, eg.: NOR103,NOR104,NOR105
 	auto elements = Explode<std::string, std::string>(value);
 	size_t count = elements.size();
-	if (count <= 0) return;
+	if (count <= 0) return 0;
 
 	int choice = core->Roll(1, int(count), -1);
 	ResRef resRef = elements[choice];
 
 	tick_t len = 0;
 	unsigned int channel = SFX_CHAN_CHAR0 + InParty - 1;
-	core->GetAudioDrv()->PlayRelative(resRef, channel, &len);
-
-	tick_t counter = (core->Time.defaultTicksPerSec * len) / 1000;
-	if (counter != 0) { // don't nullify it in case we're waiting already
-		SetWait(counter);
-	}
-}
-
-//issue area specific comments
-void Actor::GetAreaComment(int areaflag) const
-{
-	for (const auto& comment : areaComments) {
-		if (comment[0] & areaflag) {
-			int vc = comment[1];
-			if (comment[2] && !core->GetGame()->IsDay()) {
-				vc++;
-			}
-			VerbalConstant(vc);
-			return;
-		}
-	}
+	core->GetAudioDrv()->Play(resRef, channel, &len);
+	return len;
 }
 
 static int CheckInteract(const ieVariable& talker, const ieVariable& target)
@@ -3591,78 +3573,43 @@ static int CheckInteract(const ieVariable& talker, const ieVariable& target)
 
 void Actor::HandleInteractV1(const Actor *target)
 {
-	LastTalker = target->GetGlobalID();
+	objects.LastTalker = target->GetGlobalID();
 	std::string interAction = fmt::format("Interact(\"{}\")", target->GetScriptName());
 	AddAction(GenerateAction(std::move(interAction)));
 }
 
-int Actor::HandleInteract(const Actor *target) const
+bool Actor::GetPartyComment(const Actor* target)
 {
+	// V1 interact
+	if (core->HasFeature(GFFlags::RANDOM_BANTER_DIALOGS)) {
+		HandleInteractV1(target);
+		return true;
+	}
+
 	int type = CheckInteract(scriptName, target->GetScriptName());
+	if (type == I_NONE) return false;
+	// V2 interact - banter dialog interaction
+	if (type == I_DIALOG) {
+		objects.LastTalker = target->GetGlobalID();
+		Action* action = GenerateActionDirect("Interact([-1])", target);
+		assert(action);
+		AddActionInFront(action);
+		return true;
+	}
 
-	//no interaction at all
-	if (type==I_NONE) return -1;
-	//banter dialog interaction
-	if (type==I_DIALOG) return 0;
-
+	// simplified interact
 	Interact(type);
-	switch(type)
-	{
-	case I_COMPLIMENT:
-		target->Interact(I_COMPL_RESP);
-		break;
-	case I_INSULT:
-		target->Interact(I_INSULT_RESP);
-		break;
-	}
-	return 1;
-}
-
-bool Actor::GetPartyComment()
-{
-	const Game *game = core->GetGame();
-
-	//not an NPC
-	if (BaseStats[IE_MC_FLAGS] & MC_EXPORTABLE) return false;
-	// don't bother if we're not around
-	if (GetCurrentArea() != game->GetCurrentArea()) return false;
-	ieDword size = game->GetPartySize(true);
-	//don't even bother, again
-	if (size<2) return false;
-
-	if (core->Roll(1, 2, -1)) return false;
-
-	for (unsigned int i = core->Roll(1, size, 0), n = 0; n < size; i++, n++) {
-		const Actor *target = game->GetPC(i % size, true);
-		if (target==this) continue;
-		if (target->BaseStats[IE_MC_FLAGS]&MC_EXPORTABLE) continue; //not NPC
-		if (target->GetCurrentArea()!=GetCurrentArea()) continue;
-
-		if (core->HasFeature(GFFlags::RANDOM_BANTER_DIALOGS)) {
-			if (core->Roll(1, 50, 0) == 1) { // TODO: confirm frequency
-				//V1 interact
-				HandleInteractV1(target);
-				return true;
-			}
-		}
-
-		//simplified interact
-		switch(HandleInteract(target)) {
-		case -1: return false;
-		case 1: return true;
+	switch (type) {
+		case I_COMPLIMENT:
+			target->Interact(I_COMPL_RESP);
+			break;
+		case I_INSULT:
+			target->Interact(I_INSULT_RESP);
+			break;
 		default:
-			//V2 interact
-			LastTalker = target->GetGlobalID();
-			Action *action = GenerateActionDirect("Interact([-1])", target);
-			if (action) {
-				AddActionInFront(action);
-			} else {
-				Log(ERROR, "Actor", "Cannot generate banter action");
-			}
-			return true;
-		}
+			break;
 	}
-	return false;
+	return true;
 }
 
 //call this only from gui selects
@@ -3676,40 +3623,56 @@ void Actor::PlaySelectionSound(bool force)
 		case 1:
 			return;
 		case 2:
-			if (core->Roll(1,100,0) > 20) return;
+			if (RAND(1, 100) > 20) return;
 			break;
 		// pst-only
 		case 3:
-			if (core->Roll(1, 100, 0) > 50) return;
+			if (RAND(1, 100) > 50) return;
 			break;
 		case 4:
-			if (core->Roll(1, 100, 0) > 80) return;
+			if (RAND(1, 100) > 80) return;
 			break;
 		default:;
 	}
 
 	//drop the rare selection comment 5% of the time
-	if (InParty && core->Roll(1,100,0) <= RARE_SELECT_CHANCE){
+	bool found = false;
+	static int rareSelectChance = gamedata->GetMiscRule("RARE_SELECT_CHANCE");
+	if (InParty && RAND(1, 100) <= rareSelectChance) {
 		//rare select on main character for BG1 won't work atm
-		VerbalConstant(VB_SELECT_RARE, NUM_RARE_SELECT_SOUNDS, DS_CIRCLE);
+		int numRareSelects = gamedata->GetVBData("RARE_SELECT_SOUNDS");
+		found = VerbalConstant(Verbal::SelectRare, numRareSelects, DS_CIRCLE);
 	} else {
-		//checks if we are main character to limit select sounds
+		// in some games there are fewer soundset slots/files than the VBs
 		if (PCStats && !PCStats->SoundSet.IsEmpty()) {
-			VerbalConstant(VB_SELECT, NUM_MC_SELECT_SOUNDS, DS_CIRCLE);
+			static int numSelects = gamedata->GetVBData("MC_SELECT_SOUNDS");
+			found = VerbalConstant(Verbal::Select, numSelects, DS_CIRCLE);
 		} else {
-			VerbalConstant(VB_SELECT, NUM_SELECT_SOUNDS, DS_CIRCLE);
+			int numSelects = gamedata->GetVBData("SELECT_SOUNDS");
+			found = VerbalConstant(Verbal::Select, numSelects, DS_CIRCLE);
 		}
+	}
+
+	// if nothing was found, fall back to 2da/ini sounds
+	if (!found) {
+		ResRef sound;
+		GetSoundFromFile(sound, Verbal::Select);
+		core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos, GEM_SND_EFX);
 	}
 }
 
-bool Actor::PlayWarCry(int range) const
+void Actor::PlayWarCry(int range) const
 {
-	if (!war_cries) return false;
-	return VerbalConstant(VB_ATTACK, range, DS_CIRCLE);
-}
+	if (!war_cries) return;
 
-#define SEL_ACTION_COUNT_COMMON  3
-#define SEL_ACTION_COUNT_ALL     7
+	bool found = VerbalConstant(Verbal::BattleCry, range, DS_CIRCLE);
+	// for monsters also try their 2da/ini file sounds
+	if (!found && !InParty) {
+		ResRef sound;
+		GetSoundFromFile(sound, Verbal::BattleCry);
+		core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos, GEM_SND_SPATIAL);
+	}
+}
 
 //call this when a PC receives a command from GUI
 void Actor::CommandActor(Action* action, bool clearPath)
@@ -3728,21 +3691,18 @@ void Actor::CommandActor(Action* action, bool clearPath)
 			// intentional fallthrough
 		case 3:
 			//PST has 4 states and rare sounds
-			if (pstflags) {
-				if (core->Roll(1,100,0)>50) return;
-			}
+			if (pstflags && RAND(1, 100) > 50) return;
 			break;
 		case 4:
-			if (pstflags) {
-				if (core->Roll(1, 100, 0) > 80) return;
-			}
+			if (pstflags && RAND(1, 100) > 80) return;
 			break;
 		default:;
 	}
 
 	if (core->GetFirstSelectedPC(false) == this) {
 		// bg2 uses up the traditional space for rare select sound slots for more action (command) sounds
-		VerbalConstant(VB_COMMAND, raresnd ? SEL_ACTION_COUNT_ALL : SEL_ACTION_COUNT_COMMON, DS_CIRCLE);
+		int numCommands = gamedata->GetVBData("COMMAND_COUNT");
+		VerbalConstant(Verbal::Command, numCommands, DS_CIRCLE);
 	}
 }
 
@@ -3777,39 +3737,9 @@ void Actor::IdleActions(bool nonidle)
 		return;
 	}
 
-	ieDword time = game->GameTime;
-	//did scripts disable us
-	if (game->BanterBlockFlag || (game->BanterBlockTime>time) ) {
-		return;
-	}
-
-	if (time/nextComment > 1) { // first run, not adjusted for game time yet
-		nextComment += time;
-	}
-
-	//drop an area comment, party oneliner or initiate party banter (with Interact)
-	//party comments have a priority, but they happen half of the time, at most
-	if (nextComment<time) {
-		if (nextComment && !Immobile() && !GetPartyComment()) {
-			GetAreaComment(map->AreaType);
-		}
-		nextComment = time+core->Roll(5,1000,bored_time/2);
-		return;
-	}
-
-	//drop the bored one liner if there was no action for some time
-	//if bored timeout is disabled, don't bother to set the new time
-	if (nonidle || (!nextBored && bored_time) || InMove() || Immobile()) {
-		nextBored = time + core->Roll(1, 30, bored_time);
-	} else {
-		if (bored_time && nextBored && nextBored < time) {
-			int x = std::max(10U, bored_time / 10);
-			nextBored = time+core->Roll(1,30,x);
-			VerbalConstant(VB_BORED);
-		}
-
+	if (!nonidle && !InMove() && !Immobile()) {
 		// display idle animation
-		int x = RAND(0, 25);
+		int x = RAND(0, 24);
 		if (!x && (GetStance() == IE_ANI_AWAKE)) {
 			SetStance(IE_ANI_HEAD_TURN);
 		}
@@ -3839,7 +3769,7 @@ void Actor::PlayExistenceSounds()
 	Point listener = audio->GetListenerPos();
 	if (nextComment && !Immobile() && WithinAudibleRange(this, listener)) {
 		//setup as an ambient
-		ieStrRef strref = GetVerbalConstant(VB_EXISTENCE, 5);
+		ieStrRef strref = GetVerbalConstant(Verbal::Existence1, 5);
 		if (strref == ieStrRef::INVALID) {
 			nextComment = time + RAND(delay * 1 / 4, delay * 7 / 4);
 			return;
@@ -3851,7 +3781,7 @@ void Actor::PlayExistenceSounds()
 			return;
 		}
 
-		ieDword vol = core->GetVariable("Volume Ambients", 100);
+		ieDword vol = core->GetDictionary().Get("Volume Ambients", 100);
 		int stream = audio->SetupNewStream(Pos.x, Pos.y, 0, ieWord(vol), true, 50); // REFERENCE_DISTANCE
 		if (stream != -1) {
 			tick_t audioLength = audio->QueueAmbient(stream, sb.Sound);
@@ -3865,47 +3795,131 @@ void Actor::PlayExistenceSounds()
 	nextComment = time + RAND(delay*1/4, delay*7/4);
 }
 
+static void ForceOverrideAction(Actor* actor, std::string actionString)
+{
+	Action* action = GenerateAction(std::move(actionString));
+	assert(action);
+	// the original was as aggressive, clearing the queue and stopping movement
+	actor->Stop();
+	actor->AddAction(action);
+}
+
+static bool CheckCharmOverride(Actor* actor)
+{
+	if (!(actor->GetStat(IE_STATE_ID) & STATE_CHARMED)) return false;
+	if (actor->GetBase(IE_EA) > EA_GOODCUTOFF) return false;
+	if (actor->GetStat(IE_EA) != EA_CHARMEDPC) return false; // the original apparently didn't use EA_CHARMEDPC
+	// already running AttackReevaluate?
+	// the original ignored this condition for IE_EA > EA_GOODCUTOFF!?
+	constexpr unsigned short AttackReevaluateID = 134;
+	if (actor->GetCurrentAction() && actor->GetCurrentAction()->actionID == AttackReevaluateID) return false;
+
+	const Effect* charm = actor->fxqueue.HasEffect(fx_set_charmed_state_ref);
+	if (!charm) return false;
+
+	// skip regular charm
+	switch (charm->Parameter2) {
+		case 2:
+		case 3:
+		case 5:
+		case 1002:
+		case 1003:
+		case 1005:
+			ForceOverrideAction(actor, "AttackReevaluate([GOODCUTOFF],10)");
+			// EEs also marked a field as true to render the weapon over the portrait for slightly
+			// longer than the action itself (m_bJustAttacked in Bubb's dump)
+			return true;
+		default:
+			break;
+	}
+	return false;
+}
+
+static bool CheckConfusionOverride(Actor* actor)
+{
+	if (!(actor->GetStat(IE_STATE_ID) & STATE_CONFUSED)) return false;
+
+	std::string actionString;
+	actionString.reserve(35);
+	switch (RAND(1, 3)) {
+		case 1:
+			// ees, maybe vanilla, called "GroupAttack([ANYONE])"
+			// that's the same as Attack due to the param passed
+			// HACK: replace with [0] (ANYONE) once we support that (Nearest matches Sender like in the original)
+			if (RandomFlip()) {
+				actionString = "Attack(NearestEnemyOf(Myself))";
+			} else {
+				actionString = "Attack([PC])";
+			}
+			break;
+		case 2:
+			if (core->HasFeature(GFFlags::HAS_EE_EFFECTS)) {
+				actionString = "RunAwayFromNoInterruptNoLeaveArea(Nearest,99999999)";
+			} else {
+				actionString = "RandomWalk()";
+			}
+			break;
+		default:
+			actionString = "NoAction()";
+			break;
+	}
+	ForceOverrideAction(actor, actionString);
+	Log(DEBUG, "Actor", "Confusion: added {} at {}", actionString, int(core->GetGame()->GameTime));
+	return true;
+}
+
+// forced actions that mess with scripting, eg. panic, confusion, berserking
 bool Actor::OverrideActions()
 {
-	//TODO:: implement forced actions that mess with scripting (panic, confusion, etc)
-	// domination and dire charm: force the actors to be useful (trivial ai)
-	Action *action;
-	if ((Modified[IE_STATE_ID] & STATE_CHARMED) && (BaseStats[IE_EA] <= EA_GOODCUTOFF) && Modified[IE_EA] == EA_CHARMEDPC) {
-		const Effect *charm = fxqueue.HasEffect(fx_set_charmed_state_ref);
-		if (!charm) return false;
+	// but maybe not: if we're in dialog, cutscene or running an overridden action
+	// the caller checks for this already
+	// the original didn't check this, but it can be considered a bug
+	const Game* game = core->GetGame();
+	if (game->StateOverrideFlag && game->StateOverrideTime) return false;
 
-		// skip regular charm
-		switch (charm->Parameter2) {
-			case 2:
-			case 3:
-			case 5:
-			case 1002:
-			case 1003:
-			case 1005:
-				action = GenerateAction("AttackReevaluate([GOODCUTOFF],10)");
-				if (action) {
-					AddActionInFront(action);
-					return true;
-				} else {
-					Log(ERROR, "Actor", "Cannot generate override action");
-				}
-				break;
-			default:
-				break;
+	// domination and dire charm: force the actors to be useful (trivial ai)
+	if (CheckCharmOverride(this)) return true;
+
+	// berserking
+	if (Modified[IE_STATE_ID] & STATE_BERSERK) {
+		if (BaseStats[IE_CHECKFORBERSERK]) {
+			BaseStats[IE_CHECKFORBERSERK]--;
+		}
+		// the original checked for Attack() / Berserk(), which LastTarget handled more generically
+		if (Modified[IE_CHECKFORBERSERK] && !objects.LastTarget) {
+			ForceOverrideAction(this, "Berserk()");
+			return true;
 		}
 	}
+
+	// each round also re-confuse the actor
+	// use the combat round size as the original;  also skald song duration matches it
+	int roundFraction = (game->GameTime - roundTime) % GetAdjustedTime(core->Time.attack_round_size);
+	if (!roundFraction && CheckConfusionOverride(this)) return true;
+
+	// feeblemind
+	if (Modified[IE_STATE_ID] & STATE_FEEBLE) {
+		ForceOverrideAction(this, "NoAction()");
+	}
+
+	// the original was adding NoAction in one more odd case that would break script processing
+	// and for (initially) enemies no longer charmed, confused and feebleminded, which is redundant
+
 	return false;
 }
 
 void Actor::Panic(const Scriptable *attacker, int panicmode)
 {
-	if (GetStat(IE_STATE_ID)&STATE_PANIC) {
+	auto PanicAction = [](unsigned short actionID) {
+		return actionID == 184 || actionID == 85 || actionID == 124;
+	};
+	if (GetStat(IE_STATE_ID) & STATE_PANIC && (!CurrentAction || PanicAction(CurrentAction->actionID))) {
 		Log(DEBUG, "Actor", "Already panicked!");
-		//already in panic
 		return;
 	}
+
 	if (InParty) core->GetGame()->SelectActor(this, false, SELECT_NORMAL);
-	VerbalConstant(VB_PANIC);
+	VerbalConstant(Verbal::Panic, gamedata->GetVBData("SPECIAL_COUNT"));
 
 	Action *action;
 	if (panicmode == PANIC_RUNAWAY && (!attacker || attacker->Type!=ST_ACTOR)) {
@@ -3914,7 +3928,11 @@ void Actor::Panic(const Scriptable *attacker, int panicmode)
 
 	switch(panicmode) {
 	case PANIC_RUNAWAY:
-		action = GenerateActionDirect("RunAwayFromNoInterrupt([-1])", attacker);
+		if (core->HasFeature(GFFlags::IWD_MAP_DIMENSIONS)) { // iwd troll scripts are incompatible with full panic
+			action = GenerateActionDirect("RunAwayFrom([-1],300)", attacker);
+		} else {
+			action = GenerateActionDirect("RunAwayFromNoInterrupt([-1],300)", attacker);
+		}
 		SetBaseBit(IE_STATE_ID, STATE_PANIC, true);
 		break;
 	case PANIC_RANDOMWALK:
@@ -3930,6 +3948,7 @@ void Actor::Panic(const Scriptable *attacker, int panicmode)
 		return;
 	}
 	if (action) {
+		ReleaseCurrentAction();
 		AddActionInFront(action);
 	} else {
 		Log(ERROR, "Actor", "Cannot generate panic action");
@@ -3951,13 +3970,11 @@ void Actor::DialogInterrupt() const
 
 	/* this part is unsure */
 	if (Modified[IE_EA]>=EA_EVILCUTOFF) {
-		VerbalConstant(VB_HOSTILE);
+		VerbalConstant(Verbal::Hostile);
+	} else if (TalkCount && GetVerbalConstant(Verbal::Dialog) != ieStrRef::INVALID) {
+		VerbalConstant(Verbal::Dialog);
 	} else {
-		if (TalkCount) {
-			VerbalConstant(VB_DIALOG);
-		} else {
-			VerbalConstant(VB_INITIALMEET);
-		}
+		VerbalConstant(Verbal::InitialMeet);
 	}
 }
 
@@ -3965,7 +3982,12 @@ void Actor::GetHit(int damage, bool killingBlow)
 {
 	if (!Immobile() && !(InternalFlags & IF_REALLYDIED) && !killingBlow) {
 		SetStance( IE_ANI_DAMAGE );
-		VerbalConstant(VB_DAMAGE);
+		static int beingHitCount = gamedata->GetVBData("BEING_HIT_COUNT");
+		if (!VerbalConstant(Verbal::Damage, beingHitCount)) {
+			ResRef sound;
+			GetSoundFromFile(sound, Verbal::Damage);
+			core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos, GEM_SND_SPATIAL);
+		}
 	}
 
 	if (Modified[IE_STATE_ID]&STATE_SLEEP) {
@@ -3986,7 +4008,7 @@ void Actor::GetHit(int damage, bool killingBlow)
 // - concentration is checked when casting is taking place <= 5' from an enemy
 bool Actor::CheckSpellDisruption(int damage) const
 {
-	if (!LastSpellTarget && LastTargetPos.IsInvalid()) {
+	if (!objects.LastSpellTarget && objects.LastTargetPos.IsInvalid()) {
 		// not casting, nothing to do
 		return false;
 	}
@@ -4061,7 +4083,7 @@ void Actor::CheckCleave()
 // NOTE: only does the visual part of chunking
 static void ChunkActor(Actor* actor)
 {
-	ieDword gore = core->GetVariable("Gore", 0);
+	ieDword gore = core->GetDictionary().Get("Gore", 0);
 	if (!gore) return;
 
 	// TODO: play chunky animation / particles #128
@@ -4082,11 +4104,8 @@ int Actor::Damage(int damage, int damagetype, Scriptable* hitter, int modtype, i
 	}
 
 	// only pst has special crits and they share the same storage
-	if (pstflags) {
-		specialFlags = 0;
-	} else {
-		critical = 0;
-	}
+	if (!pstflags) critical = 0;
+	if (!core->HasFeature(GFFlags::HAS_EE_EFFECTS)) specialFlags = 0;
 
 	//add lastdamagetype up ? maybe
 	//FIXME: what does original do?
@@ -4165,8 +4184,8 @@ int Actor::Damage(int damage, int damagetype, Scriptable* hitter, int modtype, i
 			LastDamageType |= DAMAGE_CHUNKING;
 		}
 		// mark LastHitter for repeating damage effects (eg. to get xp from melfing trolls)
-		if (act && LastHitter == 0) {
-			LastHitter = act->GetGlobalID();
+		if (act && objects.LastHitter == 0) {
+			objects.LastHitter = act->GetGlobalID();
 		}
 	}
 
@@ -4239,18 +4258,18 @@ int Actor::Damage(int damage, int damagetype, Scriptable* hitter, int modtype, i
 		//fixme: implement applytrigger, copy int0 into LastDamage there
 		LastDamage = damage;
 		AddTrigger(TriggerEntry(trigger_tookdamage, damage)); // FIXME: lastdamager? LastHitter is not set for spell damage
-		AddTrigger(TriggerEntry(trigger_hitby, LastHitter, damagetype)); // FIXME: currently lastdamager, should it always be set regardless of damage?
+		AddTrigger(TriggerEntry(trigger_hitby, objects.LastHitter, damagetype)); // FIXME: currently lastdamager, should it always be set regardless of damage?
 
 		// impact morale when hp thresholds (50 %, 25 %) are crossed for the first time
 		int currentRatio = 100 * chp / (signed) BaseStats[IE_MAXHITPOINTS];
 		int newRatio = 100 * (chp + damage) / (signed) BaseStats[IE_MAXHITPOINTS];
 		if (ShouldModifyMorale()) {
 			if (currentRatio > 50 && newRatio < 25) {
-				NewBase(IE_MORALE, (stat_t) -4, MOD_ADDITIVE);
+				SetBase(IE_MORALE, GetBase(IE_MORALE) - 4);
 			} else if (currentRatio > 50 && newRatio < 50) {
-				NewBase(IE_MORALE, (stat_t) -2, MOD_ADDITIVE);
+				SetBase(IE_MORALE, GetBase(IE_MORALE) - 2);
 			} else if (currentRatio > 25 && newRatio < 25) {
-				NewBase(IE_MORALE, (stat_t) -2, MOD_ADDITIVE);
+				SetBase(IE_MORALE, GetBase(IE_MORALE) - 2);
 			}
 		}
 
@@ -4264,9 +4283,9 @@ int Actor::Damage(int damage, int damagetype, Scriptable* hitter, int modtype, i
 	}
 
 	// can be negative if we're healing on 100%+ resistance
-	// do this after GetHit, so VB_HURT isn't overriden by VB_DAMAGE, just (dis)played later
+	// do this after GetHit, so VB_HURT isn't overridden by VB_DAMAGE, just (dis)played later
 	if (damage != 0) {
-		NewBase(IE_HITPOINTS, (stat_t) -damage, MOD_ADDITIVE);
+		SetBase(IE_HITPOINTS, GetBase(IE_HITPOINTS) - damage);
 		// unstun for that one special stun type
 		// run fx_cure_stun_state instead if it turns out not to be enough
 		if (HasSpellState(SS_AWAKE)) fxqueue.RemoveAllEffectsWithParam(fx_set_stun_state_ref, 1);
@@ -4454,15 +4473,24 @@ void Actor::PlayHitSound(const DataFileMgr *resdata, int damagetype, bool suffix
 	int type;
 	bool levels = true;
 
+	// SOUND column in ee dmgtypes.2da
 	switch(damagetype) {
 		case DAMAGE_PIERCING: type = 1; break; //piercing
 		case DAMAGE_SLASHING: type = 2; break; //slashing
 		case DAMAGE_CRUSHING: type = 3; break; //crushing
 		case DAMAGE_MISSILE: type = 4; break;  //missile
 		case DAMAGE_ELECTRICITY: type = 5; levels = false; break; //electricity
-		case DAMAGE_COLD: type = 6; levels = false; break;     //cold
+		case DAMAGE_COLD:
+		case DAMAGE_MAGICCOLD:
+			type = 6;
+			levels = false;
+			break;
 		case DAMAGE_MAGIC: type = 7; levels = false; break;
 		case DAMAGE_STUNNING: type = -3; break;
+		case DAMAGE_FIRE: // the only odd one out
+		case DAMAGE_MAGICFIRE:
+			core->GetAudioDrv()->Play("FIRE", SFX_CHAN_HITS, Pos, GEM_SND_SPATIAL);
+			return;
 		default: return;                       //other
 	}
 
@@ -4504,7 +4532,7 @@ void Actor::PlayHitSound(const DataFileMgr *resdata, int damagetype, bool suffix
 			default: armor = 6; break;
 		}
 
-		Sound.Format("H_{}_{}{}", dmg_types[type-1], armor_types[armor], core->Roll(1, 3, 0));
+		Sound.Format("H_{}_{}{}", dmg_types[type - 1], armor_types[armor], RAND(1, 3));
 	} else {
 		if (levels) {
 			Sound.Format("HIT_0{}{:c}{:c}", type, armor + 'A', suffix ? '1' : 0);
@@ -4512,7 +4540,7 @@ void Actor::PlayHitSound(const DataFileMgr *resdata, int damagetype, bool suffix
 			Sound.Format("HIT_0{}{:c}", type, suffix ? '1' : 0);
 		}
 	}
-	core->GetAudioDrv()->Play(Sound, SFX_CHAN_HITS, Pos);
+	core->GetAudioDrv()->Play(Sound, SFX_CHAN_HITS, Pos, GEM_SND_SPATIAL);
 }
 
 // Play swing sounds
@@ -4520,25 +4548,74 @@ void Actor::PlayHitSound(const DataFileMgr *resdata, int damagetype, bool suffix
 // ... so they're just fully stored in itemsnd.2da
 // iwds also have five sounds of hitting armor (SW_SWD01) that we ignore
 // pst has a lot of duplicates (1&3&6, 2&5, 8&9, 4, 7, 10) and little variation (all 6 entries for 8 are identical)
+//
+// Overall, the sounds on attack are from:
+// - the CRE sound slots (VerbalConstant): VB_ATTACK x4, VB_BATTLE_CRY x5
+//   - the player customizable soundset mapped to the same slots
+// - the animation 2da/ini with sounds per stance (shoot, and the 3 melee types)
+// - individual hardcoded item sound overrides (eg. for ankhegs in bg1)
+// - actual swing sounds associated to item types (itemsnd.2da)
+//
+// The order is:
+// - battle cry on target acquisition, not each attack or each round
+// - sound is looked up in the animation 2da/ini
+// - sound is looked up in the CRE and played at the same time if set
+//   - if it's also set in the 2da, the CRE choice will be exclusive for selection and battle cry slots
+//   - we extend that with damage, die, and the swing stances/slots to mimic Infinity Sounds
+//     - this way, creatures with the same animation can still have different combat sounds
+// - if there's a hardcoded item override it's played at the same time
+//   - like Infinity Sounds we disable them and just use the animation 2das that weren't available for bg1
+// - the item type based swing sound is played (item type is unset for the hardcoded cases, so no overlap)
+//
 void Actor::PlaySwingSound(const WeaponInfo &wi) const
 {
+	// VBs: there's the 4 attack ones, but there's 5 in the 2da: attack + 3x melee + shoot
+	// this extra ATTACK in 2das was always played, together with anything else
 	ResRef sound;
+	GetSoundFrom2DA(sound, Verbal::Attack0);
+	if (!IsStar(sound)) core->GetAudioDrv()->Play(sound, SFX_CHAN_SWINGS, Pos, GEM_SND_SPATIAL);
+
+	// the CRE attack was played only if the itemtype was 0/misc to avoid clashes with the hardcoded exceptions
+	// TobExAL and Infinity Sounds prefer both to be played, so we match that, giving more choice to modders
+	// they override any values in the 2da, which is something GetVerbalConstantSound handles for us
+	int stance = GetStance();
+	EnumIterator<Verbal> vb(Verbal::count);
+	switch (stance) {
+		case IE_ANI_ATTACK_SLASH:
+			vb = EnumIterator<Verbal>(Verbal::Attack1);
+			break;
+		case IE_ANI_ATTACK_BACKSLASH:
+			vb = EnumIterator<Verbal>(Verbal::Attack2);
+			break;
+		case IE_ANI_ATTACK_JAB:
+			vb = EnumIterator<Verbal>(Verbal::Attack3);
+			break;
+		case IE_ANI_SHOOT:
+			vb = EnumIterator<Verbal>(Verbal::Attack4);
+			break;
+		default:
+			Log(WARNING, "Actor", "Unknown attack stance detected ({}) for {}, not playing creature swing sound!", stance, fmt::WideToChar { LongName });
+			break;
+	}
+	if (vb != vb.end()) {
+		bool found = VerbalConstant(*vb);
+		// retry with 2da for soundsets, since they only checked one thing
+		if (!found) {
+			ResRef sound2;
+			GetSoundFromFile(sound2, *vb);
+			if (sound != sound2) core->GetAudioDrv()->Play(sound2, SFX_CHAN_SWINGS, Pos, GEM_SND_SPATIAL);
+		}
+	}
+
+	// finally actual swing sounds
 	ieDword itemType = wi.itemtype;
 	int isCount = gamedata->GetSwingCount(itemType);
-
-	if (isCount == -2) {
-		// monsters with non-standard items, none or something else
-		int stance = GetStance();
-		if (stance == IE_ANI_ATTACK_SLASH || stance == IE_ANI_ATTACK_BACKSLASH || stance == IE_ANI_ATTACK_JAB || stance == IE_ANI_SHOOT) {
-			GetSoundFromFile(sound, TableMgr::index_t(100 + stance));
-		}
-	} else {
+	if (isCount != -2) {
 		// swing sounds start at column 3 (index 2)
 		int isChoice = core->Roll(1, isCount, -1) + 2;
 		if (!gamedata->GetItemSound(sound, itemType, AnimRef(), isChoice)) return;
 	}
-
-	core->GetAudioDrv()->Play(sound, SFX_CHAN_SWINGS, Pos);
+	core->GetAudioDrv()->Play(sound, SFX_CHAN_SWINGS, Pos, GEM_SND_SPATIAL);
 }
 
 //Just to quickly inspect debug maximum values
@@ -4612,9 +4689,9 @@ std::string Actor::dump() const
 	}
 	buffer.append("\n");
 	AppendFormat(buffer, "WaitCounter: {}\n", GetWait());
-	AppendFormat(buffer, "LastTarget: {} {}    ", LastTarget, GetActorNameByID(LastTarget));
-	AppendFormat(buffer, "LastSpellTarget: {} {}\n", LastSpellTarget, GetActorNameByID(LastSpellTarget));
-	AppendFormat(buffer, "LastTalked: {} {}\n", LastTalker, GetActorNameByID(LastTalker));
+	AppendFormat(buffer, "LastTarget: {} {}    ", objects.LastTarget, GetActorNameByID(objects.LastTarget));
+	AppendFormat(buffer, "LastSpellTarget: {} {}\n", objects.LastSpellTarget, GetActorNameByID(objects.LastSpellTarget));
+	AppendFormat(buffer, "LastTalked: {} {}\n", objects.LastTalker, GetActorNameByID(objects.LastTalker));
 	buffer.append(inventory.dump(false));
 	buffer.append(spellbook.dump(false));
 	buffer.append(fxqueue.dump(false));
@@ -4690,7 +4767,7 @@ void Actor::SetMap(Map *map)
 }
 
 // Position should be a navmap point
-void Actor::SetPosition(const Point &nmptTarget, int jump, int radiusx, int radiusy, int size)
+void Actor::SetPosition(const Point& nmptTarget, bool jump, const Size& radius, int size)
 {
 	ResetPathTries();
 	ClearPath(true);
@@ -4703,7 +4780,7 @@ void Actor::SetPosition(const Point &nmptTarget, int jump, int radiusx, int radi
 		const Map *map = GetCurrentArea();
 		//clear searchmap so we won't block ourselves
 		map->ClearSearchMapFor(this);
-		map->AdjustPosition(p, radiusx, radiusy, size);
+		map->AdjustPosition(p, radius, size);
 	}
 	if (p==q) {
 		MoveTo(nmptTarget);
@@ -4721,7 +4798,6 @@ ieDword Actor::GetXPLevel(int modified) const
 {
 	const stats_t& stats = modified ? Modified : BaseStats;
 
-	size_t clscount = 0;
 	stat_t average = 0;
 	if (iwd2class) {
 		// iwd2
@@ -4729,7 +4805,7 @@ ieDword Actor::GetXPLevel(int modified) const
 	} else {
 		stat_t levels[3]={stats[IE_LEVEL], stats[IE_LEVEL2], stats[IE_LEVEL3]};
 		average = levels[0];
-		clscount = 1;
+		size_t clscount = 1;
 		if (IsDualClassed()) {
 			// dualclassed
 			if (levels[1] > 0) {
@@ -4939,8 +5015,8 @@ void Actor::Turn(Scriptable *cleric, ieDword turnlevel)
 		evilcleric = true;
 	}
 
-	//a little adjustment of the level to get a slight randomness on who is turned
-	unsigned int level = GetXPLevel(true)-(GetGlobalID()&3);
+	ieDword level = GetXPLevel(true);
+	turnlevel += RAND(0, 3);
 
 	//this is safely hardcoded i guess
 	if (Modified[IE_GENERAL]!=GEN_UNDEAD) {
@@ -4972,7 +5048,7 @@ void Actor::Turn(Scriptable *cleric, ieDword turnlevel)
 				fx = EffectQueue::CreateEffect(control_undead_ref, GEN_UNDEAD, 3, FX_DURATION_INSTANT_LIMITED);
 			}
 			if (fx) {
-				fx->Duration = core->Time.round_sec;
+				fx->Duration = core->Time.round_sec * 10;
 				fx->Target = FX_TARGET_PRESET;
 				core->ApplyEffect(fx, this, cleric);
 				return;
@@ -4998,7 +5074,7 @@ void Actor::Resurrect(const Point &destPoint)
 	SetBase(IE_STATE_ID, 0);
 	SetBase(IE_AVATARREMOVAL, 0);
 	if (!destPoint.IsZero()) {
-		SetPosition(destPoint, CC_CHECK_IMPASSABLE, 0);
+		SetPosition(destPoint, true);
 	}
 	if (ShouldModifyMorale()) SetBase(IE_MORALE, 10);
 	//resurrect spell sets the hitpoints to maximum in a separate effect
@@ -5082,9 +5158,9 @@ void Actor::SendDiedTrigger() const
 		if (!neighbour->ShouldModifyMorale()) continue;
 		int pea = neighbour->GetStat(IE_EA);
 		if (ea == EA_PC && pea == EA_PC) {
-			neighbour->NewBase(IE_MORALE, (stat_t) -1, MOD_ADDITIVE);
+			neighbour->SetBase(IE_MORALE, neighbour->GetBase(IE_MORALE) - 1);
 		} else if (OfType(this, neighbour)) {
-			neighbour->NewBase(IE_MORALE, (stat_t) -1, MOD_ADDITIVE);
+			neighbour->SetBase(IE_MORALE, neighbour->GetBase(IE_MORALE) - 1);
 		// are we an enemy of neighbour, regardless if we're good or evil?
 		} else if (abs(ea - pea) > 30) {
 			neighbour->NewBase(IE_MORALE, 2, MOD_ADDITIVE);
@@ -5121,7 +5197,12 @@ void Actor::Die(Scriptable *killer, bool grantXP)
 	game->SelectActor(this, false, SELECT_NORMAL);
 
 	displaymsg->DisplayConstantStringName(HCStrings::Death, GUIColors::WHITE, this);
-	VerbalConstant(VB_DIE);
+	bool found = VerbalConstant(Verbal::Die, gamedata->GetVBData("SPECIAL_COUNT"));
+	if (found) {
+		ResRef sound;
+		GetSoundFromFile(sound, Verbal::Die);
+		core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, Pos, GEM_SND_SPATIAL);
+	}
 
 	// remove poison, hold, casterhold, stun and its icon
 	Effect *newfx;
@@ -5166,11 +5247,10 @@ void Actor::Die(Scriptable *killer, bool grantXP)
 
 	if (!killer) {
 		// TODO: is this right?
-		killer = area->GetActorByGlobalID(LastHitter);
+		killer = area->GetActorByGlobalID(objects.LastHitter);
 	}
-	killer->LastKilled = GetGlobalID();
+	if (killer) killer->objects.LastKilled = GetGlobalID();
 	Actor* act = Scriptable::As<Actor>(killer);
-
 	bool killerPC = false;
 	if (act) {
 		// for unknown reasons the original only sends the trigger if the killer is ok
@@ -5182,6 +5262,7 @@ void Actor::Die(Scriptable *killer, bool grantXP)
 	}
 
 	if (InParty) {
+		if (area) SendTriggerToAll(TriggerEntry(trigger_partymemberdied, GetGlobalID()), GA_NO_SELF | GA_NO_ENEMY);
 		game->PartyMemberDied(this);
 		core->Autopause(AUTOPAUSE::DEAD, this);
 	} else {
@@ -5189,7 +5270,7 @@ void Actor::Die(Scriptable *killer, bool grantXP)
 		if (grantXP && act) {
 			if (act->InParty) {
 				//adjust kill statistics here
-				PCStatsStruct *stat = act->PCStats;
+				auto& stat = act->PCStats;
 				if (stat) {
 					stat->NotifyKill(Modified[IE_XPVALUE], ShortStrRef);
 				}
@@ -5231,7 +5312,7 @@ void Actor::Die(Scriptable *killer, bool grantXP)
 
 	ReleaseCurrentAction();
 	ClearPath(true);
-	SetModal( MS_NONE );
+	SetModal(Modal::None);
 
 	if (InParty && killerPC) {
 		UpdateOrCreateVariable(game->locals, "PM_KILLED", 1);
@@ -5481,7 +5562,7 @@ void Actor::GetItemSlotInfo(ItemExtHeader *item, int which, int header) const
 	item->itemName = slot->ItemResRef;
 	item->slot = idx;
 	item->headerindex = headerindex;
-	if (headerindex>=CHARGE_COUNTERS) {
+	if (headerindex >= slot->Usages.size()) {
 		item->Charges=0;
 	} else {
 		item->Charges=slot->Usages[headerindex];
@@ -5992,11 +6073,15 @@ ResRef Actor::GetDialog(int flags) const
 
 std::list<int> Actor::ListLevels() const
 {
-	std::list<int> levels (ISCLASSES, 0);
-	if (third) {
-		int i = 0;
-		for (auto& level : levels) {
-			level = GetClassLevel(i++);
+	if (!third) {
+		return {};
+	}
+
+	std::list<int> levels;
+	for (ieDword i = 0; i < ISCLASSES; ++i) {
+		auto level = GetClassLevel(i);
+		if (level) {
+			levels.push_back(level);
 		}
 	}
 	return levels;
@@ -6005,7 +6090,7 @@ std::list<int> Actor::ListLevels() const
 void Actor::CreateStats()
 {
 	if (!PCStats) {
-		PCStats = new PCStatsStruct(ListLevels());
+		PCStats = std::make_unique<PCStatsStruct>();
 	}
 }
 
@@ -6021,7 +6106,7 @@ ResRef Actor::GetScript(int ScriptIndex) const
 // similar manipulation as PermanentStatChangeFeedback and DisplayMessage::StrRefs::Get
 inline ieStrRef PersonalizePSTString(ieStrRef ref, const Actor* pc)
 {
-	if (pc->Modal.State != MS_STEALTH) return ref;
+	if (pc->Modal.State != Modal::Stealth) return ref;
 	if (!core->HasFeature(GFFlags::PST_STATE_FLAGS)) return ref;
 
 	int pcOffset = 8;
@@ -6033,18 +6118,18 @@ inline ieStrRef PersonalizePSTString(ieStrRef ref, const Actor* pc)
 	return ieStrRef(int(ref) + pcOffset);
 }
 
-void Actor::SetModal(ieDword newstate, bool force)
+void Actor::SetModal(enum Modal newstate, bool force)
 {
 	switch(newstate) {
-		case MS_NONE:
+		case Modal::None:
 			break;
-		case MS_BATTLESONG:
+		case Modal::BattleSong:
 			break;
-		case MS_DETECTTRAPS:
+		case Modal::DetectTraps:
 			break;
-		case MS_STEALTH:
+		case Modal::Stealth:
 			break;
-		case MS_TURNUNDEAD:
+		case Modal::TurnUndead:
 			break;
 		default:
 			return;
@@ -6054,26 +6139,26 @@ void Actor::SetModal(ieDword newstate, bool force)
 		Modal.FirstApply = true;
 	}
 
-	if (Modal.State == MS_BATTLESONG && Modal.State != newstate && HasFeat(FEAT_LINGERING_SONG)) {
+	if (Modal.State == Modal::BattleSong && Modal.State != newstate && HasFeat(FEAT_LINGERING_SONG)) {
 		Modal.LingeringSpell = Modal.Spell;
 		Modal.LingeringCount = 2;
 	}
 
 	if (IsSelected()) {
 		// display the turning-off message
-		if (Modal.State != MS_NONE && core->HasFeedback(FT_MISC)) {
+		if (Modal.State != Modal::None && core->HasFeedback(FT_MISC)) {
 			ieStrRef leaving = PersonalizePSTString(ModalStates[Modal.State].leaving_str, this);
 			displaymsg->DisplayStringName(leaving, GUIColors::WHITE, this, STRING_FLAGS::SOUND | STRING_FLAGS::SPEECH);
 		}
 
 		//update the action bar
-		if (Modal.State != newstate || newstate != MS_NONE) {
+		if (Modal.State != newstate || newstate != Modal::None) {
 			core->SetEventFlag(EF_ACTION);
 		}
 
 		// when called with the same state twice, toggle to MS_NONE
 		if (!force && Modal.State == newstate) {
-			Modal.State = MS_NONE;
+			Modal.State = Modal::None;
 		} else {
 			Modal.State = newstate;
 		}
@@ -6082,15 +6167,15 @@ void Actor::SetModal(ieDword newstate, bool force)
 	}
 }
 
-void Actor::SetModalSpell(ieDword state, const ResRef& spell)
+void Actor::SetModalSpell(enum Modal state, const ResRef& spell)
 {
 	if (spell) {
 		Modal.Spell = spell;
 	} else {
-		if (state >= ModalStates.size()) {
+		if (size_t(state) >= ModalStates.size) {
 			Modal.Spell.Reset();
 		} else {
-			if (state == MS_BATTLESONG && !BardSong.IsEmpty()) {
+			if (state == Modal::BattleSong && !BardSong.IsEmpty()) {
 				Modal.Spell = BardSong;
 				return;
 			}
@@ -6103,7 +6188,7 @@ void Actor::AttackedBy(const Actor *attacker)
 {
 	AddTrigger(TriggerEntry(trigger_attackedby, attacker->GetGlobalID()));
 	if (attacker->GetStat(IE_EA) != EA_PC && Modified[IE_EA] != EA_PC) {
-		LastAttacker = attacker->GetGlobalID();
+		objects.LastAttacker = attacker->GetGlobalID();
 	}
 	if (InParty) {
 		core->Autopause(AUTOPAUSE::ATTACKED, this);
@@ -6367,13 +6452,6 @@ int Actor::GetProficiencyBonus(int& style, bool leftOrRight, int& damageBonus, i
 	if (third) {
 		if (!dualWielding) return prof;
 
-		// iwd2 gives a dualwielding bonus when using a simple weapon in the offhand
-		// it is limited to shortswords and daggers, which also have this flag set
-		// the bonus is applied to both hands
-		if (weaponInfo[1].wflags & WEAPON_FINESSE) {
-			prof += 2;
-		}
-
 		// rangers wearing light or no armor gain ambidexterity and
 		// two-weapon-fighting feats for free
 		bool ambidextrous = HasFeat(FEAT_AMBIDEXTERITY);
@@ -6386,23 +6464,26 @@ int Actor::GetProficiencyBonus(int& style, bool leftOrRight, int& damageBonus, i
 			}
 		}
 
-		// FIXME: externalise
-		// penalites and boni for both hands:
+		// penalties and boni for both hands:
 		// -6 main, -10 off with no adjustments
 		//  0 main, +4 off with ambidexterity
 		// +2 main, +2 off with two weapon fighting
-		// +2 main, +2 off with a simple weapons in the off hand
+		// +2 main, +2 off with a simple weapon in the off hand
 		// so a minimum penalty of -2, -2
-		if (twoWeaponFighting) {
-			prof += 2;
+		static AutoTable modifierTable = gamedata->LoadTable("dwmods");
+		std::string hand = "RIGHT";
+		if (wi.wflags & WEAPON_LEFTHAND) hand = "LEFT";
+
+		prof += modifierTable->QueryFieldSigned<int>("BASE", hand);
+		if (ambidextrous) {
+			prof += modifierTable->QueryFieldSigned<int>("AMBIDEXTERITY", hand);
 		}
-		if (wi.wflags & WEAPON_LEFTHAND) {
-			prof -= 6;
-		} else {
-			prof -= 10;
-			if (ambidextrous) {
-				prof += 4;
-			}
+		if (twoWeaponFighting) {
+			prof += modifierTable->QueryFieldSigned<int>("2WFIGHTING", hand);
+		}
+		// this bonus is limited to shortswords and daggers, which also have this flag set
+		if (weaponInfo[1].wflags & WEAPON_FINESSE) {
+			prof += modifierTable->QueryFieldSigned<int>("SIMPLEWEAPONS", hand);
 		}
 
 		return prof;
@@ -6532,7 +6613,7 @@ int Actor::MeleePenalty() const
 	return 0;
 }
 
-//FIXME: can get called on its own and ToHit could erroneusly give weapon and some prof boni in that case
+// FIXME: can get called on its own and ToHit could erroneously give weapon and some prof boni in that case
 int Actor::GetToHit(ieDword Flags, const Actor *target)
 {
 	int generic = 0;
@@ -6804,18 +6885,18 @@ void Actor::PerformAttack(ieDword gameTime)
 		return;
 	}
 
-	if (IsDead()) {
+	if (ShouldStopAttack()) {
 		// this should be avoided by the AF_ALIVE check by all the calling actions
 		Log(ERROR, "Actor", "Attack by dead actor!");
 		return;
 	}
 
-	if (!LastTarget) {
+	if (!objects.LastTarget) {
 		Log(ERROR, "Actor", "Attack without valid target ID!");
 		return;
 	}
 	//get target
-	Actor *target = area->GetActorByGlobalID(LastTarget);
+	Actor* target = area->GetActorByGlobalID(objects.LastTarget);
 	if (!target) {
 		Log(WARNING, "Actor", "Attack without valid target!");
 		return;
@@ -7001,7 +7082,8 @@ void Actor::PerformAttack(ieDword gameTime)
 	const GameControl* gc = core->GetGameControl();
 	if (core->HasFeedback(FT_TOHIT) && !gc->InDialog()) {
 		// log the roll
-		String leftRight, hitMiss;
+		String leftRight;
+		String hitMiss;
 		if (usedLeftHand && DisplayMessage::HasStringReference(HCStrings::AttackRollLeft)) {
 			leftRight = core->GetString(DisplayMessage::GetStringReference(HCStrings::AttackRollLeft));
 		} else {
@@ -7028,7 +7110,7 @@ void Actor::PerformAttack(ieDword gameTime)
 		Log(COMBAT, "Attack", "{}", buffer);
 		if (!gc->InDialog()) {
 			displaymsg->DisplayMsgAtLocation(HCStrings::CriticalMiss, FT_COMBAT, this, this, GUIColors::WHITE);
-			VerbalConstant(VB_CRITMISS);
+			VerbalConstant(Verbal::CritMiss);
 		}
 		if (wi.wflags & WEAPON_RANGED) {//no need for this with melee weapon!
 			UseItem(wi.slot, (ieDword) -2, target, UI_MISS|UI_NOAURA);
@@ -7070,7 +7152,7 @@ void Actor::PerformAttack(ieDword gameTime)
 		Log(COMBAT, "Attack", "{}", buffer);
 		if (!gc->InDialog()) {
 			displaymsg->DisplayMsgAtLocation(HCStrings::CriticalHit, FT_COMBAT, this, this, GUIColors::WHITE);
-			VerbalConstant(VB_CRITHIT);
+			VerbalConstant(Verbal::CritHit, gamedata->GetVBData("SPECIAL_COUNT"));
 		}
 		ApplyCriticalEffect(this, target, wi, true);
 	} else {
@@ -7233,7 +7315,7 @@ void Actor::ModifyDamage(Scriptable *hitter, int &damage, int &resisted, int dam
 	if (damage <= 0 && !core->InCutSceneMode()) {
 		if (attacker && attacker->InParty) {
 			if (core->HasFeedback(FT_COMBAT)) {
-				attacker->DisplayStringOrVerbalConstant(HCStrings::WeaponIneffective, VB_TIMMUNE);
+				attacker->DisplayStringOrVerbalConstant(HCStrings::WeaponIneffective, Verbal::WeaponIneffective);
 			}
 			core->Autopause(AUTOPAUSE::UNUSABLE, this);
 		}
@@ -7270,7 +7352,7 @@ void Actor::UpdateActorState()
 
 	// display pc hitpoints if requested
 	// limit the invocation count to save resources (the text is drawn repeatedly anyway)
-	ieDword overheadHP = core->GetVariable("HP Over Head", 0);
+	ieDword overheadHP = core->GetDictionary().Get("HP Over Head", 0);
 	assert(game->GameTime);
 	assert(core->Time.round_size);
 	if (overheadHP && Persistent() && (game->GameTime % (core->Time.round_size / 2) == 0)) { // smaller delta to skip fading
@@ -7286,7 +7368,7 @@ void Actor::UpdateActorState()
 		//IN BG1 and BG2, this is at the ninth frame... (depends on the combat bitmap, which we don't handle yet)
 		// however some critters don't have that long animations (eg. squirrel 0xC400)
 		if ((frameCount > 8 && currentFrame == 8) || (frameCount <= 8 && currentFrame == frameCount/2)) {
-			GetCurrentArea()->AddProjectile(attackProjectile, Pos, LastTarget, false);
+			GetCurrentArea()->AddProjectile(attackProjectile, Pos, objects.LastTargetPersistent, false);
 			attackProjectile = NULL;
 		}
 	}
@@ -7341,60 +7423,12 @@ void Actor::UpdateModalState(ieDword gameTime)
 		core->ApplySpell(ResRef("detect"), this, this, 0);
 	}
 
-	ieDword state = Modified[IE_STATE_ID];
-	const Game* game = core->GetGame();
-	bool overriding = CurrentAction && CurrentAction->flags & ACF_OVERRIDE;
-	overriding = overriding || (game->StateOverrideFlag && game->StateOverrideTime);
-
-	// each round also re-confuse the actor
-	if (!roundFraction && !overriding) {
-		if (BaseStats[IE_CHECKFORBERSERK]) {
-			BaseStats[IE_CHECKFORBERSERK]--;
-		}
-		if (state & STATE_CONFUSED) {
-			std::string actionString;
-			actionString.reserve(32);
-			switch (RAND(1, 3)) {
-			case 2:
-				actionString = "RandomWalk()";
-				break;
-			case 1:
-				// HACK: replace with [0] (ANYONE) once we support that (Nearest matches Sender like in the original)
-				if (RandomFlip()) {
-					actionString = "Attack(NearestEnemyOf(Myself))";
-				} else {
-					actionString = "Attack([PC])";
-				}
-				break;
-			default:
-				actionString = "NoAction()";
-				break;
-			}
-			Action *action = GenerateAction(actionString);
-			if (action) {
-				ReleaseCurrentAction();
-				AddActionInFront(action);
-				Log(DEBUG, "Actor", "Confusion: added {} at {} ({})", actionString, gameTime - roundTime, roundTime);
-			}
-			return;
-		}
-
-		if (Modified[IE_CHECKFORBERSERK] && !LastTarget && SeeAnyOne(false, false) ) {
-			Action *action = GenerateAction( "Berserk()" );
-			if (action) {
-				ReleaseCurrentAction();
-				AddActionInFront(action);
-			}
-			return;
-		}
-	}
-
 	// this is a HACK, fuzzie can't work out where else to do this for now
 	// but we shouldn't be resetting rounds/attacks just because the actor
 	// wandered away, the action code should probably be responsible somehow
 	// see also line above (search for comment containing UpdateActorState)!
-	if (LastTarget && lastattack && lastattack < (gameTime - 1)) {
-		const Actor *target = area->GetActorByGlobalID(LastTarget);
+	if (objects.LastTarget && lastattack && lastattack < (gameTime - 1)) {
+		const Actor* target = area->GetActorByGlobalID(objects.LastTarget);
 		if (!target || target->GetStat(IE_STATE_ID) & STATE_DEAD ||
 			(target->GetStance() == IE_ANI_WALK && target->GetAnims()->GetAnimType() == IE_ANI_TWO_PIECE)) {
 			StopAttack();
@@ -7405,9 +7439,12 @@ void Actor::UpdateModalState(ieDword gameTime)
 		lastattack = 0;
 	}
 
-	if (Modal.State == MS_NONE && !Modal.LingeringCount) {
+	if (Modal.State == Modal::None && !Modal.LingeringCount) {
 		return;
 	}
+
+	ieDword state = Modified[IE_STATE_ID];
+	const Game* game = core->GetGame();
 
 	//apply the modal effect on the beginning of each round
 	if (roundFraction == 0) {
@@ -7416,7 +7453,7 @@ void Actor::UpdateModalState(ieDword gameTime)
 			Modal.LingeringCount--;
 			ApplyModal(Modal.LingeringSpell);
 		}
-		if (Modal.State == MS_NONE) {
+		if (Modal.State == Modal::None) {
 			return;
 		}
 
@@ -7439,16 +7476,16 @@ void Actor::UpdateModalState(ieDword gameTime)
 				// some modals notify each round, some only initially
 				bool feedback = ModalStates[Modal.State].repeat_msg || Modal.FirstApply;
 				Modal.FirstApply = false;
-				if (InParty && feedback && core->HasFeedback(FT_MISC)) {
+				if (IsPartyMember() && feedback && core->HasFeedback(FT_MISC)) {
 					ieStrRef entering = PersonalizePSTString(ModalStates[Modal.State].entering_str, this);
 					displaymsg->DisplayStringName(entering, GUIColors::WHITE, this, STRING_FLAGS::SOUND | STRING_FLAGS::SPEECH);
 				}
 			} else {
-				if (InParty && core->HasFeedback(FT_MISC)) {
+				if (IsPartyMember() && core->HasFeedback(FT_MISC)) {
 					ieStrRef failed = PersonalizePSTString(ModalStates[Modal.State].failed_str, this);
 					displaymsg->DisplayStringName(failed, GUIColors::WHITE, this, STRING_FLAGS::SOUND | STRING_FLAGS::SPEECH);
 				}
-				Modal.State = MS_NONE;
+				Modal.State = Modal::None;
 			}
 		}
 
@@ -7552,7 +7589,7 @@ void Actor::SetColorMod(ieDword location, RGBModifier::Type type, int speed,
 
 void Actor::SetLeader(const Actor* actor, int offset)
 {
-	LastFollowed = actor->GetGlobalID();
+	objects.LastFollowed = actor->GetGlobalID();
 	FollowOffset.x = offset;
 	FollowOffset.y = offset;
 }
@@ -7606,19 +7643,13 @@ void Actor::AddExperience(int exp, int combat)
 	SetBase(xpStat, exp);
 }
 
-static bool is_zero(const int& value) {
-	return value == 0;
-}
-
 // for each class pair that is out of level sync for more than 1 level and
 // one of them isn't a favored class, incur a 20% xp penalty (cumulative)
 int Actor::GetFavoredPenalties() const
 {
 	if (!third) return 0;
-	if (!PCStats) return 0;
 
-	std::list<int> classLevels(PCStats->ClassLevels);
-	classLevels.remove_if(is_zero);
+	std::list<int> classLevels = ListLevels();
 	size_t classCount = classLevels.size();
 	if (classCount == 1) return 0;
 
@@ -7762,14 +7793,14 @@ static const unsigned int MirrorImageZOrder[8] = { 2, 4, 6, 0, 1, 7, 5, 3 };
 
 bool Actor::HibernateIfAble()
 {
-	//finding an excuse why we don't hybernate the actor
+	// finding an excuse why we don't hibernate the actor
 	if (Modified[IE_ENABLEOFFSCREENAI])
 		return false;
-	if (LastTarget) //currently attacking someone
+	if (objects.LastTarget) // currently attacking someone
 		return false;
-	if (!LastTargetPos.IsInvalid()) //currently casting at the ground
+	if (!objects.LastTargetPos.IsInvalid()) // currently casting at the ground
 		return false;
-	if (LastSpellTarget) //currently casting at someone
+	if (objects.LastSpellTarget) // currently casting at someone
 		return false;
 	if (InternalFlags&IF_JUSTDIED) // didn't have a chance to run a script
 		return false;
@@ -7876,7 +7907,7 @@ bool Actor::AdvanceAnimations()
 	return true;
 }
 
-bool Actor::IsDead() const
+bool Actor::ShouldStopAttack() const
 {
 	return InternalFlags & IF_STOPATTACK;
 }
@@ -7901,7 +7932,7 @@ bool Actor::ShouldDrawCircle() const
 	}
 	
 	const GameControl* gc = core->GetGameControl();
-	if (gc->GetScreenFlags()&SF_CUTSCENE) {
+	if (gc->GetScreenFlags().Test(ScreenFlags::Cutscene)) {
 		// ground circles are not drawn in cutscenes
 		// except for the speaker
 		if (gc->dialoghandler->IsTarget(this) == false) {
@@ -7915,9 +7946,13 @@ bool Actor::ShouldDrawCircle() const
 	}
 
 	bool drawcircle = true; // we always show circle/target on pause
+	if (gc->InDialog() && gc->dialoghandler->IsTarget(this)) {
+		return true;
+	}
+
 	if (!(gc->GetDialogueFlags() & DF_FREEZE_SCRIPTS)) {
 		// check marker feedback level
-		ieDword markerfeedback = core->GetVariable("GUI Feedback Level", 4);
+		ieDword markerfeedback = core->GetDictionary().Get("GUI Feedback Level", 4);
 		if (Selected) {
 			// selected creature
 			drawcircle = markerfeedback >= 2;
@@ -8096,13 +8131,25 @@ void Actor::Draw(const Region& vp, Color baseTint, Color tint, BlitFlags flags) 
 	tint.a = 255 - trans;
 
 	//draw videocells under the actor
+	// but don't try to dither them; test cases for occlusion:
+	// - fireshield: not drawn
+	// - casting glow: not drawn
+	// - fireshield: not drawn
+	// - spell turning: not drawn
+	// - globe: drawn (we don't, which looks fine)
+	// - mirror images: drawn
+	BlitFlags vvcFlags = flags & (BlitFlags::STENCIL_MASK | BlitFlags::ALPHA_MOD);
+	if (vvcFlags & BlitFlags::STENCIL_DITHER) {
+		vvcFlags &= ~(BlitFlags::STENCIL_ALPHA | BlitFlags::STENCIL_DITHER);
+		vvcFlags |= BlitFlags::STENCIL_BLUE;
+	}
 	auto it = vfxQueue.cbegin();
 	for (; it != vfxQueue.cend(); ++it) {
 		const ScriptedAnimation* vvc = *it;
 		if (vvc->YOffset >= 0) {
 			break;
 		}
-		vvc->Draw(vp, baseTint, BBox.h, flags & (BlitFlags::STENCIL_MASK | BlitFlags::ALPHA_MOD));
+		vvc->Draw(vp, baseTint, BBox.h, vvcFlags);
 	}
 
 	if (ShouldDrawCircle()) {
@@ -8221,7 +8268,7 @@ void Actor::Draw(const Region& vp, Color baseTint, Color tint, BlitFlags flags) 
 	//draw videocells over the actor
 	for (; it != vfxQueue.cend(); ++it) {
 		const ScriptedAnimation* vvc = *it;
-		vvc->Draw(vp, baseTint, BBox.h, flags & (BlitFlags::STENCIL_MASK | BlitFlags::ALPHA_MOD));
+		vvc->Draw(vp, baseTint, BBox.h, vvcFlags);
 	}
 }
 
@@ -8236,7 +8283,7 @@ bool Actor::HandleActorStance()
 		ca->autoSwitchOnEnd = false;
 		return true;
 	}
-	int x = RAND(0, 25);
+	int x = RAND(0, 24);
 	if ((StanceID==IE_ANI_AWAKE) && !x ) {
 		SetStance( IE_ANI_HEAD_TURN );
 		return true;
@@ -8257,77 +8304,88 @@ bool Actor::HandleActorStance()
 	return false;
 }
 
-bool Actor::GetSoundFromFile(ResRef& Sound, TableMgr::index_t index) const
+bool Actor::GetSoundFromFile(ResRef& sound, Verbal index) const
 {
 	// only dying ignores the incapacity to vocalize
-	if (index != VB_DIE) {
+	if (index != Verbal::Die) {
 		if (Modified[IE_STATE_ID] & STATE_CANTLISTEN) return false;
 	}
 
 	if (core->HasFeature(GFFlags::RESDATA_INI)) {
-		return GetSoundFromINI(Sound, index);
+		return GetSoundFromINI(sound, index);
 	} else {
-		return GetSoundFrom2DA(Sound, index);
+		return GetSoundFrom2DA(sound, index);
 	}
 }
 
-bool Actor::GetSoundFrom2DA(ResRef &Sound, TableMgr::index_t index) const
+// NOTE: picks a sound at random when the row has several
+bool Actor::GetSoundFrom2DA(ResRef& sound, Verbal index) const
 {
 	if (!anims) return false;
 
-	AutoTable tab = gamedata->LoadTable(anims->ResRefBase);
+	// check if there is an override (ToBExAL),
+	// otherwise use the base animation prefix
+	ResRef prefix = anims->ResRefBase;
+	static AutoTable aniSndOverride = gamedata->LoadTable("anisndex", true);
+	const std::string& row = fmt::format("0x{:4X}", Modified[IE_ANIMATION_ID]);
+	ResRef file = aniSndOverride->QueryField(row, "File");
+	if (!IsStar(file)) {
+		prefix = file;
+	}
+	AutoTable tab = gamedata->LoadTable(prefix);
 	if (!tab) return false;
 
+	TableMgr::index_t idx = 0;
 	switch (index) {
-		// TODO: research whether this VB should be split into 5x VB_BATTLE_CRY and 4x VB_ATTACK (like in NI)
-		// wasn't played if the weapon wasn't of type misc (so just the swing sound if any)
-		case VB_ATTACK:
-			index = 0;
+		case Verbal::Attack0:
+			idx = 0;
 			break;
-		case VB_DAMAGE:
-			index = 8;
+		case Verbal::Damage:
+			idx = 8;
 			break;
-		case VB_DIE:
-			index = 10;
+		case Verbal::Die:
+			idx = 10;
 			break;
-		//TODO: one day we should implement verbal constant groups
-		case VB_DIALOG:
-		case VB_SELECT:
-		case VB_SELECT+1:
-		case VB_SELECT+2:
-			index = 36; // Selection (yes, the row names are inconsistently capitalized)
+		case Verbal::BattleCry:
+			idx = 34; // Battle_Cry
+			break;
+		case Verbal::Dialog:
+		case Verbal::Select:
+		case Verbal::Select2:
+		case Verbal::Select3:
+		case Verbal::Select4:
+		case Verbal::Select5:
+		case Verbal::Select6:
+		case Verbal::Select7:
+			idx = 36; // Selection (yes, the row names are inconsistently capitalized)
 			break;
 		// entries without VB equivalents
-		case 100+IE_ANI_SHOOT:
-			index = 16; // SHOOT
+		case Verbal::Attack4:
+			idx = 16; // SHOOT
 			break;
 		// these three supposedly never worked, at least not in bg2 (https://www.gibberlings3.net/forums/topic/19034-animation-2da-files)
-		case 100+IE_ANI_ATTACK_SLASH:
-			index = 22; // ATTACK_SLASH
+		case Verbal::Attack1:
+			idx = 22; // ATTACK_SLASH
 			break;
-		case 100+IE_ANI_ATTACK_BACKSLASH:
-			index = 24; // ATTACK_BACKSLASH
+		case Verbal::Attack2:
+			idx = 24; // ATTACK_BACKSLASH
 			break;
-		case 100+IE_ANI_ATTACK_JAB:
-			index = 26; // ATTACK_JAB
-			break;
-		// TODO: research whether this entry is ever different from ATTACK and what's the difference in use
-		case 200:
-			index = 34; // Battle_Cry
+		case Verbal::Attack3:
+			idx = 26; // ATTACK_JAB
 			break;
 		default:
-			Log(WARNING, "Actor", "TODO: Cannot determine 2DA rowcount for index: {}", index);
+			Log(WARNING, "Actor", "Cannot determine 2DA rowcount for index {} for {}, let us know!", idx, fmt::WideToChar { LongName });
 			return false;
 	}
-	Log(MESSAGE, "Actor", "Getting sound 2da {} entry: {}", anims->ResRefBase, tab->GetRowName(index));
-	TableMgr::index_t col = RAND<TableMgr::index_t>(0, tab->GetColumnCount(index) - 1);
-	Sound = tab->QueryField(index, col);
+	Log(MESSAGE, "Actor", "Getting sound 2da {} entry: {}", prefix, tab->GetRowName(idx));
+	TableMgr::index_t col = RAND<TableMgr::index_t>(0, tab->GetColumnCount(idx) - 1);
+	sound = tab->QueryField(idx, col);
 	return true;
 }
 
 //Get the monster sound from a global .ini file.
 //It is ResData.ini in PST and Sounds.ini in IWD/HoW
-bool Actor::GetSoundFromINI(ResRef& Sound, TableMgr::index_t index) const
+bool Actor::GetSoundFromINI(ResRef& sound, Verbal index) const
 {
 	unsigned int animid=BaseStats[IE_ANIMATION_ID];
 	if(core->HasFeature(GFFlags::ONE_BYTE_ANIMID)) {
@@ -8345,40 +8403,45 @@ bool Actor::GetSoundFromINI(ResRef& Sound, TableMgr::index_t index) const
 	 *   19x sf1sound (stand (normal) fidget)
 	 * 
 	 * TODO: iwd:
-	 *   att2-att4
-	 *   fall
-	 *   fidget
+	 *   att2-att4 used for 2nd-4th attack in the round?
+	 *   fall mentioned as optional "falling down" in sndlist.txt
+	 *   fidget (on IE_ANI_HEAD_TURN?)
 	 */
 	StringView resource;
 	switch(index) {
-		case VB_ATTACK:
-			resource = core->GetResDataINI()->GetKeyAsString(section, StringView(IWDSound ? "att1" : "at1sound"));
+		case Verbal::Attack0:
+			// disabled by design in ees
+			if (!core->HasFeature(GFFlags::HAS_EE_EFFECTS)) {
+				resource = core->GetResDataINI()->GetKeyAsString(section, StringView(IWDSound ? "att1" : "at1sound"));
+			}
 			break;
-		case VB_DAMAGE:
+		case Verbal::Damage:
 			resource = core->GetResDataINI()->GetKeyAsString(section, StringView(IWDSound ? "damage" : "hitsound"));
 			break;
-		case VB_DIE:
+		case Verbal::Die:
 			resource = core->GetResDataINI()->GetKeyAsString(section, StringView(IWDSound ? "death" : "dfbsound"));
 			break;
-		case VB_SELECT:
+		case Verbal::Select:
 			//this isn't in PST, apparently
 			if (IWDSound) {
 				resource = core->GetResDataINI()->GetKeyAsString(section, "selected");
 			}
 			break;
-		// entries without VB equivalents
-		case 100+IE_ANI_SHOOT:
-		case 100+IE_ANI_ATTACK_SLASH:
-		case 100+IE_ANI_ATTACK_BACKSLASH:
-		case 100+IE_ANI_ATTACK_JAB:
-			// FIXME: complete guess
-			resource = core->GetResDataINI()->GetKeyAsString(section, StringView(IWDSound ? "att2" : "at2sound"));
-			break;
-		case 200: // battle cry
+		case Verbal::BattleCry:
 			if (IWDSound) {
 				resource = core->GetResDataINI()->GetKeyAsString(section, "btlcry");
 			}
 			break;
+		case Verbal::Attack1:
+		case Verbal::Attack2:
+		case Verbal::Attack3:
+		case Verbal::Attack4:
+			// FIXME: complete guess
+			resource = core->GetResDataINI()->GetKeyAsString(section, StringView(IWDSound ? "att2" : "at2sound"));
+			break;
+		default:
+			Log(WARNING, "Actor", "Cannot determine INI entry for index {} for {}, let us know!", int(index), fmt::WideToChar { LongName });
+			return false;
 	}
 
 	auto elements = Explode<StringView, ResRef>(resource);
@@ -8386,25 +8449,25 @@ bool Actor::GetSoundFromINI(ResRef& Sound, TableMgr::index_t index) const
 	if (count == 0) return false;
 
 	int choice = core->Roll(1, int(count), -1);
-	Sound = elements[choice];
+	sound = elements[choice];
 
 	return true;
 }
 
-void Actor::GetVerbalConstantSound(ResRef& Sound, size_t index) const
+void Actor::GetVerbalConstantSound(ResRef& Sound, Verbal index, bool resolved) const
 {
+	TableMgr::index_t idx = TableMgr::index_t(index);
 	if (PCStats && !PCStats->SoundSet.IsEmpty()) {
 		//resolving soundset (bg1/bg2 style)
 
 		// handle nonstandard bg1 "default" soundsets first
 		if (PCStats->SoundSet == "main") {
 			static const char *suffixes[] = { "03", "08", "09", "10", "11", "17", "18", "19", "20", "21", "22", "38", "39" };
-			static unsigned int VB2Suffix[] = { 9, 6, 7, 8, 20, 26, 27, 28, 32, 33, 34, 18, 19 };
+			static TableMgr::index_t VB2Suffix[] = { 9, 6, 7, 8, 20, 26, 27, 28, 32, 33, 34, 18, 19 };
 			bool found = false;
-
 			for (int i = 0; i < 13; i++) {
-				if (VB2Suffix[i] == index) {
-					index = i;
+				if (VB2Suffix[i] == idx) {
+					idx = i;
 					found = true;
 					break;
 				}
@@ -8414,24 +8477,24 @@ void Actor::GetVerbalConstantSound(ResRef& Sound, size_t index) const
 				return;
 			}
 
-			Sound.Format("{:.5}{:.2}", PCStats->SoundSet, suffixes[index]);
+			Sound.Format("{:.5}{:.2}", PCStats->SoundSet, suffixes[idx]);
 			return;
-		} else if (csound[index]) {
-			Sound.Format("{}{}", PCStats->SoundSet, csound[index]);
+		} else if (csound[idx]) {
+			Sound.Format("{}{}", PCStats->SoundSet, csound[idx]);
 			return;
 		}
 
 		//icewind style
-		Sound.Format("{}{:02d}", PCStats->SoundSet, VCMap[index]);
+		Sound.Format("{}{:02d}", PCStats->SoundSet, resolved ? Verbal(idx) : VCMap[idx]);
 		return;
 	}
 
 	Sound.Reset();
 
 	if (core->HasFeature(GFFlags::RESDATA_INI)) {
-		GetSoundFromINI(Sound, index);
+		GetSoundFromINI(Sound, Verbal(idx));
 	} else {
-		GetSoundFrom2DA(Sound, index);
+		GetSoundFrom2DA(Sound, Verbal(idx));
 	}
 
 	//Empty resrefs
@@ -8510,7 +8573,9 @@ ieByte Actor::IWD2GemrbQslot(int slotIndex) const
 void Actor::dumpQSlots() const
 {
 	const ActionButtonRow& r = GUIBTDefaults[GetActiveClass()];
-	std::string buffer, buffer2, buffer3;
+	std::string buffer;
+	std::string buffer2;
+	std::string buffer3;
 
 	buffer.append("Current  default: ");
 	buffer2.append("IWD2gem  default: ");
@@ -8565,17 +8630,17 @@ void Actor::SetPortrait(const ResRef& portraitRef, int Which)
 	}
 }
 
-void Actor::SetSoundFolder(const ieVariable& soundset) const
+void Actor::SetSoundFolder(const String& soundset) const
 {
 	if (!core->HasFeature(GFFlags::SOUNDFOLDERS)) {
-		PCStats->SoundSet = soundset;
-		PCStats->SoundFolder[0] = 0;
+		PCStats->SoundSet = TLKStringFromString(soundset);
 		return;
 	}
 
 	PCStats->SoundFolder = soundset;
 
-	DirectoryIterator dirIt(PathJoin(core->config.GamePath, "sounds", PCStats->SoundFolder));
+	auto soundFolder = MBStringFromString(PCStats->SoundFolder);
+	DirectoryIterator dirIt(PathJoin(core->config.GamePath, "sounds", soundFolder));
 	dirIt.SetFilterPredicate(std::make_shared<EndsWithFilter>("01"));
 	dirIt.SetFlags(DirectoryIterator::Directories);
 	if (dirIt) {
@@ -8592,7 +8657,7 @@ void Actor::SetSoundFolder(const ieVariable& soundset) const
 	}
 }
 
-std::string Actor::GetSoundFolder(int full, const ResRef& overrideSet) const
+String Actor::GetSoundFolder(int full, const ResRef& overrideSet) const
 {
 	ResRef set;
 	if (overrideSet.IsEmpty()) {
@@ -8601,16 +8666,18 @@ std::string Actor::GetSoundFolder(int full, const ResRef& overrideSet) const
 		set = overrideSet;
 	}
 
-	std::string soundset;
+	String wSet = StringFromTLK(set);
+	String soundset;
 	if (core->HasFeature(GFFlags::SOUNDFOLDERS)) {
 		if (full) {
-			soundset = fmt::format("{}/{}", PCStats->SoundFolder, set);
+			soundset = fmt::format(u"{}{}{}", PCStats->SoundFolder, PathDelimiterW, wSet);
 		} else {
-			soundset = fmt::format("{}", PCStats->SoundFolder);
+			soundset = fmt::format(u"{}", PCStats->SoundFolder);
 		}
 	} else {
-		soundset = set.c_str();
+		soundset = wSet;
 	}
+
 	return soundset;
 }
 
@@ -8896,9 +8963,9 @@ bool Actor::UseItemPoint(ieDword slot, ieDword header, const Point &target, ieDw
 	}
 	ResetCommentTime();
 	if (pro) {
-		pro->SetCaster(GetGlobalID(), ITEM_CASTERLEVEL);
-		GetCurrentArea()->AddProjectile(pro, Pos, target);
+		pro->SetCaster(GetGlobalID(), gamedata->GetMiscRule("ITEM_CASTERLEVEL"));
 		SetOrientation(target, Pos, false);
+		GetCurrentArea()->AddProjectile(pro, Pos, target);
 		return true;
 	}
 	return false;
@@ -9041,7 +9108,7 @@ void Actor::ModifyWeaponDamage(WeaponInfo &wi, Actor *target, int &damage, bool 
 		damage = 0;
 		critical = false;
 		if (InParty) {
-			if (core->HasFeedback(FT_COMBAT)) DisplayStringOrVerbalConstant(HCStrings::WeaponIneffective, VB_TIMMUNE);
+			if (core->HasFeedback(FT_COMBAT)) DisplayStringOrVerbalConstant(HCStrings::WeaponIneffective, Verbal::WeaponIneffective);
 			core->Autopause(AUTOPAUSE::UNUSABLE, this);
 		}
 		return;
@@ -9252,7 +9319,7 @@ bool Actor::UseItem(ieDword slot, ieDword header, const Scriptable* target, ieDw
 		return false;
 	}
 
-	pro->SetCaster(GetGlobalID(), ITEM_CASTERLEVEL);
+	pro->SetCaster(GetGlobalID(), gamedata->GetMiscRule("ITEM_CASTERLEVEL"));
 	if (flags & UI_FAKE) {
 		delete pro;
 	} else if (((int) header < 0) && !(flags & UI_MISS)) { // using a weapon
@@ -9260,6 +9327,10 @@ bool Actor::UseItem(ieDword slot, ieDword header, const Scriptable* target, ieDw
 		AttackEffect->Projectile = projectileAnim;
 		AttackEffect->Target = FX_TARGET_PRESET;
 		AttackEffect->Parameter3 = 1;
+		AttackEffect->SourceType = 1;
+		AttackEffect->SourceRef = itemRef;
+		AttackEffect->CasterID = GetGlobalID();
+		AttackEffect->VariableName = scriptName;
 		if (pstflags) {
 			AttackEffect->IsVariable = GetCriticalType();
 		} else {
@@ -9276,9 +9347,10 @@ bool Actor::UseItem(ieDword slot, ieDword header, const Scriptable* target, ieDw
 			pro->TFlags |= PTF_TIMELESS;
 		}
 		attackProjectile = pro;
+		attackProjectile->SFlags &= ~PSF_FLYING;
 	} else { // launch it now as we are not attacking
-		GetCurrentArea()->AddProjectile(pro, Pos, tar->GetGlobalID(), false);
 		SetOrientation(target->Pos, Pos, false);
+		GetCurrentArea()->AddProjectile(pro, Pos, tar->GetGlobalID(), false);
 	}
 	return true;
 }
@@ -9400,7 +9472,7 @@ void Actor::ClearCurrentStanceAnims()
 	currentStance.shadow.clear();
 }
 
-void Actor::SetUsedWeapon(AnimRef AnimationType, const ieWord* MeleeAnimation, unsigned char wt)
+void Actor::SetUsedWeapon(AnimRef AnimationType, const std::array<ieWord, 3>& meleeAnimation, unsigned char wt)
 {
 	WeaponRef = AnimationType;
 	if (wt != IE_ANI_WEAPON_INVALID) WeaponType = wt;
@@ -9410,7 +9482,7 @@ void Actor::SetUsedWeapon(AnimRef AnimationType, const ieWord* MeleeAnimation, u
 	anims->SetWeaponRef(AnimationType);
 	anims->SetWeaponType(WeaponType);
 	ClearCurrentStanceAnims();
-	SetAttackMoveChances(MeleeAnimation);
+	SetAttackMoveChances(meleeAnimation);
 	if (InParty) {
 		//update the paperdoll weapon animation
 		core->SetEventFlag(EF_UPDATEANIM);
@@ -10020,8 +10092,7 @@ Actor *Actor::CopySelf(bool mislead) const
 	} else {
 		newActor->inventory.CopyFrom(this);
 		if (PCStats) {
-			newActor->CreateStats();
-			*newActor->PCStats = *PCStats;
+			newActor->PCStats = std::make_unique<PCStatsStruct>(*PCStats);
 		}
 	}
 
@@ -10033,7 +10104,7 @@ Actor *Actor::CopySelf(bool mislead) const
 	newActor->CreateDerivedStats();
 
 	area->AddActor(newActor, true);
-	newActor->SetPosition( Pos, CC_CHECK_IMPASSABLE, 0 );
+	newActor->SetPosition(Pos, true);
 	newActor->SetOrientation(GetOrientation(), false);
 	newActor->SetStance( IE_ANI_READY );
 
@@ -10218,7 +10289,7 @@ int Actor::LuckyRoll(int dice, int size, int add, ieDword flags, const Actor* op
 		} else {
 			bonus = luck;
 		}
-		int roll = core->Roll(1, dice*size, 0);
+		int roll = RAND(1, dice * size);
 		if (critical && (roll == 1 || roll == size)) {
 			return roll;
 		} else {
@@ -10228,7 +10299,7 @@ int Actor::LuckyRoll(int dice, int size, int add, ieDword flags, const Actor* op
 
 	int roll, result = 0, misses = 0, hits = 0;
 	for (int i = 0; i < dice; i++) {
-		roll = core->Roll(1, size, 0);
+		roll = RAND(1, size);
 		if (roll == 1) {
 			misses++;
 		} else if (roll == size) {
@@ -10287,7 +10358,7 @@ void Actor::ResetState()
 {
 	CureInvisibility();
 	CureSanctuary();
-	SetModal(MS_NONE);
+	SetModal(Modal::None);
 	ResetCommentTime();
 }
 
@@ -10335,20 +10406,20 @@ int Actor::GetRacialEnemyBonus(const Actor *target) const
 bool Actor::ModalSpellSkillCheck()
 {
 	switch(Modal.State) {
-	case MS_BATTLESONG:
-		if (GetBardLevel()) {
-			return !CheckSilenced();
-		}
-		return false;
-	case MS_DETECTTRAPS:
-		if (Modified[IE_TRAPS]<=0) return false;
-		return true;
-	case MS_TURNUNDEAD:
-		if (Modified[IE_TURNUNDEADLEVEL]<=0) return false;
+		case Modal::BattleSong:
+			if (GetBardLevel()) {
+				return !CheckSilenced();
+			}
+			return false;
+		case Modal::DetectTraps:
+			if (Modified[IE_TRAPS] <= 0) return false;
 			return true;
-	case MS_STEALTH:
+		case Modal::TurnUndead:
+			if (Modified[IE_TURNUNDEADLEVEL] <= 0) return false;
+			return true;
+		case Modal::Stealth:
 			return TryToHide();
-	case MS_NONE:
+		case Modal::None:
 		default:
 			return false;
 	}
@@ -10474,7 +10545,7 @@ bool Actor::TryToHide()
 		HideFailed(this, 0, skill/7, roll);
 		return false;
 	}
-	if (!continuation) VerbalConstant(VB_HIDE);
+	if (!continuation) VerbalConstant(Verbal::Hide);
 	if (!third) return true;
 
 	// ~Successful hide in shadows check! Hide in shadows check %d vs. D20 roll %d (%d Dexterity ability modifier)~
@@ -10673,12 +10744,11 @@ bool Actor::IsPartyMember() const
 
 void Actor::ResetCommentTime()
 {
-	const Game *game = core->GetGame();
+	Game* game = core->GetGame();
 	if (bored_time) {
-		nextBored = game->GameTime + core->Roll(1, 30, bored_time);
 		nextComment = game->GameTime + core->Roll(5, 1000, bored_time/2);
 	} else {
-		nextBored = 0;
+		game->nextBored = 0;
 		nextComment = game->GameTime + core->Roll(10, 500, 150);
 	}
 }
@@ -11108,7 +11178,7 @@ void Actor::PlayArmorSound() const
 
 	const ResRef armorSound = GetArmorSound();
 	if (!armorSound.IsEmpty()) {
-		core->GetAudioDrv()->Play(armorSound, SFX_CHAN_ARMOR, Pos);
+		core->GetAudioDrv()->Play(armorSound, SFX_CHAN_ARMOR, Pos, GEM_SND_SPATIAL);
 	}
 }
 
@@ -11134,6 +11204,52 @@ const std::string& Actor::GetRaceName() const
 	} else {
 		return blank;
 	}
+}
+
+bool Actor::TouchAttack(const Projectile* pro) const
+{
+	if (!(pro->ExtFlags & PEF_TOUCH)) {
+		return false;
+	}
+
+	Actor* caster = core->GetGame()->GetActorByGlobalID(pro->GetCaster());
+	if (!caster) {
+		return false;
+	}
+
+	static int attackRollDiceSides = gamedata->GetMiscRule("ATTACK_ROLL_DICE_SIDES");
+	int roll = caster->LuckyRoll(1, attackRollDiceSides, 0);
+	if (roll == 1) {
+		return false; // critical failure
+	}
+
+	if (!(GetStat(IE_STATE_ID) & STATE_CRIT_PROT)) {
+		if (roll >= attackRollDiceSides - (int) caster->GetStat(IE_CRITICALHITBONUS)) {
+			return true; // critical success
+		}
+	}
+
+	// handle attack type here, weapon depends on it too
+	int attackType = WEAPON_FIST;
+	if (pro->form == ITEM_AT_MELEE) {
+		// unsure if present in the originals
+		// this way spells could simulate proficient melee attacks
+		attackType = WEAPON_MELEE;
+	} else if (pro->form % 2 == 0) {
+		attackType = WEAPON_RANGED;
+	}
+	int toHit = caster->GetToHit(attackType, this);
+	// damage type, should be generic?
+	// ignore the armor bonus
+	int defense = GetDefense(0, WEAPON_BYPASS, caster);
+	bool fail;
+	if (Actor::IsReverseToHit()) {
+		fail = roll + defense < toHit;
+	} else {
+		fail = toHit + roll < defense;
+	}
+
+	return !fail;
 }
 
 }

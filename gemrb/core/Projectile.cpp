@@ -119,14 +119,14 @@ Projectile::AnimArray Projectile::CreateOrientedAnimations(const AnimationFactor
 		case 5:
 			c = SixteenToFive[cycle];
 			// orientations go counter-clockwise, starting south
-			if (cycle <= 8) {
-				// top-right quadrant
-				mirrorFlags = BlitFlags::MIRRORY;
-			} else if (cycle < 12) {
+			if (cycle > 4 && cycle <= 8) {
 				// top-left quadrant
+				mirrorFlags = BlitFlags::MIRRORY;
+			} else if (cycle > 8 && cycle < 12) {
+				// top-right quadrant
 				mirrorFlags = BlitFlags::MIRRORX | BlitFlags::MIRRORY;
-			} else if (cycle > 4) {
-				// bottom-left quadrant
+			} else if (cycle >= 12 && cycle <= 15) {
+				// bottom-right quadrant
 				mirrorFlags = BlitFlags::MIRRORX;
 			}
 			break;
@@ -341,8 +341,12 @@ void Projectile::Setup()
 	}
 
 	phase = P_TRAVEL;
-	travel_handle.sound = core->GetAudioDrv()->Play(FiringSound, SFX_CHAN_MISSILE,
-				Pos, (SFlags & PSF_LOOPING ? GEM_SND_LOOPING : 0));
+	unsigned int flags = GEM_SND_SPATIAL;
+	if (SFlags & PSF_LOOPING) {
+		flags |= GEM_SND_LOOPING;
+	}
+
+	travel_handle.sound = core->GetAudioDrv()->Play(FiringSound, SFX_CHAN_MISSILE, Pos, flags);
 
 	//create more projectiles
 	if(ExtFlags&PEF_ITERATION) {
@@ -398,14 +402,8 @@ void Projectile::SetDelay(int delay)
 	ExtFlags|=PEF_FREEZE;
 }
 
-//copied from Actor.cpp
-#define WEAPON_FIST        0
-#define WEAPON_BYPASS      0x10000
-
 bool Projectile::FailedIDS(const Actor *target) const
 {
-	static int attackRollDiceSides = gamedata->GetMiscRule("ATTACK_ROLL_DICE_SIDES");
-
 	bool fail = !EffectQueue::match_ids( target, IDSType, IDSValue);
 	if (ExtFlags&PEF_NOTIDS) {
 		fail = !fail;
@@ -417,51 +415,11 @@ bool Projectile::FailedIDS(const Actor *target) const
 				fail = !fail;
 			}
 		}
-	} else {
-		if (fail && IDSType2) {
-			fail = !EffectQueue::match_ids( target, IDSType2, IDSValue2);
-			if (ExtFlags&PEF_NOTIDS2) {
-				fail = !fail;
-			}
+	} else if (fail && IDSType2) {
+		fail = !EffectQueue::match_ids(target, IDSType2, IDSValue2);
+		if (ExtFlags & PEF_NOTIDS2) {
+			fail = !fail;
 		}
-	}
-
-	if (fail) {
-		return fail;
-	}
-
-	if (!(ExtFlags & PEF_TOUCH)) {
-		return fail;
-	}
-
-	Actor *caster = core->GetGame()->GetActorByGlobalID(Caster);
-	if (!caster) {
-		return fail;
-	}
-
-	// TODO move this to Actor
-	// TODO some projectiles use melee attack (fist), others use projectile attack
-	//this apparently depends on the spell's SpellForm (normal vs. projectile)
-	int roll = caster->LuckyRoll(1, attackRollDiceSides, 0);
-	if (roll == 1) {
-		return true; //critical failure
-	}
-	
-	if (!(target->GetStat(IE_STATE_ID) & STATE_CRIT_PROT))  {
-		if (roll >= attackRollDiceSides - (int) caster->GetStat(IE_CRITICALHITBONUS)) {
-			return false; // critical success
-		}
-	}
-
-	// handle attack type here, weapon depends on it too?
-	int toHit = caster->GetToHit(WEAPON_FIST, target);
-	// damage type, should be generic?
-	// ignore the armor bonus
-	int defense = target->GetDefense(0, WEAPON_BYPASS, caster);
-	if (Actor::IsReverseToHit()) {
-		fail = roll + defense < toHit;
-	} else {
-		fail = toHit + roll < defense;
 	}
 
 	return fail;
@@ -518,7 +476,7 @@ void Projectile::Payload()
 		Owner = target;
 	}
 	// apply this spell on target when the projectile fails
-	if (FailedIDS(target)) {
+	if (FailedIDS(target) && !target->TouchAttack(this)) {
 		if (!failureSpell.IsEmpty()) {
 			if (Target) {
 				core->ApplySpell(failureSpell, target, Owner, Level);
@@ -598,8 +556,12 @@ void Projectile::UpdateSound()
 		StopSound();
 	}
 	if (!travel_handle || !travel_handle->Playing()) {
-		travel_handle.sound = core->GetAudioDrv()->Play(ArrivalSound, SFX_CHAN_MISSILE,
-				Pos, (SFlags & PSF_LOOPING2 ? GEM_SND_LOOPING : 0));
+		unsigned int flags = GEM_SND_SPATIAL;
+		if (SFlags & PSF_LOOPING2) {
+			flags |= GEM_SND_LOOPING;
+		}
+
+		travel_handle.sound = core->GetAudioDrv()->Play(ArrivalSound, SFX_CHAN_MISSILE, Pos, flags);
 		SFlags|=PSF_SOUND2;
 	}
 }
@@ -1038,7 +1000,7 @@ void Projectile::CheckTrigger(unsigned int radius)
 			phase = P_EXPLODING1;
 			extensionDelay = Extension->Delay;
 		}
-	} else if (phase == P_EXPLODING1 && Extension->AFlags & PAF_SYNC) {
+	} else if (phase == P_EXPLODING1 && Extension->AFlags & PAF_DELAYED) {
 		//the explosion is revoked
 		phase = P_TRIGGER;
 	}
@@ -1158,7 +1120,8 @@ void Projectile::SecondaryTarget()
 		ieDword targetID = actor->GetGlobalID();
 
 		//this flag is actually about ignoring the caster (who is at the center)
-		if ((SFlags & PSF_IGNORE_CENTER) && Caster == targetID) {
+		// the bg2 divine "find traps" spell has both set and fx_find_traps is expected to run on the caster
+		if ((SFlags & PSF_IGNORE_CENTER) && Caster == targetID && !(Extension->AFlags & PAF_INANIMATE)) {
 			continue;
 		}
 
@@ -1195,7 +1158,7 @@ void Projectile::SecondaryTarget()
 		}
 
 		Projectile *pro = server->GetProjectileByIndex(Extension->ExplProjIdx);
-		// run special targetting modes on one child only, so target-all and similar don't run payload too often
+		// run special targeting modes on one child only, so target-all and similar don't run payload too often
 		EffectQueue projQueue;
 		ProcessEffects(projQueue, owner, nullptr, first);
 		pro->SetEffectsCopy(projQueue, Pos);
@@ -1270,7 +1233,53 @@ int Projectile::Update()
 	return 1;
 }
 
-void Projectile::Draw(const Region& viewport)
+Region Projectile::DrawingRegion(const Region& viewPort) const
+{
+	// adjust position for magic missile and the like
+	Point pos = Pos;
+	if (bend && phase == P_TRAVEL && Origin != Destination) {
+		pos -= viewPort.origin;
+		BendPosition(pos);
+		pos += viewPort.origin;
+	}
+	Region r(pos, Size());
+	r.y -= ZPos;
+
+	for (const auto& child : children) {
+		r.ExpandToRegion(child.DrawingRegion(viewPort));
+	}
+
+	orient_t face = GetOrientation();
+	const Animation& travelAnim = travel[face];
+	if (travelAnim) {
+		Region r2 = travelAnim.animArea;
+		r2.origin += Pos;
+		r.ExpandToRegion(r2);
+		// NOTE: fireball: small part of the ball and spread can still be out of the final region
+		// perhaps we need to account for the BAM center coordinates again?
+		// we reuse `travel` for both animations and assuming they're at the same height
+	}
+	const Animation& shadowAnim = shadow[face];
+	if (shadowAnim) {
+		Region r2 = shadowAnim.animArea;
+		r2.origin += Pos;
+		r2.y += ZPos; // always on the ground
+		r.ExpandToRegion(r2);
+	}
+	// we can ignore BAMRes1, BAMRes2, Extension->Spread: used only to create the above two
+	// same for TrailBAMs, smokebam, Extension->VVCRes: used to create standalone VVCs
+
+	if (light) {
+		Region lightArea = light->Frame;
+		lightArea.origin += Pos;
+		lightArea.y += ZPos; // always on the ground
+		r.ExpandToRegion(lightArea);
+	}
+
+	return r;
+}
+
+void Projectile::Draw(const Region& viewport, BlitFlags flags)
 {
 	switch (phase) {
 		case P_UNINITED:
@@ -1279,30 +1288,30 @@ void Projectile::Draw(const Region& viewport)
 			//This extension flag is to enable the travel projectile at
 			//trigger/explosion time
 			if (Extension->AFlags&PAF_VISIBLE) {
-				DrawTravel(viewport);
+				DrawTravel(viewport, flags);
 			}
 
 			CheckTrigger(Extension->TriggerRadius);
 			if (phase == P_EXPLODING1 || phase == P_EXPLODING2) {
-				DrawExplosion(viewport);
+				DrawExplosion(viewport, flags);
 			}
 			break;
 		case P_TRAVEL: case P_TRAVEL2:
 			//There is no Extension for simple traveling projectiles!
-			DrawTravel(viewport);
+			DrawTravel(viewport, flags);
 			return;
 		default:
-			DrawExploded(viewport);
+			DrawExploded(viewport, flags);
 			return;
 	}
 }
 
-bool Projectile::DrawChildren(const Region& vp)
+bool Projectile::DrawChildren(const Region& vp, BlitFlags flags)
 {
 	bool drawn = false;
 	for (auto it = children.begin(); it != children.end();){
 		if (it->Update()) {
-			it->DrawTravel(vp);
+			it->DrawTravel(vp, flags);
 			drawn = true;
 			++it;
 		} else {
@@ -1314,9 +1323,9 @@ bool Projectile::DrawChildren(const Region& vp)
 }
 
 //draw until all children expire
-void Projectile::DrawExploded(const Region& viewport)
+void Projectile::DrawExploded(const Region& viewport, BlitFlags flags)
 {
-	if (DrawChildren(viewport)) {
+	if (DrawChildren(viewport, flags)) {
 		return;
 	}
 	phase = P_EXPIRED;
@@ -1326,9 +1335,6 @@ void Projectile::SpawnFragment(Point& dest) const
 {
 	Projectile *pro = server->GetProjectileByIndex(Extension->FragProjIdx);
 	if (pro) {
-//		if (Extension->AFlags&PAF_SECONDARY) {
-//				pro->SetEffectsCopy(effects);
-//		}
 		pro->SetCaster(Caster, Level);
 		if (pro->ExtFlags&PEF_RANDOM) {
 			dest.x += core->Roll(1,Extension->tileCoord.x, -Extension->tileCoord.x / 2);
@@ -1352,7 +1358,223 @@ void Projectile::SpawnFragments(const Holder<ProjectileExtension>& extension) co
 	}
 }
 
-void Projectile::DrawExplosion(const Region& vp)
+void Projectile::DrawExplodingPhase1() const
+{
+	core->GetAudioDrv()->Play(Extension->SoundRes, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
+
+	// play VVC in center
+	if (!(Extension->AFlags & PAF_VVC)) {
+		return;
+	}
+
+	ScriptedAnimation* vvc;
+	VEFObject* vef = gamedata->GetVEFObject(Extension->VVCRes, false);
+	if (vef) {
+		vvc = vef->GetSingleObject();
+		if (!vvc) delete vef;
+	} else {
+		vvc = gamedata->GetScriptedAnimation(Extension->VVCRes, false);
+	}
+	if (!vvc) {
+		return;
+	}
+
+	if (Extension->APFlags & APF_VVCPAL) {
+		// if the palette is used as tint (as opposed to clown colorset) tint the vvc
+		if (Extension->APFlags & APF_TINT) {
+			const auto& pal32 = core->GetPalette32(Extension->ExplColor);
+			vvc->Tint = pal32[PALSIZE / 2];
+			vvc->Transparency |= BlitFlags::COLOR_MOD;
+		} else {
+			vvc->SetPalette(Extension->ExplColor);
+		}
+	}
+
+	// if the trail oriented, then the center is oriented too
+	if (ExtFlags & PEF_TRAIL) {
+		vvc->SetOrientation(Orientation);
+	}
+
+	vvc->Pos = Pos;
+	vvc->PlayOnce();
+	vvc->SetBlend();
+	if (vef) {
+		area->AddVVCell(vef);
+	} else {
+		area->AddVVCell(vvc);
+	}
+
+	// bg2 comet has the explosion split into two vvcs, with just a starting cycle difference
+	// until we actually need two vvc fields in the extension, let's just hack around it
+	if (Extension->VVCRes == "SPCOMEX1") {
+		ScriptedAnimation* secondVVC = gamedata->GetScriptedAnimation("SPCOMEX2", false);
+		if (secondVVC) {
+			secondVVC->Pos = Pos;
+			secondVVC->PlayOnce();
+			secondVVC->SetBlend();
+			area->AddVVCell(secondVVC);
+		}
+	}
+}
+
+constexpr Point ZeroPoint;
+void Projectile::DrawSpreadChild(size_t idx, bool firstExplosion, const Point& offset)
+{
+	int apFlags = Extension->APFlags;
+	ResRef tmp = Extension->Spread;
+	if (apFlags & APF_BOTH && RandomFlip()) {
+		tmp = Extension->Secondary;
+	}
+
+	// create a custom projectile with single traveling effect
+	Projectile* pro = server->CreateDefaultProjectile((unsigned int) ~0);
+	// not setting Caster, so we target the ground (ZPos 0)
+	pro->BAMRes1 = tmp;
+	pro->SetEffects(EffectQueue());
+
+	if (ExtFlags & PEF_TRAIL) {
+		pro->Aim = Aim;
+	}
+	// bg2 cone of cold of course has Aim set to "don't orient" ...
+	// perhaps all PAF_CONE should take Aim into account?
+	if (tmp == "SPCCOLDL") pro->Aim = 5;
+	// it also spawned several children for the same direction slightly shifted
+	// some of them appeared later, some not
+	// we just emulate some of this mess
+	if (firstExplosion && tmp == "SPCCOLDL") {
+		orient_t face = GetOrient(Pos, Destination);
+		Point followerOffset;
+		for (int i = 1; i <= 4; ++i) {
+			followerOffset = OrientedOffset(face, 9 * i);
+			DrawSpreadChild(idx, false, followerOffset);
+		}
+	}
+
+	// calculate the child projectile's target point, it is either
+	// a perimeter or an inside point of the explosion radius
+	int rad = Extension->ExplosionRadius;
+	Point newdest;
+	if (apFlags & APF_FILL) {
+		rad = RAND(1, rad);
+	}
+	int max = 360;
+	int add = 0;
+	if (Extension->AFlags & PAF_CONE) {
+		max = Extension->ConeWidth;
+		add = (Orientation * 45 - max) / 2;
+	}
+	max = RAND(1, max) + add;
+	double degree = max * M_PI / 180;
+	newdest.x = (int) -(rad * std::sin(degree));
+	newdest.y = (int) (rad * std::cos(degree));
+	newdest += Destination;
+
+	// these fields and flags are always inherited by all children
+	pro->Speed = Speed;
+	pro->ExtFlags = ExtFlags & (PEF_HALFTRANS | PEF_CYCLE | PEF_RGB);
+	pro->RGB = RGB;
+	pro->ColorSpeed = ColorSpeed;
+
+	if (apFlags & APF_FILL) {
+		// a bit of difference in case crowding is needed
+		// make this a separate flag if speed difference
+		// is not always wanted
+		pro->Speed -= RAND(0, 7);
+
+		int delay = Extension->Delay * extensionExplosionCount;
+		if (apFlags & APF_BOTH && delay) {
+			delay = RAND(0, delay - 1);
+		}
+		// this needs to be commented out for ToB horrid wilting
+		//if(ExtFlags&PEF_FREEZE) {
+		delay += Extension->Delay;
+		//}
+		pro->SetDelay(delay);
+	}
+
+	if (apFlags & APF_FILL) { // add another bit if it turns out we need more control
+		if (firstExplosion) {
+			childLocations.push_back(newdest);
+		} else {
+			newdest = childLocations[idx];
+		}
+	}
+
+	if (apFlags & APF_SCATTER) {
+		pro->MoveTo(area, newdest);
+	} else {
+		pro->MoveTo(area, Pos + offset);
+	}
+	pro->SetTarget(newdest);
+
+	// sets up the gradient color for the explosion animation
+	if (apFlags & (APF_PALETTE | APF_TINT)) {
+		pro->SetGradient(Extension->ExplColor, !(apFlags & APF_PALETTE));
+	}
+	// i'm unsure if we need blending for all anims or just the tinted ones
+	// FIXME: this seems suspect
+	pro->TFlags |= PTF_TRANS;
+	if (!(ExtFlags & PEF_CYCLE) || (ExtFlags & PEF_RANDOM)) {
+		pro->ExtFlags |= PEF_RANDOM;
+	}
+
+	pro->Setup();
+
+	// currently needed by bg2/how Web (less obvious in bg1)
+	// the original hardcoded a cycle switch to 1 or 2 at random when reaching the end, which results in the same frame
+	// TODO: original behaviour was to repeat individually (per-child) not as a whole
+	if (pro->travel[0] && Extension->APFlags & APF_PLAYONCE) {
+		// set on all orients while we don't force one for single-orientation animations (see CreateOrientedAnimations)
+		for (auto& anim : pro->travel) {
+			anim.Flags |= A_ANI_PLAYONCE;
+		}
+	}
+
+	children.push_back(std::move(*pro));
+	delete pro;
+}
+
+void Projectile::DrawSpread()
+{
+	// returns if the explosion animation is fake coloured
+
+	int apFlags = Extension->APFlags;
+	bool isCone = (Extension->AFlags & PAF_CONE) != 0;
+	// zero cone width means single line area of effect
+	size_t childCount = 1;
+	if (!isCone || Extension->ConeWidth) {
+		childCount = (Extension->ExplosionRadius + 15) / 16;
+		// more sprites if the whole area needs to be filled
+		if (apFlags & APF_FILL) childCount *= 2;
+		if (apFlags & APF_SPREAD) childCount *= 2;
+		if (apFlags & APF_BOTH) childCount /= 2; //intentionally decreases
+		if (apFlags & APF_MORE) childCount *= 2;
+	}
+
+	// expire children, so they don't accumulate
+	// good for web, holy blight, horrid wilting and more
+	bool firstExplosion = true;
+	if (apFlags & APF_FILL) {
+		children.clear();
+		if (childLocations.size() == childCount) {
+			firstExplosion = false;
+		} else {
+			childLocations.clear();
+		}
+	}
+
+	for (size_t i = 0; i < childCount; ++i) {
+		DrawSpreadChild(i, firstExplosion, ZeroPoint);
+	}
+
+	// switch fill to scatter after the first time
+	// eg. web and storm of vengeance shouldn't explode outward in subsequent applications
+	if (apFlags & APF_FILL) {
+		Extension->APFlags |= APF_SCATTER;
+	}
+}
+
+void Projectile::DrawExplosion(const Region& vp, BlitFlags flags)
 {
 	//This seems to be a needless safeguard
 	if (!Extension) {
@@ -1361,7 +1583,7 @@ void Projectile::DrawExplosion(const Region& vp)
 	}
 
 	StopSound();
-	DrawChildren(vp);
+	DrawChildren(vp, flags);
 
 	int pause = core->IsFreezed();
 	if (pause) {
@@ -1387,9 +1609,6 @@ void Projectile::DrawExplosion(const Region& vp)
 		LineTarget();
 	}
 
-	int apflags = Extension->APFlags;
-	int aoeflags = Extension->AFlags;
-
 	//no idea what is PAF_SECONDARY
 	//probably it is to alter some behaviour in the secondary
 	//projectile generation
@@ -1400,14 +1619,14 @@ void Projectile::DrawExplosion(const Region& vp)
 	SecondaryTarget();
 
 	//draw fragment graphics animation at the explosion center
-	if (aoeflags&PAF_FRAGMENT) {
+	if (Extension->AFlags & PAF_FRAGMENT) {
 		//there is a character animation in the center of the explosion
 		//which will go towards the edges (flames, etc)
 		//Extension->ExplColor fake color for single shades (blue,green,red flames)
 		//Extension->FragAnimID the animation id for the character animation
 		//This color is not used in the original game
 		Point pos = Pos - vp.origin;
-		area->Sparkle(0, Extension->ExplColor, SPARKLE_EXPLOSION, pos, Extension->FragAnimID, GetZPos());
+		area->Sparkle(0, Extension->ExplColor, SPARKLE_EXPLOSION, pos, Extension->FragAnimID, ZPos);
 	}
 
 	if(Shake) {
@@ -1421,7 +1640,7 @@ void Projectile::DrawExplosion(const Region& vp)
 
   //remove PAF_SECONDARY if it is buggy, but that will break the 'HOLD' projectile
 	if ((Extension->AFlags&PAF_SECONDARY) && Extension->FragProjIdx) {
-		if (apflags&APF_TILED) {
+		if (Extension->APFlags & APF_TILED) {
 			SpawnFragments(Extension);
 		} else {
 			SpawnFragment(Pos);
@@ -1433,186 +1652,14 @@ void Projectile::DrawExplosion(const Region& vp)
 	
 	//draw it only once, at the time of explosion
 	if (phase==P_EXPLODING1) {
-		core->GetAudioDrv()->Play(Extension->SoundRes, SFX_CHAN_MISSILE, Pos);
-		//play VVC in center
-		//FIXME: make it possible to play VEF too?
-		if (aoeflags&PAF_VVC) {
-			ScriptedAnimation* vvc = gamedata->GetScriptedAnimation(Extension->VVCRes, false);
-			if (vvc) {
-				if (apflags & APF_VVCPAL) {
-					//if the palette is used as tint (as opposed to clown colorset) tint the vvc
-					if (apflags & APF_TINT) {
-						const auto& pal32 = core->GetPalette32(Extension->ExplColor);
-						vvc->Tint = pal32[PALSIZE/2];
-						vvc->Transparency |= BlitFlags::COLOR_MOD;
-					} else {
-						vvc->SetPalette(Extension->ExplColor);
-					}
-				}
-				//if the trail oriented, then the center is oriented too
-				if (ExtFlags&PEF_TRAIL) {
-					vvc->SetOrientation(Orientation);
-				}
-				vvc->Pos = Pos;
-				vvc->PlayOnce();
-				vvc->SetBlend();
-				//quick hack to use the single object envelope
-				area->AddVVCell(new VEFObject(vvc));
-			}
-			// bg2 comet has the explosion split into two vvcs, with just a starting cycle difference
-			// until we actually need two vvc fields in the extension, let's just hack around it
-			if (Extension->VVCRes == "SPCOMEX1") {
-				ScriptedAnimation* secondVVC = gamedata->GetScriptedAnimation("SPCOMEX2", false);
-				if (secondVVC) {
-					secondVVC->Pos = Pos;
-					secondVVC->PlayOnce();
-					secondVVC->SetBlend();
-					area->AddVVCell(new VEFObject(secondVVC));
-				}
-			}
-		}
-		
+		DrawExplodingPhase1();
 		phase=P_EXPLODING2;
 	} else {
-		core->GetAudioDrv()->Play(Extension->AreaSound, SFX_CHAN_MISSILE, Pos);
+		core->GetAudioDrv()->Play(Extension->AreaSound, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
 	}
 	
 	if (Extension->Spread) {
-		//i'm unsure about the need of this
-		//returns if the explosion animation is fake coloured
-
-		//zero cone width means single line area of effect
-		size_t child_size = 1;
-		if((aoeflags&PAF_CONE) == 0 || Extension->ConeWidth) {
-			child_size = (Extension->ExplosionRadius + 15) / 16;
-			//more sprites if the whole area needs to be filled
-			if (apflags&APF_FILL) child_size*=2;
-			if (apflags&APF_SPREAD) child_size*=2;
-			if (apflags&APF_BOTH) child_size/=2; //intentionally decreases
-			if (apflags&APF_MORE) child_size*=2;
-		}
-
-		// expire children, so they don't accumulate
-		// good for web, holy blight, horrid wilting and more
-		bool firstExplosion = true;
-		if (apflags & APF_FILL) {
-			children.clear();
-			if (childLocations.size() == child_size) {
-				firstExplosion = false;
-			} else {
-				childLocations.clear();
-			}
-		}
-
-		//the spreading animation is in the first column
-		ResRef tmp = Extension->Spread;
-		for (size_t i = 0; i < child_size; ++i) {
-			if(apflags&APF_BOTH) {
-				if (RandomFlip()) {
-					tmp = Extension->Secondary;
-				} else {
-					tmp = Extension->Spread;
-				}
-			}
-			//create a custom projectile with single traveling effect
-			Projectile *pro = server->CreateDefaultProjectile((unsigned int) ~0);
-			// not setting Caster, so we target the ground (ZPos 0)
-			pro->BAMRes1 = tmp;
-			if (ExtFlags&PEF_TRAIL) {
-				pro->Aim = Aim;
-			}
-			pro->SetEffects(EffectQueue());
-			//calculate the child projectile's target point, it is either
-			//a perimeter or an inside point of the explosion radius
-			int rad = Extension->ExplosionRadius;
-			Point newdest;
-			
-			if (apflags&APF_FILL) {
-				rad=core->Roll(1,rad,0);
-			}
-			int max = 360;
-			int add = 0;
-			if (aoeflags&PAF_CONE) {
-				max=Extension->ConeWidth;
-				add=(Orientation*45-max)/2;
-			}
-			max=core->Roll(1,max,add);
-			double degree=max*M_PI/180;
-			newdest.x = (int) -(rad * std::sin(degree) );
-			newdest.y = (int) (rad * std::cos(degree) );
-			
-			//these fields and flags are always inherited by all children
-			pro->Speed = Speed;
-			pro->ExtFlags = ExtFlags&(PEF_HALFTRANS|PEF_CYCLE|PEF_RGB);
-			pro->RGB = RGB;
-			pro->ColorSpeed = ColorSpeed;
-
-			if (apflags&APF_FILL) {
-				//a bit of difference in case crowding is needed
-				//make this a separate flag if speed difference
-				//is not always wanted
-				pro->Speed-=RAND(0,7);
-
-				int delay = Extension->Delay * extensionExplosionCount;
-				if (apflags & APF_BOTH && delay) {
-					delay = RAND(0, delay - 1);
-				}
-				//this needs to be commented out for ToB horrid wilting
-				//if(ExtFlags&PEF_FREEZE) {
-					delay += Extension->Delay;
-				//}
-				pro->SetDelay(delay);
-			}
-
-			newdest += Destination;
-			if (apflags & APF_FILL) { // add another bit if it turns out we need more control
-				if (firstExplosion) {
-					childLocations.push_back(newdest);
-				} else {
-					newdest = childLocations[i];
-				}
-			}
-
-			if (apflags&APF_SCATTER) {
-				pro->MoveTo(area, newdest);
-			} else {
-				pro->MoveTo(area, Pos);
-			}
-			pro->SetTarget(newdest);
-			
-			//sets up the gradient color for the explosion animation
-			if (apflags&(APF_PALETTE|APF_TINT) ) {
-				pro->SetGradient(Extension->ExplColor, !(apflags&APF_PALETTE));
-			}
-			//i'm unsure if we need blending for all anims or just the tinted ones
-			// FIXME: this seems suspect
-			pro->TFlags|=PTF_TRANS;
-			//random frame is needed only for some of these, make it an areapro flag?
-			if( !(ExtFlags&PEF_CYCLE) || (ExtFlags&PEF_RANDOM) ) {
-				pro->ExtFlags|=PEF_RANDOM;
-			}
-
-			pro->Setup();
-
-			// currently needed by bg2/how Web (less obvious in bg1)
-			// the original hardcoded a cycle switch to 1 or 2 at random when reaching the end, which results in the same frame
-			// TODO: original behaviour was to repeat individually (per-child) not as a whole
-			if (pro->travel[0] && Extension->APFlags & APF_PLAYONCE) {
-				// set on all orients while we don't force one for single-orientation animations (see CreateOrientedAnimations)
-				for (auto& anim : pro->travel) {
-					anim.Flags |= A_ANI_PLAYONCE;
-				}
-			}
-			
-			children.push_back(std::move(*pro));
-			delete pro;
-		}
-
-		// switch fill to scatter after the first time
-		// eg. web and storm of vengeance shouldn't explode outward in subsequent applications
-		if (Extension && apflags & APF_FILL) {
-			Extension->APFlags |= APF_SCATTER;
-		}
+		DrawSpread();
 	}
 
 	if (extensionExplosionCount) {
@@ -1683,15 +1730,71 @@ void Projectile::DrawLine(const Region& vp, int face, BlitFlags flag)
 	}
 }
 
-void Projectile::DrawTravel(const Region& viewport)
+// adjust position for arcing paths
+void Projectile::BendPosition(Point& pos) const
+{
+	double total_distance = Distance(Origin, Destination);
+	double travelled_distance = Distance(Origin, Pos);
+
+	// distance travelled along the line, from 0.0 to 1.0
+	double travelled = travelled_distance / total_distance;
+	if (travelled > 1.0) {
+		Log(WARNING, "Projectile", "Travelled over full distance ({} = {} / {})! Origin: {}, Destination: {}, Pos: {}", travelled, travelled_distance, total_distance, Origin, Destination, Pos);
+		travelled = 1.0;
+	}
+
+	// input to sin(): 0 to pi gives us an arc
+	double arc_angle = travelled * M_PI;
+
+	// calculate the distance between the arc and the current pos
+	// (this could use travelled and a larger constant multiplier,
+	// to make the arc size fixed rather than relative to the total
+	// distance to travel)
+	double length_of_normal = travelled_distance * std::sin(arc_angle) * 0.3 * ((bend / 2) + 1);
+	if (bend % 2) length_of_normal = -length_of_normal;
+
+	// adjust the to-be-rendered point by that distance
+	double x_vector = (Destination.x - Origin.x) / total_distance;
+	double y_vector = (Destination.y - Origin.y) / total_distance;
+	pos.x += y_vector * length_of_normal;
+	pos.y -= x_vector * length_of_normal;
+}
+
+// draw pop in/hold/pop out animation sequences
+void Projectile::DrawPopping(unsigned int face, const Point& pos, BlitFlags flags, const Color& popTint)
+{
+	const Game* game = core->GetGame();
+	Holder<Sprite2D> frame;
+	if (game && game->IsTimestopActive() && !(TFlags & PTF_TIMELESS)) {
+		frame = travel[face].LastFrame();
+		flags |= BlitFlags::GREY;
+		Draw(frame, pos, flags, popTint);
+		return;
+	}
+
+	if (ExtFlags & PEF_UNPOP) {
+		frame = shadow[0].NextFrame();
+		if (shadow[0].endReached) {
+			ExtFlags &= ~PEF_UNPOP;
+		}
+	} else {
+		frame = travel[0].NextFrame();
+		if (travel[0].endReached) {
+			travel[0].playReversed = true;
+			travel[0].SetFrame(0);
+			ExtFlags |= PEF_UNPOP;
+			frame = shadow[0].NextFrame();
+		}
+	}
+	Draw(frame, pos, flags, popTint);
+}
+
+void Projectile::DrawTravel(const Region& viewport, BlitFlags flags)
 {
 	const Game *game = core->GetGame();
-	BlitFlags flags;
 
 	if(ExtFlags&PEF_HALFTRANS) {
-		flags = BlitFlags::HALFTRANS;
-	} else {
-		flags = BlitFlags::NONE;
+		flags |= BlitFlags::HALFTRANS;
 	}
 
 	//static tint (use the tint field)
@@ -1712,34 +1815,8 @@ void Projectile::DrawTravel(const Region& viewport)
 	}
 
 	Point pos = Pos - viewport.origin;
-	if(bend && phase == P_TRAVEL && Origin != Destination) {
-		double total_distance = Distance(Origin, Destination);
-		double travelled_distance = Distance(Origin, Pos);
-
-		// distance travelled along the line, from 0.0 to 1.0
-		double travelled = travelled_distance / total_distance;
-		if (travelled > 1.0) {
-			Log(WARNING, "Projectile", "Travelled over full distance ({} = {} / {})! Origin: {}, Destination: {}, Pos: {}", travelled, travelled_distance, total_distance, Origin, Destination, Pos);
-			travelled = 1.0;
-		}
-
-		// input to sin(): 0 to pi gives us an arc
-		double arc_angle = travelled * M_PI;
-
-		// calculate the distance between the arc and the current pos
-		// (this could use travelled and a larger constant multiplier,
-		// to make the arc size fixed rather than relative to the total
-		// distance to travel)
-		double length_of_normal = travelled_distance * std::sin(arc_angle) * 0.3 * ((bend / 2) + 1);
-		if (bend % 2) length_of_normal = -length_of_normal;
-
-		// adjust the to-be-rendered point by that distance
-		double x_vector = (Destination.x - Origin.x) / total_distance;
-		double y_vector = (Destination.y - Origin.y) / total_distance;
-		Point newpos = pos;
-		newpos.x += y_vector * length_of_normal;
-		newpos.y -= x_vector * length_of_normal;
-		pos = newpos;
+	if (bend && phase == P_TRAVEL && Origin != Destination) {
+		BendPosition(pos);
 	}
 
 	// set up the tint for the rest of the blits, but don't overwrite the saved one
@@ -1754,29 +1831,8 @@ void Projectile::DrawTravel(const Region& viewport)
 	}
 
 	if (ExtFlags&PEF_POP) {
-			//draw pop in/hold/pop out animation sequences
-			Holder<Sprite2D> frame;
-			if (game && game->IsTimestopActive() && !(TFlags&PTF_TIMELESS)) {
-				frame = travel[face].LastFrame();
-				flags |= BlitFlags::GREY;
-			} else {
-				if (ExtFlags&PEF_UNPOP) {
-					frame = shadow[0].NextFrame();
-					if (shadow[0].endReached) {
-						ExtFlags &= ~PEF_UNPOP;
-					}
-				} else {
-					frame = travel[0].NextFrame();
-					if (travel[0].endReached) {
-						travel[0].playReversed = true;
-						travel[0].SetFrame(0);
-						ExtFlags |= PEF_UNPOP;
-						frame = shadow[0].NextFrame();
-					}
-				}
-			}
-			Draw(frame, pos, flags, tint2);
-			return;
+		DrawPopping(face, pos, flags, tint2);
+		return;
 	}
 	
 	if (ExtFlags&PEF_LINE) {
@@ -1789,7 +1845,7 @@ void Projectile::DrawTravel(const Region& viewport)
 		Draw(frame, pos, flags, tint2);
 	}
 
-	pos.y-=GetZPos();
+	pos.y -= ZPos;
 	
 	if (TFlags & PTF_TRANS) {
 		flags |= BlitFlags::ONE_MINUS_DST;
@@ -1824,7 +1880,7 @@ void Projectile::DrawTravel(const Region& viewport)
 	}
 
 	if (drawSpark) {
-		area->Sparkle(0,SparkColor, SPARKLE_EXPLOSION, pos, 0, GetZPos() );
+		area->Sparkle(0, SparkColor, SPARKLE_EXPLOSION, pos, 0, ZPos);
 		drawSpark = 0;
 	}
 
@@ -1949,7 +2005,7 @@ static Point GetCastingOffset(const Actor* actor)
 			offset.y = -0x90;
 			break;
 		default:
-			error("Projectile", "Mishandled orientation mirroring: {}!", fmt::underlying(direction));
+			error("Projectile", "Mishandled orientation mirroring: {}!", direction);
 	}
 
 	if (origDirection > N) {

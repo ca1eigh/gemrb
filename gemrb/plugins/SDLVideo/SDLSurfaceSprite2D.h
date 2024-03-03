@@ -54,8 +54,8 @@ public:
 	SDLSurfaceSprite2D(const Region&, void* pixels, const PixelFormat& fmt) noexcept;
 	SDLSurfaceSprite2D(const Region&, const PixelFormat& fmt) noexcept;
 	SDLSurfaceSprite2D(const SDLSurfaceSprite2D &obj) noexcept;
-	~SDLSurfaceSprite2D() noexcept;
-	
+	~SDLSurfaceSprite2D() noexcept override;
+
 	Holder<Sprite2D> copy() const override;
 
 	const void* LockSprite() const override;
@@ -68,8 +68,8 @@ public:
 	SDL_Surface* GetSurface() const { return renderedSurface; };
 	
 	// render to 'renderedSurface' any supported options passed in 'flags'
-	// returns the flags which were sucessfully applied
-	// operations are not cumulative and don't permanantly alter the 'surface'
+	// returns the flags which were successfully applied
+	// operations are not cumulative and don't permanently alter the 'surface'
 	BlitFlags RenderWithFlags(BlitFlags flags, const Color* = nullptr) const noexcept;
 };
 
@@ -87,8 +87,8 @@ public:
 	SDLTextureSprite2D(const SDLTextureSprite2D&) noexcept;
 	SDLTextureSprite2D(const Region&, void* pixels, const PixelFormat& fmt) noexcept;
 	SDLTextureSprite2D(const Region&, const PixelFormat& fmt) noexcept;
-	~SDLTextureSprite2D() noexcept;
-	
+	~SDLTextureSprite2D() noexcept override;
+
 	Holder<Sprite2D> copy() const override;
 	
 	SDL_Texture* GetTexture(SDL_Renderer* renderer) const;

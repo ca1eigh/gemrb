@@ -111,7 +111,7 @@ namespace GemRB {
 #define STATE_EXPLODING  0x00000100 // chunky death
 #define STATE_PST_MIRROR 0x00000100 // pst version of STATE_MIRROR (overlaps STATE_EXPLODING)
 #define STATE_FLAME      0x00000200 // charred to death
-#define STATE_ACID       0x00000400 // disolved to death
+#define STATE_ACID       0x00000400 // dissolved to death
 #define STATE_DEAD       0x00000800
 #define STATE_SILENCED   0x00001000
 #define STATE_CHARMED    0x00002000
@@ -150,8 +150,7 @@ namespace GemRB {
 #define STATE_MINDLESS  (STATE_CONFUSED|STATE_FEEBLE|STATE_CHARMED|STATE_HELPLESS|STATE_SLEEP|STATE_BERSERK|STATE_PANIC) // 0x80102027
 
 // can't walk or attack - helpless
-// FIXME: why is STATE_BERSERK on the list?
-#define STATE_CANTMOVE ((STATE_MINDLESS|STATE_STUNNED|_DEAD_STATES|STATE_DEACTIVATED)^(STATE_CHARMED|STATE_CONFUSED)) // 0x180fef
+#define STATE_CANTMOVE   (STATE_FEEBLE | STATE_HELPLESS | STATE_SLEEP | STATE_STUNNED | _DEAD_STATES | STATE_DEACTIVATED) // 0x180fe9
 #define STATE_CANTSTEAL  (_DEAD_STATES|STATE_DEACTIVATED|STATE_FEEBLE) //can't steal from, 0x00180fc0
 #define STATE_CANTSEE    (_DEAD_STATES|STATE_DEACTIVATED) //can't explore (even itself), 0x00080fc0
 #define STATE_CANTLISTEN ((STATE_CANTSEE|STATE_STUNNED|STATE_MINDLESS)^(STATE_CHARMED|STATE_FEEBLE)) // 0x80080fef
@@ -217,9 +216,9 @@ namespace GemRB {
 #define MC_NO_TOOLTIPS          0x800000 // bit 23
 // the following bits are set in some files in iwd2 and iwd1
 // it's in the range of the bg2 randomwalk bits 24-30, so likely the same between all the games
-//#define                       0x4000000 // iwd2, unkown, probably irrelevant; set for 50wyv{,h,r}
-//#define                       0x20000000 // iwd2, unkown, probably irrelevant
-//#define                       0x40000000 // iwd2, unkown, probably irrelevant
+//#define                       0x4000000 // iwd2, unknown, probably irrelevant; set for 50wyv{,h,r}
+//#define                       0x20000000 // iwd2, unknown, probably irrelevant
+//#define                       0x40000000 // iwd2, unknown, probably irrelevant
 #define MC_HOF_UPGRADED         0x80000000 // last bit, was used in memory only; repurposed to show HoF state
 
 // specflag values

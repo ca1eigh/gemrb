@@ -54,7 +54,7 @@ Button::Button(const Region& frame)
 Button::~Button()
 {
 	delete animation;
-	SetImage(BUTTON_IMAGE_NONE, NULL);
+	SetImage(ButtonImage::None, nullptr);
 	ClearPictureList();
 
 	if (hotKey.global) {
@@ -75,14 +75,9 @@ void Button::UnregisterHotKey()
 
 /** Sets the 'type' Image of the Button to 'img'.
  see 'BUTTON_IMAGE_TYPE' */
-void Button::SetImage(BUTTON_IMAGE_TYPE type, Holder<Sprite2D> img)
+void Button::SetImage(ButtonImage type, Holder<Sprite2D> img)
 {
-	if (type >= BUTTON_IMAGE_TYPE_COUNT) {
-		Log(ERROR, "Button", "Trying to set a button image index out of range: {}", fmt::underlying(type));
-		return;
-	}
-
-	if (type <= BUTTON_IMAGE_NONE) {
+	if (type == ButtonImage::None) {
 		for (auto& buttonImage : buttonImages) {
 			buttonImage = nullptr;
 		}
@@ -90,7 +85,7 @@ void Button::SetImage(BUTTON_IMAGE_TYPE type, Holder<Sprite2D> img)
 	} else {
 		buttonImages[type] = std::move(img);
 		/*
-		 currently IE_GUI_BUTTON_NO_IMAGE cannot be infered from the presence or lack of images
+		 currently IE_GUI_BUTTON_NO_IMAGE cannot be inferred from the presence or lack of images
 		 leaving this here commented out in case it may be useful in the future.
 
 		if (img) {
@@ -99,12 +94,12 @@ void Button::SetImage(BUTTON_IMAGE_TYPE type, Holder<Sprite2D> img)
 			// check if we should set IE_GUI_BUTTON_NO_IMAGE
 
 			int i=0;
-			for (; i < BUTTON_IMAGE_TYPE_COUNT; i++) {
+			for (; i < BUTTON_IMAGE_TYPE::None; i++) {
 				if (buttonImages[i] != NULL) {
 					break;
 				}
 			}
-			if (i == BUTTON_IMAGE_TYPE_COUNT) {
+			if (i == BUTTON_IMAGE_TYPE::None) {
 				// we made it to the end of the list without breaking so we have no images
 				Flags &= IE_GUI_BUTTON_NO_IMAGE;
 			}
@@ -141,23 +136,21 @@ void Button::DrawSelf(const Region& rgn, const Region& /*clip*/)
 		switch (ButtonState) {
 			case FAKEPRESSED:
 			case PRESSED:
-				Image = buttonImages[BUTTON_IMAGE_PRESSED];
+				Image = buttonImages[ButtonImage::Pressed];
 				break;
 			case SELECTED:
-				Image = buttonImages[BUTTON_IMAGE_SELECTED];
+				Image = buttonImages[ButtonImage::Selected];
 				break;
 			case DISABLED:
 			case FAKEDISABLED:
-				Image = buttonImages[BUTTON_IMAGE_DISABLED];
+				Image = buttonImages[ButtonImage::Disabled];
 				break;
 			default:
-				Image = buttonImages[BUTTON_IMAGE_UNPRESSED];
+				Image = buttonImages[ButtonImage::Unpressed];
 				break;
 		}
 		if (Image) {
-			// FIXME: maybe it's useless...
-			Point offset((frame.w / 2) - (Image->Frame.w / 2), (frame.h / 2) - (Image->Frame.h / 2));
-			VideoDriver->BlitSprite(Image, rgn.origin + offset);
+			VideoDriver->BlitSprite(Image, rgn.origin);
 		}
 	}
 
@@ -293,17 +286,16 @@ void Button::DrawSelf(const Region& rgn, const Region& /*clip*/)
 	}
 
 	if (! (flags&IE_GUI_BUTTON_NO_IMAGE)) {
-		for (const auto& border : borders) {
-			const ButtonBorder *fr = &border;
-			if (! fr->enabled) continue;
+		for (const ButtonBorder& border : borders) {
+			if (!border.enabled) continue;
 
-			const Region& frRect = fr->rect;
+			const Region& frRect = border.rect;
 			Region r = Region( rgn.origin + frRect.origin, frRect.size );
-			if (pulseBorder && !fr->filled) {
-				Color mix = GlobalColorCycle.Blend(ColorWhite, fr->color);
-				VideoDriver->DrawRect( r, mix, fr->filled, BlitFlags::BLENDED );
+			if (pulseBorder && !border.filled) {
+				Color mix = GlobalColorCycle.Blend(ColorWhite, border.color);
+				VideoDriver->DrawRect(r, mix, border.filled, BlitFlags::BLENDED);
 			} else {
-				VideoDriver->DrawRect( r, fr->color, fr->filled, BlitFlags::BLENDED );
+				VideoDriver->DrawRect(r, border.color, border.filled, BlitFlags::BLENDED);
 			}
 		}
 	}
@@ -360,7 +352,7 @@ bool Button::IsAnimated() const
 
 bool Button::IsOpaque() const
 {
-	bool opaque = View::IsOpaque();
+	bool opaque = Control::IsOpaque();
 	if (!opaque && animation && animation->Current())
 	{
 		auto AnimPicture = animation->Current();
@@ -395,9 +387,9 @@ void Button::EnableBorder(int index, bool enabled)
 	}
 }
 
-void Button::SetFont(Font* newfont)
+void Button::SetFont(Holder<Font> newfont)
 {
-	font = newfont;
+	font = std::move(newfont);
 }
 
 String Button::TooltipText() const
@@ -406,7 +398,7 @@ String Button::TooltipText() const
 		return u"";
 	}
 
-	ieDword showHotkeys = core->GetVariable("Hotkeys On Tooltips", 0);
+	ieDword showHotkeys = core->GetDictionary().Get("Hotkeys On Tooltips", 0);
 	if (showHotkeys && hotKey) {
 		String s;
 		switch (hotKey.key) {
@@ -552,10 +544,9 @@ void Button::OnMouseEnter(const MouseEvent& me, const DragOp* dop)
 		SetState(PRESSED);
 	}
 
-	for (const auto& border : borders) {
-		const ButtonBorder *fr = &border;
-		if (fr->enabled) {
-			pulseBorder = !fr->filled;
+	for (const ButtonBorder& border : borders) {
+		if (border.enabled) {
+			pulseBorder = !border.filled;
 			MarkDirty();
 			break;
 		}
@@ -678,13 +669,9 @@ bool Button::HitTest(const Point& p) const
 	if (hit) {
 		// some buttons have hollow Image frame filled w/ Picture
 		// some buttons in BG2 are text only (if BAM == 'GUICTRL')
-		Holder<Sprite2D> Unpressed = buttonImages[BUTTON_IMAGE_UNPRESSED];
+		Holder<Sprite2D> Unpressed = buttonImages[ButtonImage::Unpressed];
 		if (Picture || !PictureList.empty() || !Unpressed) return true;
-
-		Point off;
-		off.x = (frame.w / 2) - (Unpressed->Frame.w / 2) + Unpressed->Frame.x;
-		off.y = (frame.h / 2) - (Unpressed->Frame.h / 2) + Unpressed->Frame.y;
-		hit = !Unpressed->IsPixelTransparent(p - off);
+		hit = !Unpressed->IsPixelTransparent(p);
 	}
 	return hit;
 }

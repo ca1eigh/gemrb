@@ -33,8 +33,6 @@
 
 namespace GemRB {
 
-#define YESNO(x) ( (x)?"Yes":"No")
-
 //crazy programmers couldn't decide which bit marks the alternative point
 static ieDword TRAP_USEPOINT = _TRAP_USEPOINT;
 static bool inited = false;
@@ -81,13 +79,13 @@ int InfoPoint::CheckTravel(const Actor *actor) const
 	// pst doesn't care about distance, selection or the party bit at all
 	static const bool teamMove = core->HasFeature(GFFlags::TEAM_MOVEMENT);
 	if (pm && ((Flags&TRAVEL_PARTY) || teamMove)) {
-		if (teamMove || core->GetGame()->EveryoneNearPoint(actor->GetCurrentArea(), actor->Pos, ENP_CANMOVE) ) {
+		if (teamMove || core->GetGame()->EveryoneNearPoint(actor->GetCurrentArea(), actor->Pos, ENP::CanMove | ENP::Familars)) {
 			return CT_WHOLE;
 		}
 		return CT_GO_CLOSER;
 	}
 	if (actor->IsSelected() ) {
-		if (core->GetGame()->EveryoneNearPoint(actor->GetCurrentArea(), actor->Pos, ENP_CANMOVE|ENP_ONLYSELECT) ) {
+		if (core->GetGame()->EveryoneNearPoint(actor->GetCurrentArea(), actor->Pos, ENP::CanMove | ENP::OnlySelect)) {
 			return CT_MOVE_SELECTED;
 		}
 		return CT_SELECTED;
@@ -119,9 +117,9 @@ bool InfoPoint::IsPortal() const
 }
 
 // returns the appropriate cursor over an active region (trap, infopoint, travel region)
-int InfoPoint::GetCursor(int targetMode) const
+int InfoPoint::GetCursor(TargetMode targetMode) const
 {
-	if (targetMode == TARGET_MODE_PICK) {
+	if (targetMode == TargetMode::Pick) {
 		if (VisibleTrap(0)) {
 			return IE_CURSOR_TRAP;
 		}
@@ -206,7 +204,7 @@ bool InfoPoint::Entered(Actor *actor)
 	return false;
 check:
 	if (Type==ST_TRAVEL) {
-		actor->LastMarked = GetGlobalID();
+		actor->objects.LastMarked = GetGlobalID();
 		return true;
 	}
 
@@ -220,12 +218,12 @@ check:
 	}
 
 	// recheck ar1404 mirror trap Shadow1 still works if you modify TRAP_NPC logic
-	if ((Flags&TRAP_NPC) ^ (!!actor->InParty)) {
+	if ((Flags & TRAP_NPC) ^ actor->IsPartyMember()) {
 		//no need to avoid a travel trigger
 
 		//skill?
 		if (TriggerTrap(0, actor->GetGlobalID()) ) {
-			actor->LastMarked = GetGlobalID();
+			actor->objects.LastMarked = GetGlobalID();
 			return true;
 		}
 	}
@@ -252,14 +250,14 @@ std::string InfoPoint::dump() const
 	AppendFormat(buffer, "Region Global ID: {}\n", GetGlobalID());
 	AppendFormat(buffer, "Position: {}\n", Pos);
 	AppendFormat(buffer, "TalkPos: {}\n", TalkPos);
-	AppendFormat(buffer, "UsePoint: {}  (on: {})\n", UsePoint, YESNO(GetUsePoint()));
+	AppendFormat(buffer, "UsePoint: {}  (on: {})\n", UsePoint, YesNo(GetUsePoint()));
 	AppendFormat(buffer, "TrapLaunch: {}\n", TrapLaunch);
 	switch(Type) {
 	case ST_TRAVEL:
 		AppendFormat(buffer, "Destination Area: {} Entrance: {}\n", Destination, EntranceName);
 		break;
 	case ST_PROXIMITY:
-		AppendFormat(buffer, "TrapDetected: {}, Trapped: {}\n", TrapDetected, YESNO(Trapped));
+		AppendFormat(buffer, "TrapDetected: {}, Trapped: {}\n", TrapDetected, YesNo(Trapped));
 		AppendFormat(buffer, "Trap detection: {}%, Trap removal: {}%\n", TrapDetectionDiff, TrapRemovalDiff);
 		break;
 	case ST_TRIGGER:
@@ -272,8 +270,8 @@ std::string InfoPoint::dump() const
 		name = Scripts[0]->GetName();
 	}
 	AppendFormat(buffer, "Script: {}, Key: {}, Dialog: {}\n", name, KeyResRef, Dialog);
-	AppendFormat(buffer, "Deactivated: {}\n", YESNO(Flags&TRAP_DEACTIVATED));
-	AppendFormat(buffer, "Active: {}\n", YESNO(InternalFlags&IF_ACTIVE));
+	AppendFormat(buffer, "Deactivated: {}\n", YesNo(Flags & TRAP_DEACTIVATED));
+	AppendFormat(buffer, "Active: {}\n", YesNo(InternalFlags & IF_ACTIVE));
 	Log(DEBUG, "InfoPoint", "{}", buffer);
 	return buffer;
 }

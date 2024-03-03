@@ -150,10 +150,16 @@ public:
 		RTrim(dest);
 		return read;
 	}
-	
+
+	template <typename STR>
+	strret_t WriteString(const STR& src) {
+		auto beg = std::begin(src);
+		return Write(beg, std::end(src) - beg);
+	}
+
 	template <typename STR>
 	strret_t WriteString(const STR& src, size_t len) {
-		return Write(src.begin(), len);
+		return Write(src.c_str(), len);
 	}
 	
 	template <typename STR>
@@ -180,7 +186,6 @@ public:
 	void Rewind();
 	/** Returns true if the stream is encrypted */
 	bool CheckEncrypted();
-	void ReadDecrypted(void* buf, strpos_t encSize) const;
 	strret_t ReadLine(std::string& buf, strpos_t maxlen = 0);
 	/** Create a copy of this stream.
 	 *
@@ -195,6 +200,7 @@ protected:
 	bool Encrypted = false;
 	bool IsDataBigEndian = false;
 	
+	void ReadDecrypted(void* buf, strpos_t encSize) const;
 private:
 	bool NeedEndianSwap() const noexcept;
 };

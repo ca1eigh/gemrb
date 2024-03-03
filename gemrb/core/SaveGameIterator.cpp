@@ -35,13 +35,13 @@
 #include "GUI/WindowManager.h"
 #include "Scriptable/Actor.h"
 #include "Streams/FileStream.h"
+#include "System/VFS.h"
 
 #include <cassert>
 #include <set>
 #include <ctime>
 
 #include <fmt/chrono.h>
-#include <sys/stat.h>
 
 #ifdef VITA
 #include <dirent.h>
@@ -87,7 +87,9 @@ static std::string ParseGameDate(DataStream *ds)
 	int hours = ((int)GameTime)/core->Time.hour_sec;
 	int days = hours/24;
 	hours -= days*24;
-	std::string a, b, c;
+	std::string a;
+	std::string b;
+	std::string c;
 
 	// pst has a nice single string for everything 41277 (individual ones lack tokens)
 	SetTokenAsString("GAMEDAYS", days);
@@ -121,8 +123,8 @@ static std::string ParseGameDate(DataStream *ds)
 	}
 }
 
-SaveGame::SaveGame(path_t path, path_t name, const ResRef& prefix, std::string slotname, int pCount, int saveID)
-: Path(std::move(path)), Name(std::move(name)), Prefix(prefix), SlotName(std::move(slotname))
+SaveGame::SaveGame(path_t path, const path_t& name, const ResRef& prefix, std::string slotname, int pCount, int saveID)
+: Path(std::move(path)), Prefix(prefix), SlotName(std::move(slotname))
 {
 	static const auto DATE_FMT = FMT_STRING("{:%a %Od %b %T %EY}");
 	PortraitCount = pCount;
@@ -136,7 +138,8 @@ SaveGame::SaveGame(path_t path, path_t name, const ResRef& prefix, std::string s
 	} else {
 		Date = fmt::format(DATE_FMT, fmt::localtime(my_stat.st_mtime));
 	}
-	manager.AddSource(Path, Name.c_str(), PLUGIN_RESOURCE_DIRECTORY);
+	manager.AddSource(Path, name, PLUGIN_RESOURCE_DIRECTORY);
+	Name = StringFromUtf8(name);
 }
 
 Holder<Sprite2D> SaveGame::GetPortrait(int index) const
@@ -245,7 +248,7 @@ static bool IsSaveGameSlot(const path_t& Path, const path_t& slotname)
 
 	path_t ftmp = PathJoinExt(dtmp, core->GameNameResRef, "bmp");
 
-	if (access(ftmp.c_str(), R_OK)) {
+	if (!FileExists(ftmp)) {
 		Log(WARNING, "SaveGameIterator", "Ignoring slot {} because of no appropriate preview!", dtmp);
 		return false;
 	}
@@ -254,13 +257,13 @@ static bool IsSaveGameSlot(const path_t& Path, const path_t& slotname)
 	if (core->HasFeature(GFFlags::HAS_EE_EFFECTS)) return true;
 
 	ftmp = PathJoinExt(dtmp, core->WorldMapName[0], "wmp");
-	if (access(ftmp.c_str(), R_OK)) {
+	if (!FileExists(ftmp)) {
 		return false;
 	}
 
 	if (core->WorldMapName[1]) {
 		ftmp = PathJoinExt(dtmp, core->WorldMapName[1], "wmp");
-		if (access(ftmp.c_str(), R_OK)) {
+		if (!FileExists(ftmp)) {
 			Log(WARNING, "SaveGameIterator", "Ignoring slot {} because of no appropriate second worldmap!", dtmp);
 			return false;
 		}
@@ -299,7 +302,10 @@ bool SaveGameIterator::RescanSaveGames()
 	} while (++dir);
 
 	for (const auto& slot : slots) {
-		save_slots.push_back(BuildSaveGame(slot));
+		auto saveGame = BuildSaveGame(slot);
+		if (saveGame) {
+			save_slots.push_back(saveGame);
+		}
 	}
 
 	return true;
@@ -312,12 +318,12 @@ const std::vector<Holder<SaveGame> >& SaveGameIterator::GetSaveGames()
 	return save_slots;
 }
 
-Holder<SaveGame> SaveGameIterator::GetSaveGame(StringView name)
+Holder<SaveGame> SaveGameIterator::GetSaveGame(const String& name)
 {
 	RescanSaveGames();
 
 	for (const auto& saveSlot : save_slots) {
-		if (saveSlot->GetName().compare(name.c_str()) == 0)
+		if (saveSlot->GetName() == name)
 			return saveSlot;
 	}
 	return NULL;
@@ -632,6 +638,11 @@ int SaveGameIterator::CreateSaveGame(int index, bool mqs) const
 	return GEM_OK;
 }
 
+int SaveGameIterator::CreateSaveGame(Holder<SaveGame> save, const String& slotname, bool force) const {
+	auto mbSlotName = MBStringFromString(slotname);
+	return CreateSaveGame(std::move(save), StringView { mbSlotName }, force);
+}
+
 int SaveGameIterator::CreateSaveGame(Holder<SaveGame> save, StringView slotname, bool force) const
 {
 	if (!slotname) {
@@ -667,6 +678,21 @@ int SaveGameIterator::CreateSaveGame(Holder<SaveGame> save, StringView slotname,
 			if (save2->GetSaveID() >= index) {
 				index = save2->GetSaveID() + 1;
 			}
+		}
+
+		// we were called with an empty slot, so make sure that's true
+		// normal and expansion saves could have the same name, but we skip them
+		path_t basePath = PathJoin(core->config.SavePath, SaveDir());
+		path_t path = basePath;
+		if (!MakeDirectory(basePath)) {
+			Log(ERROR, "SaveGameIterator", "Unable to create base save game directory '{}'", path);
+			return GEM_ERROR;
+		}
+		index--;
+		while (DirExists(path)) {
+			index++;
+			path_t dir = fmt::format("{:09d}-{}", index, slotname);
+			path = PathJoin(basePath, dir);
 		}
 	}
 

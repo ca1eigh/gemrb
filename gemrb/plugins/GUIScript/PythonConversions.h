@@ -59,7 +59,7 @@ class CObject final {
 public:
 	using CAP_T = PTR<T>;
 	
-	operator PyObject* () const
+	explicit operator PyObject* () const
 	{
 		if (pycap) {
 			Py_INCREF(pycap);
@@ -107,7 +107,7 @@ public:
 				cap = newcap;
 			}
 
-			PyObject* kwargs = Py_BuildValue("{s:O}", "ID", obj);
+			PyObject* kwargs = Py_BuildValue("{s:N}", "ID", obj);
 			pycap = gs->ConstructObject(T::ID.description, nullptr, kwargs);
 			Py_DECREF(kwargs);
 		}
@@ -121,6 +121,7 @@ private:
 	static void PyRelease(PyObject *obj)
 	{
 		void* ptr = PyCapsule_GetPointer(obj, T::ID.description);
+		assert(ptr);
 		delete static_cast<Capsule*>(ptr);
 	}
 	
@@ -140,7 +141,6 @@ private:
 // WARNING: dont use these for new code
 // they are temporary while we compete the transition to Python 3
 class PyStringWrapper {
-	wchar_t* buffer = nullptr;
 	char* str = nullptr;
 	PyObject* object = nullptr;
 	Py_ssize_t len = 0;
@@ -148,20 +148,22 @@ class PyStringWrapper {
 public:
 	PyStringWrapper(PyObject* obj, const char* encoding) noexcept {
 		if (PyUnicode_Check(obj)) {
-			PyObject * temp_bytes = PyUnicode_AsEncodedString(obj, encoding, "strict"); // Owned reference
+			PyObject* temp_bytes = PyUnicode_AsEncodedString(obj, encoding, "backslashreplace"); // Owned reference
 			if (temp_bytes != NULL) {
 				PyBytes_AsStringAndSize(temp_bytes, &str, &len);
 				object = temp_bytes; // needs to outlive our use of wrap.str
 			} else { // raw data...
+				// CHECK: is this even possible now that erros are not "strict"?
+				// maybe an assert is better
 				PyErr_Clear();
-				Py_ssize_t buflen = PyUnicode_GET_LENGTH(obj);
-				buffer = new wchar_t[buflen + 1];
-				Py_ssize_t strlen = PyUnicode_AsWideChar(obj, buffer, buflen);
-				buffer[strlen] = L'\0';
-				str = reinterpret_cast<char*>(buffer);
-				len = strlen * sizeof(wchar_t);
+				Py_IncRef(obj);
+				object = obj;
+				len = PyUnicode_GET_LENGTH(object);
+				str = static_cast<char*>(PyUnicode_DATA(object));
 			}
 		} else if (PyObject_TypeCheck(obj, &PyBytes_Type)) {
+			Py_IncRef(obj);
+			object = obj;
 			PyBytes_AsStringAndSize(obj, &str, &len);
 		}
 	}
@@ -170,22 +172,16 @@ public:
 	PyStringWrapper& operator=(const PyStringWrapper&) = delete;
 	
 	PyStringWrapper(PyStringWrapper&& wrap) {
-		std::swap(wrap.buffer, buffer);
 		std::swap(wrap.str, str);
 		std::swap(wrap.object, object);
 	}
-	
-	const char* CString() const noexcept {
-		return str;
-	}
-	
+
 	operator StringView() const noexcept {
 		return StringView(str, len);
 	}
 	
 	~PyStringWrapper() noexcept {
-		Py_XDECREF(object);
-		delete[] buffer;
+		Py_DECREF(object);
 	}
 };
 PyStringWrapper PyString_AsStringView(PyObject* obj);
@@ -215,7 +211,8 @@ inline ResRef ResRefFromPy(PyObject* obj) {
 	return ASCIIStringFromPy<ResRef>(obj);
 }
 
-inline ResRef ieVariableFromPy(PyObject* obj) {
+inline ieVariable ieVariableFromPy(PyObject* obj)
+{
 	return ASCIIStringFromPy<ieVariable>(obj);
 }
 
@@ -236,7 +233,6 @@ PyObject* PyString_FromResRef(const ResRef& resRef);
 PyObject* PyString_FromString(const char* s);
 PyObject* PyString_FromStringView(StringView sv);
 PyObject* PyString_FromStringObj(const std::string&);
-PyObject* PyString_FromSystemStringObj(const std::string&);
 PyObject* PyString_FromStringObj(const String&);
 
 String PyString_AsStringObj(PyObject *obj);
@@ -247,17 +243,11 @@ PyObject* PyString_FromASCII(const STR& str)
 	// PyUnicode_FromStringAndSize expects UTF-8 data, ascii is compatible with that
 	return PyUnicode_FromStringAndSize(str.c_str(), str.length());
 }
-	
-template <typename T>
-PyObject* PyObject_FromPtr(T* p)
-{
-	return CObject<T>(p);
-}
 
 template <typename T>
 PyObject* PyObject_FromHolder(Holder<T> h)
 {
-	return CObject<T>(std::move(h));
+	return static_cast<PyObject*>(CObject<T>(std::move(h)));
 }
 
 template <typename T, PyObject* (*F)(T), class Container>

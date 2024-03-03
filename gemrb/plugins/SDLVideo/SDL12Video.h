@@ -137,7 +137,7 @@ public:
 
 		// we can safely const_cast pixelBuf because the surface is destroyed before return and we dont alter it
 
-		// FIXME: this shold support everything from Video::BufferFormat
+		// FIXME: this should support everything from Video::BufferFormat
 		if (buffer->format->BitsPerPixel == 16) { // RGB555
 			sprite = SDL_CreateRGBSurfaceFrom( const_cast<void*>(pixelBuf), bufDest.w, bufDest.h, 16, 2 * bufDest.w, 0x7C00, 0x03E0, 0x001F, 0 );
 		} else { // RGBPAL8
@@ -219,7 +219,8 @@ public:
 			if (strides[plane] < size) {
 				size = strides[plane];
 			}
-			unsigned int srcoffset = 0, destoffset = 0;
+			unsigned int srcoffset = 0;
+			unsigned int destoffset = 0;
 			for (int i = 0; i < ((plane == 0) ? bufDest.h : (bufDest.h / 2)); i++) {
 				memcpy(overlay->pixels[plane] + destoffset,
 					   data + srcoffset, size);

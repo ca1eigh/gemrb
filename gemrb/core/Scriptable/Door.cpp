@@ -33,8 +33,6 @@
 
 namespace GemRB {
 
-#define YESNO(x) ( (x)?"Yes":"No")
-
 DoorTrigger::DoorTrigger(std::shared_ptr<Gem_Polygon> openTrigger, WallPolygonGroup&& openWalls,
 			std::shared_ptr<Gem_Polygon> closedTrigger, WallPolygonGroup&& closedWalls)
 : openWalls(std::move(openWalls)), closedWalls(std::move(closedWalls)),
@@ -118,12 +116,12 @@ void Door::ToggleTiles(int State, int playsound)
 	if (State) {
 		state = !closedIndex;
 		if (playsound && !OpenSound.IsEmpty()) {
-			core->GetAudioDrv()->PlayRelative(OpenSound, SFX_CHAN_ACTIONS);
+			core->GetAudioDrv()->Play(OpenSound, SFX_CHAN_ACTIONS, toOpen[0], GEM_SND_SPATIAL);
 		}
 	} else {
 		state = closedIndex;
 		if (playsound && !CloseSound.IsEmpty()) {
-			core->GetAudioDrv()->PlayRelative(CloseSound, SFX_CHAN_ACTIONS);
+			core->GetAudioDrv()->Play(CloseSound, SFX_CHAN_ACTIONS, toOpen[0], GEM_SND_SPATIAL);
 		}
 	}
 	for (const auto& tile : tiles) {
@@ -160,13 +158,13 @@ void Door::SetDoorLocked(int Locked, int playsound)
 		// only close it in pst, needed for Dead nations (see 4a3e1cb4ef)
 		if (core->HasFeature(GFFlags::REVERSE_DOOR)) SetDoorOpen(false, playsound, 0);
 		if (playsound && !LockSound.IsEmpty())
-			core->GetAudioDrv()->PlayRelative(LockSound, SFX_CHAN_ACTIONS);
+			core->GetAudioDrv()->Play(LockSound, SFX_CHAN_ACTIONS, toOpen[0], GEM_SND_SPATIAL);
 	}
 	else {
 		if (!(Flags & DOOR_LOCKED)) return;
 		Flags&=~DOOR_LOCKED;
 		if (playsound && !UnLockSound.IsEmpty())
-			core->GetAudioDrv()->PlayRelative(UnLockSound, SFX_CHAN_ACTIONS);
+			core->GetAudioDrv()->Play(UnLockSound, SFX_CHAN_ACTIONS, toOpen[0], GEM_SND_SPATIAL);
 	}
 }
 
@@ -447,10 +445,10 @@ void Door::TryBashLock(Actor *actor)
 }
 
 // returns the appropriate cursor over a door
-int Door::GetCursor(int targetMode, int lastCursor) const
+int Door::GetCursor(TargetMode targetMode, int lastCursor) const
 {
 	if (!Visible()) {
-		if (targetMode == TARGET_MODE_NONE) {
+		if (targetMode == TargetMode::None) {
 			// most secret doors are in walls, so default to the blocked cursor to not give them away
 			// iwd ar6010 table/door/puzzle is walkable, secret and undetectable
 			return area->GetCursor(Pos);
@@ -459,7 +457,7 @@ int Door::GetCursor(int targetMode, int lastCursor) const
 		}
 	}
 
-	if (targetMode == TARGET_MODE_PICK) {
+	if (targetMode == TargetMode::Pick) {
 		if (VisibleTrap(0)) {
 			return IE_CURSOR_TRAP;
 		}
@@ -478,18 +476,18 @@ std::string Door::dump() const
 	AppendFormat(buffer, "Debugdump of Door {}:\n", GetScriptName() );
 	AppendFormat(buffer, "Door Global ID: {}\n", GetGlobalID());
 	AppendFormat(buffer, "Position: {}\n", Pos);
-	AppendFormat(buffer, "Door Open: {}\n", YESNO(IsOpen()));
-	AppendFormat(buffer, "Door Locked: {}	Difficulty: {}\n", YESNO(Flags&DOOR_LOCKED), LockDifficulty);
-	AppendFormat(buffer, "Door Trapped: {}	Difficulty: {}\n", YESNO(Trapped), TrapRemovalDiff);
+	AppendFormat(buffer, "Door Open: {}\n", YesNo(IsOpen()));
+	AppendFormat(buffer, "Door Locked: {}\tDifficulty: {}\n", YesNo(Flags & DOOR_LOCKED), LockDifficulty);
+	AppendFormat(buffer, "Door Trapped: {}\tDifficulty: {}\n", YesNo(Trapped), TrapRemovalDiff);
 	if (Trapped) {
-		AppendFormat(buffer, "Trap Permanent: {} Detectable: {}\n", YESNO(Flags&DOOR_RESET), YESNO(Flags&DOOR_DETECTABLE) );
+		AppendFormat(buffer, "Trap Permanent: {} Detectable: {}\n", YesNo(Flags & DOOR_RESET), YesNo(Flags & DOOR_DETECTABLE));
 	}
-	AppendFormat(buffer, "Secret door: {} (Found: {})\n", YESNO(Flags&DOOR_SECRET),YESNO(Flags&DOOR_FOUND));
+	AppendFormat(buffer, "Secret door: {} (Found: {})\n", YesNo(Flags & DOOR_SECRET), YesNo(Flags & DOOR_FOUND));
 	ResRef name = "NONE";
 	if (Scripts[0]) {
 		name = Scripts[0]->GetName();
 	}
-	AppendFormat(buffer, "Script: {}, Key ({}) removed: {}, Dialog: {}\n", name, KeyResRef, YESNO(Flags&DOOR_KEY), Dialog);
+	AppendFormat(buffer, "Script: {}, Key ({}) removed: {}, Dialog: {}\n", name, KeyResRef, YesNo(Flags & DOOR_KEY), Dialog);
 	Log(DEBUG, "Door", "{}", buffer);
 	return buffer;
 }

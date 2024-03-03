@@ -244,9 +244,11 @@ bool OpenALAudioDriver::Init(void)
 		Log(MESSAGE, "OpenAL", "EFX not available.");
 	}
 
+	// The higher the listener pos, the smoother the L/R transitions but the more gain required
+	// to compensate for lower volume
+	alListenerf(AL_GAIN, 1.25f);
+
 	ambim = new AmbientMgr;
-	speech.free = true;
-	speech.ambient = false;
 	return true;
 }
 
@@ -473,7 +475,7 @@ Holder<SoundHandle> OpenALAudioDriver::Play(StringView ResRef, unsigned int chan
 			}
 		}
 
-		volume = core->GetVariable("Volume Voices", 100);
+		volume = core->GetDictionary().Get("Volume Voices", 100);
 
 		loop = 0; // Speech ignores GEM_SND_LOOPING
 	} else {
@@ -486,7 +488,7 @@ Holder<SoundHandle> OpenALAudioDriver::Play(StringView ResRef, unsigned int chan
 			}
 		}
 
-		volume = core->GetVariable("Volume SFX", 100);
+		volume = core->GetDictionary().Get("Volume SFX", 100);
 
 		if (stream == NULL) {
 			// Failed to assign new sound.
@@ -505,19 +507,20 @@ Holder<SoundHandle> OpenALAudioDriver::Play(StringView ResRef, unsigned int chan
 		}
 	}
 
-	alSourcef( Source, AL_PITCH, 1.0f );
-	alSourcefv( Source, AL_VELOCITY, SourceVel );
-	alSourcei( Source, AL_LOOPING, loop);
-	alSourcef( Source, AL_REFERENCE_DISTANCE, REFERENCE_DISTANCE );
-	alSourcef( Source, AL_GAIN, 0.01f * (volume / 100.0f) * GetVolume(channel) );
-	alSourcei( Source, AL_SOURCE_RELATIVE, flags & GEM_SND_RELATIVE );
-	alSourcefv( Source, AL_POSITION, SourcePos );
+	alSourcef(Source, AL_PITCH, 1.0f);
+	alSourcefv(Source, AL_VELOCITY, SourceVel);
+	alSourcei(Source, AL_LOOPING, loop);
+	alSourcef(Source, AL_REFERENCE_DISTANCE, REFERENCE_DISTANCE);
+	alSourcef(Source, AL_GAIN, 0.01f * (volume / 100.0f) * GetVolume(channel));
+	// AL_SOURCE_RELATIVE = source pos & co to be interpreted as if listener was at (0, 0, 0)
+	alSourcei(Source, AL_SOURCE_RELATIVE, !(flags & GEM_SND_SPATIAL));
+	alSourcefv(Source, AL_POSITION, SourcePos);
 	checkALError("Unable to set audio parameters", WARNING);
 
 #ifdef HAVE_OPENAL_EFX_H
-	ieDword efxSetting = core->GetVariable("Environmental Audio", 0);
+	ieDword efxSetting = core->GetDictionary().Get("Environmental Audio", 0);
 
-	if (efxSetting && hasReverbProperties && (!p.IsZero() || (flags & GEM_SND_RELATIVE))) {
+	if (efxSetting && hasReverbProperties && (flags & (GEM_SND_SPATIAL | GEM_SND_EFX))) {
 		alSource3i(Source, AL_AUXILIARY_SEND_FILTER, efxEffectSlot, 0, 0);
 	} else {
 		alSource3i(Source, AL_AUXILIARY_SEND_FILTER, 0, 0, 0);
@@ -543,14 +546,14 @@ void OpenALAudioDriver::UpdateVolume(unsigned int flags)
 
 	if (flags & GEM_SND_VOL_MUSIC) {
 		musicMutex.lock();
-		volume = core->GetVariable("Volume Music", 0);
+		volume = core->GetDictionary().Get("Volume Music", 0);
 		if (MusicSource && alIsSource(MusicSource))
 			alSourcef(MusicSource, AL_GAIN, volume * 0.01f);
 		musicMutex.unlock();
 	}
 
 	if (flags & GEM_SND_VOL_AMBIENTS) {
-		volume = core->GetVariable("Volume Ambients", volume);
+		volume = core->GetDictionary().Get("Volume Ambients", volume);
 		ambim->UpdateVolume(volume);
 	}
 }
@@ -665,7 +668,7 @@ int OpenALAudioDriver::CreateStream(ResourceHolder<SoundMgr> newMusic)
 			0.0f, 0.0f, 0.0f
 		};
 
-		ieDword volume = core->GetVariable("Volume Music", 0);
+		ieDword volume = core->GetDictionary().Get("Volume Music", 0);
 		alSourcef( MusicSource, AL_PITCH, 1.0f );
 		alSourcef( MusicSource, AL_GAIN, 0.01f * volume );
 		alSourcei( MusicSource, AL_SOURCE_RELATIVE, 1 );
@@ -736,11 +739,15 @@ int OpenALAudioDriver::SetupNewStream(int x, int y, int z,
 	ALfloat position[] = { (float) x, (float) y, (float) z };
 	alSourcef( source, AL_PITCH, 1.0f );
 	alSourcefv( source, AL_POSITION, position );
-	alSourcef( source, AL_GAIN, 0.01f * gain );
-	// AL_REFERENCE_DISTANCE is the distance under which the volume would normally drop by half
-	alSourcei(source, AL_REFERENCE_DISTANCE, ambientRange > 0 ? ambientRange : REFERENCE_DISTANCE);
-	alSourcei( source, AL_ROLLOFF_FACTOR, point ? 1 : 0 );
 	alSourcei( source, AL_LOOPING, 0 );
+	alSourcef( source, AL_GAIN, 0.01f * gain );
+	// under default sound distance model (AL_INVERSE_DISTANCE_CLAMPED) the formula is:
+	//   dist = max(dist, AL_REFERENCE_DISTANCE);
+	//   dist = min(dist, AL_MAX_DISTANCE);
+	//   gain = AL_REFERENCE_DISTANCE / (AL_REFERENCE_DISTANCE + AL_ROLLOFF_FACTOR * (dist – AL_REFERENCE_DISTANCE) );
+	// ambientRange also works as cut-off distance, so reducing the volume earlier
+	alSourcei(source, AL_REFERENCE_DISTANCE, ambientRange > 0 ? (ambientRange / 2) : REFERENCE_DISTANCE);
+	alSourcei( source, AL_ROLLOFF_FACTOR, point ? 1 : 0 );
 	checkALError("Unable to set stream parameters", WARNING);
 
 	streams[stream].Buffer = 0;
@@ -956,7 +963,9 @@ void OpenALAudioDriver::QueueBuffer(int stream, unsigned short bits,
 int OpenALAudioDriver::QueueALBuffer(ALuint source, ALuint buffer) const
 {
 #ifdef DEBUG_AUDIO
-	ALint frequency, bits, channels;
+	ALint frequency;
+	ALint bits;
+	ALint channels;
 	alGetBufferi(buffer, AL_FREQUENCY, &frequency);
 	alGetBufferi(buffer, AL_BITS, &bits);
 	alGetBufferi(buffer, AL_CHANNELS, &channels);

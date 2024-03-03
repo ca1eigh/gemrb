@@ -22,6 +22,8 @@ LIST(APPEND DLL_SET_DEBUG
 	bz2d.dll
 	freetyped.dll
 	glew32d.dll
+	gtestd.dll
+	gtest_maind.dll
 	charset-1.dll
 	iconv-2.dll
 	libpng16d.dll
@@ -42,6 +44,8 @@ LIST(APPEND DLL_SET_RELEASE
 	bz2.dll
 	freetype.dll
 	glew32.dll
+	gtest.dll
+	gtest_main.dll
 	charset-1.dll
 	iconv-2.dll
 	libpng16.dll
@@ -100,6 +104,8 @@ IF(EXISTS ${PYTHON_PARENT_DIR}/Lib/site.py )
 	INSTALL(DIRECTORY ${PYTHON_PARENT_DIR}/Lib DESTINATION ${BIN_DIR})
 ELSEIF(EXISTS ${VCPKG_DATAROOT}/share/python3/Lib/site.py)
 	INSTALL(DIRECTORY ${VCPKG_DATAROOT}/share/python3/Lib DESTINATION ${BIN_DIR})
+ELSEIF(EXISTS ${VCPKG_DATAROOT}/tools/python3/Lib/site.py)
+	INSTALL(DIRECTORY ${VCPKG_DATAROOT}/tools/python3/Lib DESTINATION ${BIN_DIR})
 ELSEIF(EXISTS "C:/Python310/Lib")
 	INSTALL(DIRECTORY "C:/Python310/Lib" DESTINATION ${BIN_DIR}
 		# clean up cruft as for AppImage

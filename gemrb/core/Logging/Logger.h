@@ -27,7 +27,7 @@
 
 #include "exports.h"
 #include "EnumIndex.h"
-#include "Strings/Format.h"
+
 #include <fmt/color.h>
 
 #include <atomic>
@@ -42,7 +42,7 @@ namespace GemRB {
 
 // !!! Keep this synchronized with GUIDefines !!!
 enum LogLevel : uint8_t {
-	INTERNAL = uint8_t(-1), // special value that can only be used by the logger itself. these messages cannot be supressed
+	INTERNAL = uint8_t(-1), // special value that can only be used by the logger itself. These messages cannot be suppressed
 	FATAL = 0,
 	ERROR = 1,
 	WARNING = 2,
@@ -75,9 +75,10 @@ public:
 		
 		explicit LogWriter(LogLevel level) : level(level) {}
 		virtual ~LogWriter() noexcept = default;
-		
-		void WriteLogMessage(LogLevel level, const char* owner, const char* message, LOG_FMT fmt) {
-			WriteLogMessage(LogMessage(level, owner, message, fmt));
+
+		void WriteLogMessage(LogLevel logLevel, const char* owner, const char* message, LOG_FMT fmt)
+		{
+			WriteLogMessage(LogMessage(logLevel, owner, message, fmt));
 		}
 		virtual void WriteLogMessage(const Logger::LogMessage& msg)=0;
 	};

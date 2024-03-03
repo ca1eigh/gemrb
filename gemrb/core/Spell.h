@@ -61,12 +61,13 @@ class Projectile;
 #define  IE_SPL_INNATE 4
 #define  IE_SPL_SONG   5
 
-//this is not the same as the book types which is 3 or 11)
+// this is not the same as the book types (which is 3 or 11)
 #define NUM_SPELL_TYPES 6
 
 #define SPEC_IDENTIFY  1  //spells that don't appear in the casting bar
 #define SPEC_SILENCE   2  //spells that can be cast when silenced
 #define SPEC_DEAD      4  //spells that can target dead actors despite their target type is 1 (pst hack)
+#define SPEC_AREA      32 // spells that can target the area despite their target type being 1
 
 /**
  * @class SPLExtHeader

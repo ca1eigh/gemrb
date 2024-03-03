@@ -32,8 +32,8 @@
 
 namespace GemRB {
 
-WorldMapControl::WorldMapControl(const Region& frame, Font *font, const Color &normal, const Color &selected, const Color &notvisited)
-	: Control(frame), ftext(font)
+WorldMapControl::WorldMapControl(const Region& frame, Holder<Font> font, const Color& normal, const Color& selected, const Color& notvisited)
+	: Control(frame), ftext(std::move(font))
 {
 	color_normal = normal;
 	color_selected = selected;
@@ -55,22 +55,20 @@ WorldMapControl::WorldMapControl(const Region& frame, Font *font, const Color &n
 	// ensure the current area and any variable triggered additions are
 	// visible immediately and without the need for area travel
 	worldmap->CalculateDistances(currentArea, WMPDirection::NONE);
-
-	ControlEventHandler handler = [this](const Control* /*this*/) {
+	
+	SetAction([this](const Control* /*this*/) {
 		//this also updates visible locations
 		WorldMap* map = core->GetWorldMap();
 		uint8_t dir = static_cast<uint8_t>(GetValue());
 		map->CalculateDistances(currentArea, EnumIndex<WMPDirection>(dir));
-	};
-	
-	SetAction(std::move(handler), Control::ValueChange);
+	}, Control::ValueChange);
 }
 
-WorldMapControl::WorldMapControl(const Region& frame, Font *font)
-: WorldMapControl(frame, font,
-				  Color(0xf0, 0xf0, 0xf0, 0xff),
-				  Color(0xff, 0, 0, 0xff),
-				  Color(0x80, 0x80, 0xf0, 0xff))
+WorldMapControl::WorldMapControl(const Region& frame, Holder<Font> font)
+	: WorldMapControl(frame, std::move(font),
+			  Color(0xf0, 0xf0, 0xf0, 0xff),
+			  Color(0xff, 0, 0, 0xff),
+			  Color(0x80, 0x80, 0xf0, 0xff))
 {}
 
 void WorldMapControl::WillDraw(const Region& /*drawFrame*/, const Region& /*clip*/)
@@ -302,7 +300,7 @@ bool WorldMapControl::OnMouseWheelScroll(const Point& delta)
 
 bool WorldMapControl::OnKeyPress(const KeyboardEvent& Key, unsigned short /*Mod*/)
 {
-	ieDword keyScrollSpd = core->GetVariable("Keyboard Scroll Speed", 64);
+	ieDword keyScrollSpd = core->GetDictionary().Get("Keyboard Scroll Speed", 64);
 
 	switch (Key.keycode) {
 		case GEM_LEFT:

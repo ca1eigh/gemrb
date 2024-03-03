@@ -109,9 +109,9 @@ static void GetButton(DataStream* str, Control*& ctrl, const Region& ctrlFrame, 
 	// Cycle is only a byte for buttons
 	Holder<Sprite2D> tspr = bam->GetFrame(unpressedIndex, cycle);
 
-	btn->SetImage(BUTTON_IMAGE_UNPRESSED, tspr);
+	btn->SetImage(ButtonImage::Unpressed, tspr);
 	tspr = bam->GetFrame(pressedIndex, cycle);
-	btn->SetImage(BUTTON_IMAGE_PRESSED, tspr);
+	btn->SetImage(ButtonImage::Pressed, tspr);
 	// work around several controls not setting all the indices
 	AnimationFactory::index_t cycleSize = bam->GetCycleSize(cycle);
 	bool resetIndex = false;
@@ -123,9 +123,9 @@ static void GetButton(DataStream* str, Control*& ctrl, const Region& ctrlFrame, 
 		if (cycleSize == 4) disabledIndex = 3;
 	}
 	tspr = bam->GetFrame(selectedIndex, cycle);
-	btn->SetImage(BUTTON_IMAGE_SELECTED, tspr);
+	btn->SetImage(ButtonImage::Selected, tspr);
 	tspr = bam->GetFrame(disabledIndex, cycle);
-	btn->SetImage(BUTTON_IMAGE_DISABLED, tspr);
+	btn->SetImage(ButtonImage::Disabled, tspr);
 
 	return;
 }
@@ -220,6 +220,8 @@ static void GetSlider(DataStream* str, Control*& ctrl, const Region& ctrlFrame)
 static void GetTextEdit(DataStream* str, Control*& ctrl, const Region& ctrlFrame)
 {
 	ResRef bgMos;
+	ResRef editingMos;
+	ResRef overMos;
 	ResRef fontResRef;
 	ResRef cursorResRef;
 	Point pos;
@@ -230,15 +232,16 @@ static void GetTextEdit(DataStream* str, Control*& ctrl, const Region& ctrlFrame
 	ieVariable initial;
 
 	str->ReadResRef(bgMos);
-	// Two more MOS resrefs, probably unused, labeled EditClientFocus & EditClientNoFocus
-	str->Seek(16, GEM_CURRENT_POS);
+	str->ReadResRef(editingMos); // EditClientFocus
+	str->ReadResRef(overMos); // EditClientNoFocus
 	str->ReadResRef(cursorResRef);
 	str->ReadWord(curCycle);
 	str->ReadWord(curFrame);
 	str->ReadPoint(pos); // "XEditClientOffset" and "YEditClientOffset" in the original
-	//FIXME: I still don't know what to do with this point
+	// NOTE: I still don't know what to do with this point
 	// Contrary to forum posts, it is definitely not a scrollbar ID
 	// ee docs call them XEditCaretOffset and YEditCaretOffset
+	// "pos" does affect the caret position in the originals, so we don't need an extra point
 	str->ReadPoint(pos2);
 	str->ReadResRef(fontResRef);
 	//this field is still unknown or unused, labeled SequenceText
@@ -247,9 +250,9 @@ static void GetTextEdit(DataStream* str, Control*& ctrl, const Region& ctrlFrame
 	// always writes it over, and never uses it (labeled DefaultString)
 	str->ReadVariable(initial);
 	str->ReadWord(maxInput);
-	// word: caseformat: 0 normal, 1 upper, 2 lower TODO (Allowed case in NI)
+	// word: caseformat: 0 normal, 1 upper, 2 lower (Allowed case in NI) - not working in the original
 	// word: typeformat, unknown
-	Font* fnt = core->GetFont(fontResRef);
+	auto fnt = core->GetFont(fontResRef);
 
 	auto bam = gamedata->GetFactoryResourceAs<const AnimationFactory>(cursorResRef, IE_BAM_CLASS_ID);
 	Holder<Sprite2D> cursor;
@@ -257,17 +260,14 @@ static void GetTextEdit(DataStream* str, Control*& ctrl, const Region& ctrlFrame
 		cursor = bam->GetFrame(curCycle, curFrame);
 	}
 
-	ResourceHolder<ImageMgr> mos = gamedata->GetResourceHolder<ImageMgr>(bgMos);
-	Holder<Sprite2D> img;
-	if (mos) {
-		img = mos->GetSprite2D();
-	}
-
 	TextEdit* te = new TextEdit(ctrlFrame, maxInput, pos);
 	ctrl = te;
-	te->SetFont(fnt);
+	te->SetFont(std::move(fnt));
 	te->SetCursor(cursor);
-	te->SetBackground(img);
+	te->SetBackground(bgMos, TextEditBG::Normal);
+	te->SetBackground(editingMos, TextEditBG::Editing);
+	te->SetBackground(overMos, TextEditBG::Over);
+	te->SetBackground(TextEditBG::Normal);
 }
 
 static void GetTextArea(DataStream* str, Control*& ctrl, const Region& ctrlFrame, Window*& win)
@@ -281,8 +281,8 @@ static void GetTextArea(DataStream* str, Control*& ctrl, const Region& ctrlFrame
 
 	str->ReadResRef(fontResRef);
 	str->ReadResRef(initResRef);
-	Font* textFont = core->GetFont(fontResRef);
-	Font* initialsFont = core->GetFont(initResRef);
+	auto textFont = core->GetFont(fontResRef);
+	auto initialsFont = core->GetFont(initResRef);
 	str->Read(&fore, 4);
 	str->Read(&init, 4);
 	str->Read(&back, 4);
@@ -290,7 +290,7 @@ static void GetTextArea(DataStream* str, Control*& ctrl, const Region& ctrlFrame
 
 	fore.a = init.a = back.a = 0xff;
 
-	TextArea* ta = new TextArea(ctrlFrame, textFont, initialsFont);
+	TextArea* ta = new TextArea(ctrlFrame, std::move(textFont), std::move(initialsFont));
 	ctrl = ta;
 	ta->SetColor(fore, TextArea::COLOR_NORMAL);
 	ta->SetColor(init, TextArea::COLOR_INITIALS);
@@ -317,10 +317,10 @@ static void GetLabel(DataStream* str, Control*& ctrl, const Region& ctrlFrame)
 	str->Read(&bgCol, 4);
 	str->ReadWord(alignment);
 
-	Font* fnt = core->GetFont(fontResRef);
+	auto fnt = core->GetFont(fontResRef);
 	textCol.a = bgCol.a = 0xff;
 	String text = core->GetString(textRef);
-	Label* lab = new Label(ctrlFrame, fnt, text);
+	Label* lab = new Label(ctrlFrame, std::move(fnt), text);
 	ctrl = lab;
 
 	if (alignment & 1) {
@@ -378,7 +378,7 @@ static void GetScrollbar(DataStream* str, Control*& ctrl, const Region& ctrlFram
 			ta->SetScrollbar(sb);
 		} else {
 			ctrl = sb;
-			// NOTE: we dont delete this, becuase there are at least a few instances
+			// NOTE: we dont delete this, because there are at least a few instances
 			// where the CHU has this assigned to a text area even tho there isnt one! (BG1 GUISTORE:RUMORS, PST ContainerWindow)
 			// set them invisible instead, we will unhide them in the scripts that need them
 			sb->SetVisible(false);

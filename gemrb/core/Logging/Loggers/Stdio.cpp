@@ -121,7 +121,7 @@ void StreamLogWriter::WriteLogMessage(const Logger::LogMessage& msg)
 	}
 }
 
-static Logger::WriterPtr createStreamLogWriter(FILE* stream, ANSIColor color)
+static Logger::WriterPtr createStreamLogWriter(FILE* stream, ANSIColor color) noexcept
 {
 	if (stream) {
 		return std::make_shared<StreamLogWriter>(DEBUG, stream, color);
@@ -131,9 +131,13 @@ static Logger::WriterPtr createStreamLogWriter(FILE* stream, ANSIColor color)
 
 Logger::WriterPtr createStdioLogWriter(ANSIColor color)
 {
-	Log(DEBUG, "Logging", "Creating console log with color setting: {}", fmt::underlying(color));
+	Log(DEBUG, "Logging", "Creating console log with color setting: {}", color);
 	int fd = dup(fileno(stdout));
-	return createStreamLogWriter(fdopen(fd, "w"), color);
+	if (fd >= 0) {
+		return createStreamLogWriter(fdopen(fd, "w"), color);
+	} else {
+		return nullptr;
+	}
 }
 
 Logger::WriterPtr createStdioLogWriter()
@@ -162,7 +166,7 @@ Logger::WriterPtr createStdioLogWriter()
 			color = ANSIColor::True;
 		}
 
-		Log(DEBUG, "Logging", "Using colorized terminal output: {}\nDetermined from COLORTERM={}", fmt::underlying(color), colorterm);
+		Log(DEBUG, "Logging", "Using colorized terminal output: {} (determined from COLORTERM={})", color, colorterm ? colorterm : "");
 	}
 #endif
 

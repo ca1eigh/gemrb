@@ -19,6 +19,7 @@
  */
 
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 
 #include "KeyMap.h"
@@ -30,15 +31,6 @@
 
 namespace GemRB {
 
-Function::Function(const ieVariable& m, const ieVariable& f, int g, int k)
-{
-	// make sure the module and function names are no longer than 32 characters, or they will be truncated
-	moduleName = m;
-	function = f;
-	group = g;
-	key = k;
-}
-
 bool KeyMap::InitializeKeyMap(const path_t& inifile, const ResRef& tablefile)
 {
 	AutoTable kmtable = gamedata->LoadTable(tablefile);
@@ -48,13 +40,16 @@ bool KeyMap::InitializeKeyMap(const path_t& inifile, const ResRef& tablefile)
 	}
 
 	path_t tINIkeymap = PathJoin(core->config.GamePath, inifile);
-	FileStream* config = FileStream::OpenFile(tINIkeymap);
-
-	if (config == NULL) {
+	DataStream* config = FileStream::OpenFile(tINIkeymap);
+	if (!config) {
+		config = gamedata->GetResourceStream(inifile.substr(0, inifile.size() - 4), IE_INI_CLASS_ID);
+	}
+	if (!config) {
 		Log(WARNING, "KeyMap", "There is no '{}' file...", inifile);
 		return false;
 	}
 
+	std::unordered_set<std::string> reservedKeyNames { "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "tab", "space" };
 	const ieVariable defaultModuleName = kmtable->QueryField("Default", "MODULE");
 	const ieVariable defaultFunction = kmtable->QueryField("Default", "FUNCTION");
 	int defaultGroup = kmtable->QueryFieldSigned<int>("Default", "GROUP");
@@ -74,43 +69,42 @@ bool KeyMap::InitializeKeyMap(const path_t& inifile, const ResRef& tablefile)
 		if (parts.size() < 2) {
 			parts.emplace_back();
 		}
-		
+
+		auto& key = parts[0];
+		RTrim(key);
+		if (key.substr(0, 10) == "unmappable") {
+			continue;
+		}
+
 		auto& val = parts[1];
 		if (val.length() == 0) continue;
 		LTrim(val);
 
-		if (val.length() > 1 || keymap.find(val) != keymap.cend()) {
+		if (reservedKeyNames.count(val) > 0) continue;
+		if (val.length() > 1 || keymap.Get(val) != nullptr) { // "win1", "win2", "menu"
 			Log(WARNING, "KeyMap", "Ignoring key {}", val);
 			continue;
 		}
-		
-		auto& key = parts[0];
-		RTrim(key);
+
 		//change internal spaces to underscore
 		std::replace(key.begin(), key.end(), ' ', '_');
 
-		ieVariable moduleName;
-		ieVariable function;
-		int group;
+		Function func;
+		func.key = val[0];
 
 		if (kmtable->GetRowIndex(key) != TableMgr::npos) {
-			moduleName = kmtable->QueryField(key, "MODULE");
-			function = kmtable->QueryField(key, "FUNCTION");
-			group = kmtable->QueryFieldSigned<int>(key, "GROUP");
+			func.moduleName = kmtable->QueryField(key, "MODULE");
+			func.function = kmtable->QueryField(key, "FUNCTION");
+			func.group = kmtable->QueryFieldSigned<int>(key, "GROUP");
 		} else {
-			moduleName = defaultModuleName;
-			function = defaultFunction;
-			group = defaultGroup;
+			func.moduleName = defaultModuleName;
+			func.function = defaultFunction;
+			func.group = defaultGroup;
 		}
 
 		// lookup by either key or name
-		auto insertion =
-			keymap.emplace(
-				std::piecewise_construct,
-				std::forward_as_tuple(val),
-				std::forward_as_tuple(moduleName, function, group, val[0])
-			);
-		keymap.emplace(key, insertion.first->second);
+		keymap.Set(val, func);
+		keymap.Set(key, func);
 	}
 	delete config;
 	return true;
@@ -122,39 +116,35 @@ bool KeyMap::ResolveKey(unsigned short key, int group) const
 {
 	// FIXME: key is 2 bytes, but we ignore one. Some non english keyboards won't like this.
 	char keystr[2] = {(char)key, 0};
-	Log(MESSAGE, "KeyMap", "Looking up key: {}({}) ", key, keystr);
+	if (key < 128) {
+		Log(MESSAGE, "KeyMap", "Looking up key: {} ({}) ", key, keystr);
+	} else {
+		// We'd have to convert the codepoint into UTF-8 for non-ASCII numbers
+		Log(MESSAGE, "KeyMap", "Looking up key: {}", key);
+	}
 
 	return ResolveName(keystr, group);
 }
 
-bool KeyMap::ResolveName(const char* name, int group) const
+bool KeyMap::ResolveName(const StringView& name, int group) const
 {
-	auto lookup = keymap.find(name);
-	if (lookup == keymap.cend()) {
+	auto lookup = keymap.Get(name);
+	if (lookup == nullptr) {
 		return false;
 	}
 
-	auto& fun = lookup->second;
-	if (fun.group != group) {
+	if (lookup->group != group) {
 		return false;
 	}
 
-	Log(MESSAGE, "KeyMap", "RunFunction({}::{})", fun.moduleName, fun.function);
-	core->GetGUIScriptEngine()->RunFunction(fun.moduleName.c_str(), fun.function.c_str());
+	Log(MESSAGE, "KeyMap", "RunFunction({}::{})", lookup->moduleName, lookup->function);
+	core->GetGUIScriptEngine()->RunFunction(lookup->moduleName.c_str(), lookup->function.c_str());
 	return true;
 }
 
-Function* KeyMap::LookupFunction(std::string key)
+const KeyMap::Function* KeyMap::LookupFunction(const StringView& key)
 {
-	// FIXME: Variables::MyCompareKey is already case insensitive AFICT
-	StringToLower(key);
-
-	auto lookup = keymap.find(key);
-	if (lookup != keymap.cend()) {
-		return &lookup->second;
-	} else {
-		return nullptr;
-	}
+	return keymap.Get(key);
 }
 
 }

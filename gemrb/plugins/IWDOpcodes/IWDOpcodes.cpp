@@ -235,7 +235,7 @@ static EffectDesc effectnames[] = {
 	EffectDesc("ChillTouch", fx_chill_touch, 0, -1), //ec (how)
 	EffectDesc("ChillTouchPanic", fx_chill_touch_panic, 0, -1), //ec (iwd2)
 	EffectDesc("CrushingDamage", fx_crushing_damage, EFFECT_DICED, -1), //ed
-	EffectDesc("IWDMonsterSummoning", fx_iwd_monster_summoning, EFFECT_NO_ACTOR, -1), //f0
+	EffectDesc("IWDMonsterSummoning", fx_iwd_monster_summoning, EFFECT_DICED|EFFECT_NO_ACTOR, -1), //f0
 	EffectDesc("VampiricTouch", fx_vampiric_touch, EFFECT_DICED, -1), //f1
 	EffectDesc("Overlay2", fx_overlay_iwd, 0, -1), //f2
 	EffectDesc("AnimateDead", fx_animate_dead, 0, -1), //f3
@@ -926,7 +926,7 @@ int fx_remove_effects (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 			target->fxqueue.RemoveAllEffects(fx->Resource, FX_DURATION_INSTANT_LIMITED);
 			break;
 		default:
-			// NOTE: if this turns out to be too agressive and the original ignored permanent effects,
+			// NOTE: if this turns out to be too aggressive and the original ignored permanent effects,
 			// use a similar RemoveAllEffects call as above, only looking at live effects
 			target->fxqueue.RemoveAllEffects(fx->Resource);
 	}
@@ -1627,7 +1627,7 @@ int fx_animal_rage (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	}
 	//if enemy is in sight
 	//attack them
-	if (!target->LastTarget) {
+	if (!target->objects.LastTarget) {
 		//depends on whom it considers enemy
 		if (STAT_GET(IE_EA)<EA_EVILCUTOFF) {
 			Enemy->objectParameter->objectFields[0] = EA_ENEMY;
@@ -1636,7 +1636,7 @@ int fx_animal_rage (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 		}
 		//see the nearest enemy
 		if (SeeCore(target, Enemy, false)) {
-			target->FaceTarget(target->GetCurrentArea()->GetActorByGlobalID(target->LastSeen));
+			target->FaceTarget(target->GetCurrentArea()->GetActorByGlobalID(target->objects.LastSeen));
 			//this is highly unsure
 			//fx->Parameter1=1;
 		}
@@ -1870,7 +1870,7 @@ int fx_harpy_wail (Scriptable* Owner, Actor* target, Effect* fx)
 	if (STATE_GET(STATE_DEAD|STATE_PETRIFIED|STATE_FROZEN) ) {
 		return FX_NOT_APPLIED;
 	}
-	core->GetAudioDrv()->Play(fx->Resource2, SFX_CHAN_MONSTER, target->Pos);
+	core->GetAudioDrv()->Play(fx->Resource2, SFX_CHAN_MONSTER, target->Pos, GEM_SND_SPATIAL);
 
 	const Map *area = target->GetCurrentArea();
 	if (!area) return FX_NOT_APPLIED;
@@ -2622,7 +2622,7 @@ int fx_effects_on_struck (Scriptable* Owner, Actor* target, Effect* fx)
 	const Map *map = target->GetCurrentArea();
 	if (!map) return FX_APPLIED;
 
-	Actor *actor = map->GetActorByGlobalID(target->LastHitter);
+	Actor* actor = map->GetActorByGlobalID(target->objects.LastHitter);
 	if (!actor) {
 		return FX_APPLIED;
 	}
@@ -2905,14 +2905,14 @@ int fx_cleave (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	//SeeCore returns the closest living enemy
 	//FIXME:the previous opponent must be dead by now, or this code won't work
 	if (SeeCore(target, Enemy, false) ) {
-		const Actor *enemy = map->GetActorByGlobalID(target->LastSeen);
+		const Actor* enemy = map->GetActorByGlobalID(target->objects.LastSeen);
 		//50 is more like our current weapon range
-		if (enemy && (PersonalDistance(enemy, target)<50) && target->LastSeen!=target->LastTarget) {
+		if (enemy && PersonalDistance(enemy, target) < 50 && target->objects.LastSeen != target->objects.LastTarget) {
 			displaymsg->DisplayConstantStringNameValue(HCStrings::Cleave, GUIColors::WHITE, target, fx->Parameter1);
 			target->attackcount=fx->Parameter1;
 			target->FaceTarget(enemy);
-			target->LastTarget=target->LastSeen;
-			target->LastTargetPersistent = target->LastSeen;
+			target->objects.LastTarget = target->objects.LastSeen;
+			target->objects.LastTargetPersistent = target->objects.LastSeen;
 			//linger around for more
 			return FX_APPLIED;
 		}
@@ -3021,51 +3021,6 @@ int fx_alicorn_lance (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 }
 
 //449 CallLightning
-static Actor *GetRandomEnemySeen(const Map *map, const Actor *origin)
-{
-	int type = GetGroup(origin);
-
-	if (type==2) {
-		return NULL; //no enemies
-	}
-	int i = map->GetActorCount(true);
-	//see a random enemy
-	int pos = core->Roll(1,i,-1);
-	i -= pos;
-	while(i--) {
-		Actor *ac = map->GetActor(i,true);
-		if (!CanSee(origin, ac, true, GA_NO_DEAD|GA_NO_HIDDEN|GA_NO_UNSCHEDULED)) continue;
-		if (type) { //origin is PC
-			if (ac->GetStat(IE_EA) >= EA_EVILCUTOFF) {
-				return ac;
-			}
-		}
-		else {
-			if (ac->GetStat(IE_EA) <= EA_GOODCUTOFF) {
-				return ac;
-			}
-		}
-	}
-
-	i=map->GetActorCount(true);
-	while(i--!=pos) {
-		Actor *ac = map->GetActor(i,true);
-		if (!CanSee(origin, ac, true, GA_NO_DEAD|GA_NO_HIDDEN|GA_NO_UNSCHEDULED)) continue;
-		if (type) { //origin is PC
-			if (ac->GetStat(IE_EA) >= EA_EVILCUTOFF) {
-				return ac;
-			}
-		}
-		else {
-			if (ac->GetStat(IE_EA) <= EA_GOODCUTOFF) {
-				return ac;
-			}
-		}
-	}
-
-	return NULL;
-}
-
 int fx_call_lightning (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
 	// print("fx_call_lightning(%2d)", fx->Opcode);
@@ -3089,7 +3044,7 @@ int fx_call_lightning (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	fx->Parameter1--;
 
 	//calculate victim (an opponent of target)
-	Actor *victim = GetRandomEnemySeen(map, target);
+	Actor* victim = map->GetRandomEnemySeen(target);
 	if (!victim) {
 		displaymsg->DisplayConstantStringName(HCStrings::LightningDissipate, GUIColors::WHITE, target);
 		return ret;

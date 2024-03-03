@@ -52,7 +52,7 @@ enum class ieStrRef : ieDword {
 	BIO_START = 62016,            //first BIO string
 	BIO_END   = (BIO_START + 5),  //last BIO string
 	OVERRIDE_START = 450000,
-	// not actually an ieStrRef, but can be &'ded with an ieStrRef to detrmine which TLK (eg dialogf.tlk) to use
+	// not actually an ieStrRef, but can be &'ded with an ieStrRef to determine which TLK (eg dialogf.tlk) to use
 	ALTREF = 0x0100000,
 	
 	// NOTE: all strrefs below this point are contextual
@@ -109,7 +109,7 @@ enum class ieStrRef : ieDword {
 using ieVariable = FixedSizeString<32, strnicmp>;
 using ResRef = FixedSizeString<8, strnicmp>;
 
-using ieVarsMap = std::unordered_map<ieVariable, ieDword, CstrHashCI<ieVariable>>;
+using ieVarsMap = std::unordered_map<ieVariable, ieDword, CstrHashCI>;
 
 template <typename STR>
 inline bool IsStar(const STR& str) {
@@ -125,12 +125,34 @@ inline ieVariable MakeVariable(const StringView& sv) {
 		// TODO: we shouldnt call towlower here. ieVariable is case insensitive
 		// we probably should be calling WriteVariableLC in the writers instead
 		char c = std::towlower(*source++);
-		if (c!=' ') {
+		if (!std::isspace(c)) { // FIXME: should whitespace get converted?
 			*dest++ = c;
 		}
 	}
 	return var;
 }
+
+}
+
+// FIXME: these specializations are only required due to something in fmt/ranges.h being preferred
+// over our own format_as (I've also tried formatter and operator<<)
+namespace fmt {
+
+template <>
+struct formatter<GemRB::ieVariable> : public fmt::formatter<const char*> {
+	template <typename FormatContext>
+	auto format(const GemRB::ieVariable& str, FormatContext &ctx) const -> decltype(ctx.out()) {
+		return format_to(ctx.out(), "{}", str.c_str());
+	}
+};
+
+template <>
+struct formatter<GemRB::ResRef> : public fmt::formatter<const char*> {
+	template <typename FormatContext>
+	auto format(const GemRB::ResRef& str, FormatContext &ctx) const -> decltype(ctx.out()) {
+		return format_to(ctx.out(), "{}", str.c_str());
+	}
+};
 
 }
 

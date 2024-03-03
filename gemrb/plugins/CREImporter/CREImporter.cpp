@@ -341,7 +341,7 @@ static const ResRef& ResolveSpellIndex(int index, int level, ieIWD2SpellType typ
 	if (ret.IsEmpty()) {
 		// some npcs have spells at odd levels, so the lookup just failed
 		// eg. slayer knights of xvim with sppr325 at level 2 instead of 3
-		Log(ERROR, "CREImporter", "Spell ({} of type {}) found at unexpected level ({})!", index, fmt::underlying(type), level);
+		Log(ERROR, "CREImporter", "Spell ({} of type {}) found at unexpected level ({})!", index, type, level);
 		int level2 = splList[index]->FindSpell(type);
 		// grrr, some rows have no levels set - they're all 0, but with a valid resref, so just return that
 		if (level2 == -1) {
@@ -565,7 +565,7 @@ void CREImporter::WriteChrHeader(DataStream *stream, const Actor *act)
 			return;
 	}
 	stream->Write( Signature, 8);
-	std::string tmpstr = MBStringFromString(act->GetShortName());
+	std::string tmpstr = TLKStringFromString(act->GetShortName());
 	stream->WriteVariable(ieVariable(tmpstr));
 	stream->WriteDword(hdrSize); //cre offset (chr header size)
 	stream->WriteDword(CRESize);  //cre size
@@ -584,12 +584,14 @@ void CREImporter::WriteChrHeader(DataStream *stream, const Actor *act)
 	if (QSPCount==9) {
 		//NOTE: the gemrb internal format stores
 		//0xff or 0xfe in case of innates and bardsongs
-		char filling[10] = {};
-		memcpy(filling,act->PCStats->QuickSpellBookType,MAX_QSLOTS);
-		for (int i = 0; i < MAX_QSLOTS; i++) {
-			if ( (ieByte) filling[i]>=0xfe) filling[i]=0;
+		for (ieByte qbyte : act->PCStats->QuickSpellBookType) {
+			if (qbyte >= 0xfe) {
+				stream->WriteScalar<ieByte>(0);
+			} else {
+				stream->WriteScalar(qbyte);
+			}
 		}
-		stream->Write( filling, 10);
+		stream->WriteScalar<ieByte>(0); // null terminator
 	}
 	for (int i = 0; i < QITCount; i++) {
 		stream->WriteWord(act->PCStats->QuickItemSlots[i]);
@@ -620,7 +622,10 @@ void CREImporter::WriteChrHeader(DataStream *stream, const Actor *act)
 			stream->WriteDword(act->PCStats->QSlots[i+3]);
 		}
 		stream->WriteFilling(26);
-		stream->WriteVariableLC(act->PCStats->SoundFolder);
+		{
+			auto soundFolder = TLKStringFromString(act->PCStats->SoundFolder);
+			stream->WriteStringLC(std::move(soundFolder), ieVariable::Size);
+		}
 		stream->WriteResRef(act->PCStats->SoundSet);
 		for (const auto& setting : act->PCStats->ExtraSettings) {
 			stream->WriteDword(setting);
@@ -643,8 +648,8 @@ void CREImporter::ReadChrHeader(Actor *act)
 	str->Rewind();
 	str->Read (Signature, 8);
 	str->ReadVariable(name);
-	if (name[0]) {
-		act->SetName(StringFromCString(name.c_str()), 0); //setting longname
+	if (name) {
+		act->SetName(StringFromTLK(name), 0); //setting longname
 	}
 	str->ReadDword(offset);
 	str->ReadDword(size);
@@ -659,8 +664,8 @@ void CREImporter::ReadChrHeader(Actor *act)
 		str->ReadResRef (act->PCStats->QuickSpells[i]);
 	}
 	if (QSPCount==9) {
-		str->Read(act->PCStats->QuickSpellBookType, 9);
-		str->Seek(1, GEM_CURRENT_POS);
+		str->Read(act->PCStats->QuickSpellBookType.data(), 9);
+		str->Seek(1, GEM_CURRENT_POS); // null terminator
 	}
 	for (int i = 0; i < QITCount; i++) {
 		str->ReadScalar(act->PCStats->QuickItemSlots[i]);
@@ -698,7 +703,11 @@ void CREImporter::ReadChrHeader(Actor *act)
 			act->PCStats->QSlots[i+3] = (ieByte) tmpDword;
 		}
 		str->Seek(26, GEM_CURRENT_POS);
-		str->ReadVariable(act->PCStats->SoundFolder);
+		{
+			ieVariable soundFolder;
+			str->ReadVariable(soundFolder);
+			act->PCStats->SoundFolder = StringFromTLK(soundFolder);
+		}
 		str->ReadResRef(act->PCStats->SoundSet);
 		for (auto& setting : act->PCStats->ExtraSettings) {
 			str->ReadDword(setting);
@@ -877,27 +886,26 @@ Actor* CREImporter::GetActor(unsigned char is_in_party)
 		act->LargePortrait = "NONE";
 	}
 
-	unsigned int Inventory_Size;
-
+	size_t inventorySize;
 	switch(CREVersion) {
 		case CREVersion::GemRB:
-			Inventory_Size = GetActorGemRB(act);
+			inventorySize = GetActorGemRB(act);
 			break;
 		case CREVersion::V1_2:
-			Inventory_Size=46;
+			inventorySize = 46;
 			GetActorPST(act);
 			break;
 		case CREVersion::V1_1: // bg2 (fake version)
 		case CREVersion::V1_0: // bg1 too
-			Inventory_Size=38;
+			inventorySize = 38;
 			GetActorBG(act);
 			break;
 		case CREVersion::V2_2:
-			Inventory_Size=50;
+			inventorySize = 50;
 			GetActorIWD2(act);
 			break;
 		case CREVersion::V9_0:
-			Inventory_Size=38;
+			inventorySize = 38;
 			GetActorIWD1(act);
 			break;
 		default:
@@ -913,7 +921,7 @@ Actor* CREImporter::GetActor(unsigned char is_in_party)
 		Log(ERROR, "CREImporter", "Effect importer is unavailable!");
 	}
 	// Reading inventory, spellbook, etc
-	ReadInventory( act, Inventory_Size );
+	ReadInventory(act, inventorySize);
 	ReadSpellbook(act);
 
 	if (IsCharacter) {
@@ -1073,13 +1081,13 @@ void CREImporter::GetActorPST(Actor *act)
 	ReadDialog(act);
 }
 
-void CREImporter::ReadInventory(Actor *act, unsigned int Inventory_Size)
+void CREImporter::ReadInventory(Actor* act, size_t slotCount)
 {
-	act->inventory.SetSlotCount(Inventory_Size + 1);
+	act->inventory.SetSlotCount(slotCount + 1);
 	str->Seek(ItemSlotsOffset + CREOffset, GEM_STREAM_START);
 
 	//first read the indices
-	std::vector<ieWord> indices(Inventory_Size);
+	std::vector<ieWord> indices(slotCount);
 	for (auto& idx : indices) {
 		str->ReadWord(idx);
 	}
@@ -1099,7 +1107,7 @@ void CREImporter::ReadInventory(Actor *act, unsigned int Inventory_Size)
 
 	//read the item entries based on the previously read indices
 	//an item entry may be read multiple times if the indices are repeating
-	for (unsigned int i = 0; i < Inventory_Size;) {
+	for (size_t i = 0; i < slotCount;) {
 		//the index was intentionally increased here, the fist slot isn't saved
 		ieWord index = indices[i++];
 		if (index != 0xffff) {
@@ -1111,7 +1119,7 @@ void CREImporter::ReadInventory(Actor *act, unsigned int Inventory_Size)
 			str->Seek(ItemsOffset + index * 20 + CREOffset, GEM_STREAM_START);
 			//the core allocates this item data
 			CREItem *item = core->ReadItem(str);
-			int Slot = core->QuerySlot(i);
+			int Slot = core->QuerySlot((unsigned int) i);
 			if (item) {
 				act->inventory.SetSlotItem(item, Slot);
 			} else {
@@ -1124,7 +1132,8 @@ void CREImporter::ReadInventory(Actor *act, unsigned int Inventory_Size)
 	// move to fx_summon_creature2 if it turns out something else relies on having nothing equipped
 	if (eqslot == -1) {
 		act->inventory.SetEquipped(0, eqheader); // just reset Equipped, so EquipBestWeapon does its job
-		act->inventory.EquipBestWeapon(EQUIP_MELEE);
+		// some equipping effects require everything to be set up, which may not be the case on first load
+		if (core->GetGame()) act->inventory.EquipBestWeapon(EQUIP_MELEE);
 	}
 
 	indices.clear();
@@ -1215,7 +1224,7 @@ Effect *CREImporter::GetEffect()
 	}
 }
 
-ieDword CREImporter::GetActorGemRB(Actor *act)
+size_t CREImporter::GetActorGemRB(Actor* act)
 {
 	str->ReadScalar<Actor::stat_t, ieByte>(act->BaseStats[IE_REPUTATION]);
 	str->ReadScalar<Actor::stat_t, ieByte>(act->BaseStats[IE_HIDEINSHADOWS]);
@@ -1398,7 +1407,7 @@ void CREImporter::GetIWD2Spellpage(Actor *act, ieIWD2SpellType type, int level, 
 		const ResRef& tmp = ResolveSpellIndex(spellindex, level, type, act->BaseStats[IE_KIT]);
 		if (tmp.IsEmpty()) {
 			error("CREImporter", "Unresolved spell index: {} level:{}, type: {}",
-				  spellindex, level + 1, fmt::underlying(type));
+				  spellindex, level + 1, type);
 		}
 
 		CREKnownSpell *known = new CREKnownSpell;

@@ -57,17 +57,25 @@ bool MUSImporter::Init()
 	}\
 }
 
-#define FILL_VAR(VAR) while (i < len) {\
-	if (!isblank(line[i])) {\
-		pls.VAR[p++] = line[i++];\
-	} else {\
-		break;\
-	}\
-}
-
 /** Loads a PlayList for playing */
 bool MUSImporter::OpenPlaylist(const ieVariable& name)
 {
+	size_t i = 0;
+	size_t len = 0;
+	std::string line;
+
+	auto fillVar = [&i, len, &line](MUSString& var) {
+		int p = 0;
+		while (i < len) {
+			if (!isblank(line[i])) {
+				var[p++] = line[i++];
+			} else {
+				break;
+			}
+		}
+		var[var.Size - 1] = 0;
+	};
+
 	if (Playing || IsCurrentPlayList(name)) {
 		return true;
 	}
@@ -84,7 +92,7 @@ bool MUSImporter::OpenPlaylist(const ieVariable& name)
 		Log(ERROR, "MUSImporter", "Didn't find playlist '{}'.", path);
 		return false;
 	}
-	std::string line;
+
 	str->ReadLine(line);
 	PLName = line;
 	size_t c = line.length();
@@ -100,8 +108,8 @@ bool MUSImporter::OpenPlaylist(const ieVariable& name)
 	int count = atoi(line.c_str());
 	while (count != 0) {
 		str->ReadLine(line);
-		size_t len = line.length();
-		size_t i = 0;
+		len = line.length();
+		i = 0;
 		int p = 0;
 		PLString pls;
 		while (i < len) {
@@ -112,24 +120,19 @@ bool MUSImporter::OpenPlaylist(const ieVariable& name)
 				break;
 			}
 		}
-		pls.PLFile[p] = 0;
-		p = 0;
+
 		if (i < len && line[i] != '@') {
-			FILL_VAR(PLTag)
-			pls.PLTag[std::min(p, 9)] = 0;
-			p = 0;
+			fillVar(pls.PLTag);
 			SKIP_BLANKS
-			if (line[i] == '@')
-				strcpy( pls.PLLoop, pls.PLTag );
-			else {
-				FILL_VAR(PLLoop)
-				pls.PLLoop[p] = 0;
+			if (line[i] == '@') {
+				pls.PLLoop = pls.PLTag;
+			} else {
+				fillVar(pls.PLLoop);
 			}
 			SKIP_BLANKS
-			p = 0;
 		} else {
-			pls.PLTag[0] = 0;
-			pls.PLLoop[0] = 0;
+			pls.PLTag.clear();
+			pls.PLLoop.clear();
 		}
 		while (i < len) {
 			if (!isblank(line[i]))
@@ -139,8 +142,7 @@ bool MUSImporter::OpenPlaylist(const ieVariable& name)
 				break;
 			}
 		}
-		FILL_VAR(PLEnd)
-		pls.PLEnd[p] = 0;
+		fillVar(pls.PLEnd);
 		playlist.push_back( pls );
 		count--;
 	}
@@ -153,9 +155,9 @@ void MUSImporter::Start()
 	if (playlist.empty()) return;
 
 	PLpos = 0;
-	if (playlist[PLpos].PLLoop[0] != 0) {
+	if (playlist[PLpos].PLLoop) {
 		for (unsigned int i = 0; i < playlist.size(); i++) {
-			if (stricmp(playlist[i].PLFile, playlist[PLpos].PLLoop) == 0) {
+			if (playlist[i].PLFile == playlist[PLpos].PLLoop) {
 				PLnext = i;
 				break;
 			}
@@ -178,10 +180,8 @@ void MUSImporter::End()
 	if (!Playing) return;
 	if (playlist.empty()) return;
 
-	if (playlist[PLpos].PLEnd[0] != 0) {
-		if (stricmp(playlist[PLpos].PLEnd, "end") != 0) {
-			PlayMusic(playlist[PLpos].PLEnd);
-		}
+	if (playlist[PLpos].PLEnd && playlist[PLpos].PLEnd != "end") {
+		PlayMusic(playlist[PLpos].PLEnd);
 	}
 	PLnext = -1;
 }
@@ -230,15 +230,15 @@ void MUSImporter::PlayNext()
 	if (PLnext != -1) {
 		PlayMusic( PLnext );
 		PLpos = PLnext;
-		if (playlist[PLpos].PLLoop[0] != 0) {
+		if (playlist[PLpos].PLLoop) {
 			for (unsigned int i = 0; i < playlist.size(); i++) {
-				if (stricmp( playlist[i].PLFile, playlist[PLpos].PLLoop ) == 0) {
+				if (playlist[i].PLFile == playlist[PLpos].PLLoop) {
 					PLnext = i;
 					break;
 				}
 			}
 		} else {
-			if (stricmp( playlist[PLnext].PLEnd, "end" ) == 0)
+			if (playlist[PLnext].PLEnd == "end")
 				PLnext = -1;
 			else
 				PLnext = PLpos + 1;

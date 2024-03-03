@@ -61,12 +61,12 @@ PluginHolder<SymbolMgr> overrideTriggersTable;
 PluginHolder<SymbolMgr> overrideActionsTable;
 PluginHolder<SymbolMgr> objectsTable;
 
-TriggerFunction triggers[MAX_TRIGGERS];
-ActionFunction actions[MAX_ACTIONS];
-short actionflags[MAX_ACTIONS];
-short triggerflags[MAX_TRIGGERS];
-ObjectFunction objects[MAX_OBJECTS];
-IDSFunction idtargets[MAX_OBJECT_FIELDS];
+std::array<TriggerFunction, MAX_TRIGGERS> triggers;
+std::array<ActionFunction, MAX_ACTIONS> actions;
+std::array<ObjectFunction, MAX_OBJECTS> objects;
+std::array<IDSFunction, MAX_OBJECT_FIELDS> idtargets;
+std::array<short, MAX_ACTIONS> actionflags;
+std::array<short, MAX_TRIGGERS> triggerflags;
 ResRefRCCache<Script> BcsCache; //cache for scripts
 int ObjectIDSCount = 7;
 int MaxObjectNesting = 5;
@@ -79,62 +79,29 @@ std::vector<ResRef> ObjectIDSTableNames;
 int ObjectFieldsCount = 7;
 int ExtraParametersCount = 0;
 int RandomNumValue;
-// reaction modifiers (by reputation and charisma)
-#define MAX_REP_COLUMN 20
-#define MAX_CHR_COLUMN 25
-int rmodrep[MAX_REP_COLUMN];
-int rmodchr[MAX_CHR_COLUMN];
-ieWordSigned happiness[3][MAX_REP_COLUMN];
 Gem_Polygon **polygons;
-
-void InitScriptTables()
-{
-	//initializing the happiness table
-	AutoTable tab = gamedata->LoadTable("happy");
-	if (tab) {
-		for (int alignment=0;alignment<3;alignment++) {
-			for (int reputation=0;reputation<MAX_REP_COLUMN;reputation++) {
-				happiness[alignment][reputation] = tab->QueryFieldSigned<ieWordSigned>(reputation, alignment);
-			}
-		}
-	}
-
-	//initializing the reaction mod. reputation table
-	AutoTable rmr = gamedata->LoadTable("rmodrep");
-	if (rmr) {
-		for (int reputation=0; reputation<MAX_REP_COLUMN; reputation++) {
-			rmodrep[reputation] = rmr->QueryFieldSigned<int>(0, reputation);
-		}
-	}
-
-	//initializing the reaction mod. charisma table
-	AutoTable rmc = gamedata->LoadTable("rmodchr");
-	if (rmc) {
-		for (int charisma=0; charisma<MAX_CHR_COLUMN; charisma++) {
-			rmodchr[charisma] = rmc->QueryFieldSigned<int>(0, charisma);
-		}
-	}
-
-	// see note in voodooconst.h
-	if (core->HasFeature(GFFlags::AREA_OVERRIDE)) {
-		MAX_OPERATING_DISTANCE = 40*3;
-	}
-}
 
 int GetReaction(const Actor *target, const Scriptable *Sender)
 {
-	int rep;
-	if (target->GetStat(IE_EA) == EA_PC) {
-		rep = core->GetGame()->Reputation/10-1;
-	} else {
-		rep = target->GetStat(IE_REPUTATION)/10-1;
+	int reaction = 10;
+
+	static AutoTable repModTable = gamedata->LoadTable("rmodrep", true);
+	if (repModTable) {
+		int rep;
+		if (target->GetStat(IE_EA) == EA_PC) {
+			rep = core->GetGame()->Reputation / 10 - 1;
+		} else {
+			rep = target->GetStat(IE_REPUTATION) / 10 - 1;
+		}
+		rep = Clamp<int>(rep, 0, repModTable->GetColumnCount() - 1);
+		reaction += repModTable->QueryFieldSigned<int>(0, rep);
 	}
-	rep = Clamp(rep, 0, MAX_REP_COLUMN - 1);
 
-	int chr = target->GetStat(IE_CHR) - 1;
-	chr = Clamp(chr, 0, MAX_CHR_COLUMN - 1);
-
-	int reaction = 10 + rmodrep[rep] + rmodchr[chr];
+	static AutoTable chrModTable = gamedata->LoadTable("rmodchr", true);
+	if (chrModTable) {
+		int chr = Clamp<int>(target->GetStat(IE_CHR) - 1, 0, 24);
+		reaction += repModTable->QueryFieldSigned<int>(0, chr);
+	}
 
 	// add -4 penalty when dealing with racial enemies
 	const Actor* scr = Scriptable::As<Actor>(Sender);
@@ -158,7 +125,12 @@ ieWordSigned GetHappiness(const Scriptable* Sender, int reputation)
 		alignment = AL_GE_NEUTRAL;
 	}
 	reputation = Clamp(reputation, 10, 200);
-	return happiness[alignment-1][reputation/10-1];
+
+	static AutoTable happyTable = gamedata->LoadTable("happy", true);
+	if (happyTable) {
+		return happyTable->QueryFieldSigned<ieWordSigned>(alignment - 1, reputation / 10 - 1);
+	}
+	return 0;
 }
 
 int GetHPPercent(const Scriptable *Sender)
@@ -347,7 +319,7 @@ void PlaySequenceCore(Scriptable *Sender, const Action *parameters, Animation::i
 				//set animation's cycle to parameters->int0Parameter;
 				anim->sequence=value;
 				anim->frame=0;
-				//what else to be done???
+				anim->animation.clear();
 				anim->InitAnimation();
 			}
 			return;
@@ -451,7 +423,7 @@ static bool GetItemContainer(CREItem &itemslot2, const Inventory *inventory, con
 	return false;
 }
 
-void DisplayStringCoreVC(Scriptable* Sender, size_t vc, int flags)
+void DisplayStringCoreVC(Scriptable* Sender, Verbal vc, int flags)
 {
 	//no one hears you when you are in the Limbo!
 	if (!Sender || !Sender->GetCurrentArea()) {
@@ -469,19 +441,14 @@ void DisplayStringCoreVC(Scriptable* Sender, size_t vc, int flags)
 		return;
 	}
 
-	if (vc >= VCONST_COUNT) {
-		Log(ERROR, "GameScript", "Invalid verbal constant!");
-		return;
-	}
-
 	Strref = actor->GetVerbalConstant(vc);
 	if (Strref == ieStrRef::INVALID || (actor->GetStat(IE_MC_FLAGS) & MC_EXPORTABLE)) {
 		//get soundset based string constant
 		ResRef soundRef;
-		actor->GetVerbalConstantSound(soundRef, vc);
+		actor->GetVerbalConstantSound(soundRef, vc, flags & DS_RESOLVED);
 		std::string sound;
 		if (actor->PCStats && actor->PCStats->SoundFolder[0]) {
-			sound = fmt::format("{}/{}", actor->PCStats->SoundFolder, soundRef);
+			sound = fmt::format("{}{}{}", fmt::WideToChar{actor->PCStats->SoundFolder}, PathDelimiter, soundRef);
 		} else {
 			sound = soundRef.c_str();
 		}
@@ -495,7 +462,7 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 	if (Strref == ieStrRef::INVALID && soundpath == nullptr) return;
 
 	// Check if subtitles are not enabled
-	ieDword charactersubtitles = core->GetVariable("Subtitles", 0);
+	ieDword charactersubtitles = core->GetDictionary().Get("Subtitles", 0);
 
 	// display the verbal constants in the console; some callers force this themselves
 	if (charactersubtitles) {
@@ -508,7 +475,9 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 	// PST does not echo verbal constants in the console, their strings
 	// actually contain development related identifying comments
 	// thus the console flag is unset.
-	if (core->HasFeature(GFFlags::ONSCREEN_TEXT) || !charactersubtitles) {
+	// The console flag is also unset when we get a string from an ACTOR without
+	// subtitles enabled, but e.g. AREA strings should still be displayed.
+	if (core->HasFeature(GFFlags::ONSCREEN_TEXT) || (Sender->Type == ST_ACTOR && !charactersubtitles)) {
 		flags &= ~DS_CONSOLE;
 	}
 
@@ -526,7 +495,13 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 				if(flags&DS_NONAME) {
 					displaymsg->DisplayString(sb.text);
 				} else {
-					displaymsg->DisplayStringName(Strref, GUIColors::WHITE, Sender, STRING_FLAGS::NONE);
+					// Default color is white, color for party is different.
+					Actor* actor = Scriptable::As<Actor>(Sender);
+					auto color = GUIColors::MSG;
+					if (actor && actor->InParty) {
+						color = GUIColors::MSGPARTY;
+					}
+					displaymsg->DisplayStringName(Strref, color, Sender, STRING_FLAGS::NONE);
 				}
 			}
 			if (flags & (DS_HEAD | DS_AREA)) {
@@ -539,19 +514,20 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 	}
 
 	if (soundpath && soundpath[0] && !(flags & DS_SILENT)) {
-		ieDword speech = 0;
-		Point pos = Sender->Pos;
-		if (flags&DS_SPEECH) {
-			speech = GEM_SND_SPEECH;
+		ieDword soundFlags = GEM_SND_EFX;
+		Point pos;
+		if (flags & DS_SPEECH) {
+			soundFlags |= GEM_SND_SPEECH;
 		}
-		// disable position, but only for party
+
 		Actor* actor = Scriptable::As<Actor>(Sender);
-		if (!actor || actor->InParty ||
-			core->InCutSceneMode() || core->GetGameControl()->InDialog()) {
-			speech |= GEM_SND_RELATIVE;
-			pos.reset();
+		// Spatial unless PC, cutscene or dialog
+		if (actor && !actor->InParty && !core->InCutSceneMode() && !core->GetGameControl()->InDialog()) {
+			pos = Sender->Pos;
+			soundFlags |= GEM_SND_SPATIAL;
 		}
-		if (flags&DS_QUEUE) speech|=GEM_SND_QUEUE;
+
+		if (flags&DS_QUEUE) soundFlags |= GEM_SND_QUEUE;
 		
 		unsigned int channel = SFX_CHAN_DIALOG;
 		if (flags & DS_CONST && actor) {
@@ -563,7 +539,7 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 		}
 		
 		tick_t len = 0;
-		core->GetAudioDrv()->Play(StringView(soundpath), channel, pos, speech, &len);
+		core->GetAudioDrv()->Play(StringView(soundpath), channel, pos, soundFlags, &len);
 		tick_t counter = (core->Time.defaultTicksPerSec * len) / 1000;
 
 		if (actor && len > 0 && flags & DS_CIRCLE) {
@@ -641,22 +617,22 @@ int SeeCore(Scriptable *Sender, const Trigger *parameters, int justlos)
 	//both are actors
 	if (CanSee(Sender, tar, true, flags) ) {
 		if (justlos) {
-			Sender->LastTrigger = tar->GetGlobalID();
+			Sender->objects.LastTrigger = tar->GetGlobalID();
 			return 1;
 		}
 		// NOTE: Detect supposedly doesn't set LastMarked — disable on GA_DETECT if needed
 		if (Sender->Type==ST_ACTOR && tar->Type==ST_ACTOR && Sender!=tar) {
 			Actor* snd = static_cast<Actor*>(Sender);
-			snd->LastSeen = tar->GetGlobalID();
-			snd->LastMarked = tar->GetGlobalID();
+			snd->objects.LastSeen = tar->GetGlobalID();
+			snd->objects.LastMarked = tar->GetGlobalID();
 		}
-		Sender->LastTrigger = tar->GetGlobalID();
+		Sender->objects.LastTrigger = tar->GetGlobalID();
 		return 1;
 	}
 	return 0;
 }
 
-//transfering item from Sender to target
+// transferring item from Sender to target
 //if target has no inventory, the item will be destructed
 //if target can't get it, it will be dropped at its feet
 int MoveItemCore(Scriptable *Sender, Scriptable *target, const ResRef& resref, int flags, int setflag, int count)
@@ -704,12 +680,14 @@ int MoveItemCore(Scriptable *Sender, Scriptable *target, const ResRef& resref, i
 	}
 
 	item->Flags|=setflag;
-
+	Actor* targetActor = Scriptable::As<Actor>(target);
 	switch(target->Type) {
 		case ST_ACTOR:
-			tmp = Scriptable::As<Actor>(target);
-			myinv = &tmp->inventory;
-			if (tmp->InParty) gotitem = true;
+			if (targetActor->GetBase(IE_EA) == EA_FAMILIAR) {
+				targetActor = core->GetGame()->FindPC(1);
+			}
+			myinv = &targetActor->inventory;
+			if (targetActor->InParty) gotitem = true;
 			break;
 		case ST_CONTAINER:
 			myinv=&((Container *) target)->inventory;
@@ -730,9 +708,8 @@ int MoveItemCore(Scriptable *Sender, Scriptable *target, const ResRef& resref, i
 		// drop it at my feet
 		map->AddItemToLocation(target->Pos, item);
 		if (gotitem) {
-			tmp = Scriptable::As<Actor>(target);
-			if (tmp && tmp->InParty) {
-				tmp->VerbalConstant(VB_INVENTORY_FULL);
+			if (targetActor && targetActor->InParty) {
+				targetActor->VerbalConstant(Verbal::InventoryFull);
 			}
 			displaymsg->DisplayMsgCentered(HCStrings::InventoryFullItemDrop, FT_ANY, GUIColors::XPCHANGE);
 		}
@@ -828,9 +805,7 @@ static Point FindOffScreenPoint(const Scriptable* Sender, int flags, int phase)
 			bool isPassable = InspectEdges(walkableStartPoint, vp, currentStep, phase ? slowlyIncrements : finalRandStep);
 
 			++currentStep;
-			if (currentStep > 3) {
-				currentStep = 0;
-			}
+			currentStep %= 4;
 
 			if (isPassable) {
 				// Check if the search map allows a creature to be at walkableStartPoint (note: ignoring creatureSize)
@@ -922,13 +897,13 @@ void CreateCreatureCore(Scriptable* Sender, Action* parameters, int flags)
 
 	Map *map = Sender->GetCurrentArea();
 	map->AddActor(ab, true);
-	ab->SetPosition(pnt, flags & CC_CHECK_IMPASSABLE, 0, 0);
+	ab->SetPosition(pnt, flags & CC_CHECK_IMPASSABLE);
 	ab->SetOrientation(ClampToOrientation(parameters->int0Parameter), false);
 
 	// also set it as Sender's LastMarkedObject (fixes worg rider dismount killing players)
 	if (Sender->Type == ST_ACTOR) {
 		Actor *actor = static_cast<Actor*>(Sender);
-		actor->LastMarked = ab->GetGlobalID();
+		actor->objects.LastMarked = ab->GetGlobalID();
 	}
 
 	//if string1 is animation, then we can't use it for a DV too
@@ -987,7 +962,7 @@ void CreateVisualEffectCore(const Scriptable* Sender, const Point& position, con
 		ScriptedAnimation* vvc = GetVVCEffect(effect, iterations);
 		if (vvc) {
 			vvc->Pos = position;
-			area->AddVVCell(new VEFObject(vvc));
+			area->AddVVCell(vvc);
 		}
 	}
 }
@@ -1005,14 +980,14 @@ void ChangeAnimationCore(Actor* src, const ResRef& replacement, bool effect)
 		src->DestroySelf();
 		// can't SetPosition while the old actor is taking the spot
 		map->AddActor(tar, true);
-		tar->SetPosition(pos, 1, 8*effect, 8*effect);
+		tar->SetPosition(pos, true, Size(8 * effect, 8 * effect));
 		if (effect) {
 			CreateVisualEffectCore(tar, tar->Pos, "spsmpuff", 1);
 		}
 	}
 }
 
-void EscapeAreaCore(Scriptable* Sender, const Point &p, const ResRef& area, const Point &enter, int flags, int wait)
+void EscapeAreaCore(Scriptable* Sender, const Point& p, const ResRef& area, const Point& enter, EscapeArea flags, int wait)
 {
 	if (Sender->CurrentActionTicks<100) {
 		if (!p.IsInvalid() && PersonalDistance(p, Sender)>MAX_OPERATING_DISTANCE) {
@@ -1022,14 +997,14 @@ void EscapeAreaCore(Scriptable* Sender, const Point &p, const ResRef& area, cons
 				if (!Sender->InMove()) Log(WARNING, "GSUtils", "At least it said so...");
 				// ensure the action doesn't get interrupted
 				// fixes Nalia starting a second dialog in the Coronet, if she gets a chance #253
-				Sender->CurrentActionInterruptable = false;
+				Sender->CurrentActionInterruptible = false;
 				return;
 			}
 		}
 	}
 
 	std::string Tmp;
-	if (flags &EA_DESTROY) {
+	if (flags == EscapeArea::Destroy || flags == EscapeArea::DestroyNoSee) {
 		//this must be put into a non-const variable
 		Tmp = "DestroySelf()";
 	} else {
@@ -1117,7 +1092,7 @@ void BeginDialog(Scriptable* Sender, const Action* parameters, int Flags)
 	if (!scr) {
 		assert(Sender);
 		Log(ERROR, "GameScript", "Speaker for dialog couldn't be found (Sender: {}, Type: {}) Flags:{}.",
-			Sender->GetScriptName(), fmt::underlying(Sender->Type), Flags);
+			Sender->GetScriptName(), Sender->Type, Flags);
 		Sender->ReleaseCurrentAction();
 		return;
 	}
@@ -1129,7 +1104,7 @@ void BeginDialog(Scriptable* Sender, const Action* parameters, int Flags)
 
 	if (!tar || tar->Type!=ST_ACTOR) {
 		Log(ERROR, "GameScript", "Target for dialog couldn't be found (Sender: {}, Type: {}).",
-			Sender->GetScriptName(), fmt::underlying(Sender->Type));
+			Sender->GetScriptName(), Sender->Type);
 		if (Sender->Type == ST_ACTOR) {
 			Sender->As<const Actor>()->dump();
 		}
@@ -1337,7 +1312,7 @@ void BeginDialog(Scriptable* Sender, const Action* parameters, int Flags)
 		gc->SetDialogueFlags(DF_INTERACT, BitOp::OR);
 	}
 
-	core->GetDictionary()["DialogChoose"] = (ieDword) -1;
+	core->GetDictionary().Set("DialogChoose", -1);
 	if (!gc->dialoghandler->InitDialog(scr, tar, Dialog)) {
 		if (!(Flags & BD_NOEMPTY)) {
 			displaymsg->DisplayConstantStringName(HCStrings::NothingToSay, GUIColors::RED, tar);
@@ -1397,7 +1372,7 @@ void MoveBetweenAreasCore(Actor* actor, const ResRef &area, const Point &positio
 	// should this perhaps be a 'selected' check or similar instead?
 	if (actor->InParty) {
 		GameControl *gc=core->GetGameControl();
-		gc->SetScreenFlags(SF_CENTERONACTOR, BitOp::OR);
+		gc->SetScreenFlags(ScreenFlags::CenterOnActor, BitOp::OR);
 		if (newSong) {
 			game->ChangeSong(false, true);
 		}
@@ -1406,6 +1381,8 @@ void MoveBetweenAreasCore(Actor* actor, const ResRef &area, const Point &positio
 
 //repeat movement, until goal isn't reached
 //if int0parameter is !=0, then it will try only x times
+// for this family of actions, familiars cannot walk through a transition (that's flagged to allow NPCs to pass)
+// ... but we don't check areas/chasing here anyway
 void MoveToObjectCore(Scriptable *Sender, Action *parameters, ieDword flags, bool untilsee)
 {
 	Actor* actor = Scriptable::As<Actor>(Sender);
@@ -1424,7 +1401,7 @@ void MoveToObjectCore(Scriptable *Sender, Action *parameters, ieDword flags, boo
 		dest = static_cast<const InfoPoint*>(target)->UsePoint;
 	}
 	if (untilsee && CanSee(actor, target, true, 0, true)) {
-		Sender->LastSeen = target->GetGlobalID();
+		Sender->objects.LastSeen = target->GetGlobalID();
 		Sender->ReleaseCurrentAction();
 		actor->ClearPath(true);
 		return;
@@ -1543,19 +1520,11 @@ void AttackCore(Scriptable *Sender, Scriptable *target, int flags)
 	}
 
 	if (!(flags & AC_NO_SOUND) && !Sender->CurrentActionTicks && !core->GetGameControl()->InDialog()) {
-		// play the battle cry
-		// pick from all 5 possible verbal constants
-		if (!attacker->PlayWarCry(5)) {
-			// for monsters also try their 2da/ini file sounds
-			if (!attacker->InParty) {
-				ResRef sound;
-				attacker->GetSoundFromFile(sound, 200U);
-				core->GetAudioDrv()->Play(sound, SFX_CHAN_MONSTER, attacker->Pos);
-			}
-		}
-		//display attack message
-		if (target->GetGlobalID() != Sender->LastTarget) {
+		// if the target changed scream and display attack message
+		if (target->GetGlobalID() != Sender->objects.LastTargetPersistent) {
 			displaymsg->DisplayConstantStringAction(HCStrings::ActionAttack, GUIColors::WHITE, Sender, target);
+			// pick from all 5 possible verbal constants
+			attacker->PlayWarCry(5);
 		}
 	}
 
@@ -1585,8 +1554,8 @@ void AttackCore(Scriptable *Sender, Scriptable *target, int flags)
 	//action performed
 	attacker->FaceTarget(target);
 
-	Sender->LastTarget = target->GetGlobalID();
-	Sender->LastTargetPersistent = Sender->LastTarget;
+	Sender->objects.LastTarget = target->GetGlobalID();
+	Sender->objects.LastTargetPersistent = Sender->objects.LastTarget;
 	attacker->PerformAttack(core->GetGame()->GameTime);
 }
 
@@ -1620,14 +1589,12 @@ static int GetIdsValue(const char *&symbol, const ResRef& idsname)
 		return -1;
 	}
 
-	char symbolname[64];
-	int x;
-	for (x=0;ismysymbol(*symbol) && x<(int) sizeof(symbolname)-1;x++) {
-		symbolname[x]=*symbol;
+	std::string symbolName(64, '\0');
+	for (int x = 0; ismysymbol(*symbol) && x < 63; x++) {
+		symbolName[x] = *symbol;
 		symbol++;
 	}
-	symbolname[x]=0;
-	return valHook->GetValue(symbolname);
+	return valHook->GetValue(symbolName);
 }
 
 static int ParseIntParam(const char *&src, const char *&str)
@@ -1782,7 +1749,7 @@ Action* GenerateActionCore(const char *src, const char *str, unsigned short acti
 			// Action - only ActionOverride takes such a parameter
 			{
 				SKIP_ARGUMENT();
-				char action[257];
+				std::string action(257, '\0');
 				int i = 0;
 				int openParenthesisCount = 0;
 				while (true) {
@@ -1803,7 +1770,6 @@ Action* GenerateActionCore(const char *src, const char *str, unsigned short acti
 					i++;
 					src++;
 				}
-				action[i] = 0;
 				Action* act = GenerateAction( action);
 				if (!act) {
 					delete newAction;
@@ -1842,7 +1808,7 @@ Action* GenerateActionCore(const char *src, const char *str, unsigned short acti
 					mergestrings = 0;
 				}
 				//skipping the context part, which
-				//is to be readed later
+				// is to be readded later
 				if (mergestrings) {
 					for (i=0;i<6;i++) {
 						*dst++='*';
@@ -1969,7 +1935,7 @@ int MoveNearerTo(Scriptable *Sender, const Point &p, int distance, int dont_rele
 
 	// chasing is not unbreakable
 	// would prevent smart ai from dropping a target that's running away
-	//Sender->CurrentActionInterruptable = false;
+	//Sender->CurrentActionInterruptible = false;
 
 	if (!actor->InMove() || actor->Destination != p) {
 		ieDword flags = core->GetGameControl()->ShouldRun(actor) ? IF_RUNNING : 0;
@@ -2060,7 +2026,7 @@ Action *ParamCopyNoOverride(const Action *parameters)
 Trigger *GenerateTriggerCore(const char *src, const char *str, int trIndex, int negate)
 {
 	Trigger *newTrigger = new Trigger();
-	newTrigger->triggerID = (unsigned short) triggersTable->GetValueIndex( trIndex )&0x3fff;
+	newTrigger->triggerID = (unsigned short) triggersTable->GetValueIndex(trIndex) & 0x3fff;
 	newTrigger->flags = (unsigned short) negate;
 	int mergestrings = triggerflags[newTrigger->triggerID]&TF_MERGESTRINGS;
 	int stringsCount = 0;
@@ -2115,7 +2081,7 @@ Trigger *GenerateTriggerCore(const char *src, const char *str, int trIndex, int 
 					dst = newTrigger->string1Parameter.begin();
 				}
 				//skipping the context part, which
-				//is to be readed later
+				// is to be readded later
 				if (mergestrings) {
 					for (i=0;i<6;i++) {
 						*dst++='*';
@@ -2487,7 +2453,7 @@ unsigned int GetSpellDistance(const ResRef& spellRes, Scriptable* Sender, const 
 }
 
 /* returns an item's casting distance, it depends on the used header, and targeting mode too
- the used header is explictly given */
+ the used header is explicitly given */
 unsigned int GetItemDistance(const ResRef& itemres, int header, double angle)
 {
 	const Item* itm = gamedata->GetItem(itemres);
@@ -2640,14 +2606,14 @@ static bool InterruptSpellcasting(Scriptable* Sender) {
 		} else {
 			displaymsg->DisplayConstantStringName(HCStrings::SpellFailed, GUIColors::WHITE, Sender);
 		}
-		DisplayStringCoreVC(Sender, VB_SPELL_DISRUPTED, DS_CONSOLE);
+		DisplayStringCoreVC(Sender, Verbal::SpellDisrupted, DS_CONSOLE);
 		return true;
 	}
 
 	// abort casting on invisible or dead targets
 	// not all spells should be interrupted on death - some for chunking, some for raising the dead
-	if (Sender->LastSpellTarget) {
-		const Actor *target = core->GetGame()->GetActorByGlobalID(Sender->LastSpellTarget);
+	if (Sender->objects.LastSpellTarget) {
+		const Actor* target = core->GetGame()->GetActorByGlobalID(Sender->objects.LastSpellTarget);
 		if (!target) return false; // shouldn't happen, though perhaps it would be better to return true
 
 		ieDword state = target->GetStat(IE_STATE_ID);
@@ -2682,12 +2648,12 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 	// handle iwd2 marked spell casting (MARKED_SPELL is 0)
 	// NOTE: supposedly only casting via SpellWait checks this, so refactor if needed
 	if (third && parameters->int0Parameter == 0 && parameters->resref0Parameter.IsEmpty()) {
-		if (!Sender->LastMarkedSpell) {
+		if (!Sender->objects.LastMarkedSpell) {
 			// otherwise we spam a lot
 			Sender->ReleaseCurrentAction();
 			return;
 		}
-		ResolveSpellName(spellResRef, Sender->LastMarkedSpell);
+		ResolveSpellName(spellResRef, Sender->objects.LastMarkedSpell);
 	}
 
 	//resolve spellname
@@ -2707,11 +2673,12 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 	}
 
 	// use the passed level instead of the caster's casting level
+	// if it's still 0 afterwards, it will revert to the caster's level
 	if (flags&SC_SETLEVEL) {
-		if (!parameters->resref0Parameter.IsEmpty()) {
-			level = parameters->int0Parameter;
+		if (parameters->resref0Parameter.IsEmpty()) {
+			level = parameters->int1Parameter; // int0 was the spell id
 		} else {
-			level = parameters->int1Parameter;
+			level = parameters->int0Parameter;
 		}
 	}
 
@@ -2741,24 +2708,37 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 	dist = GetSpellDistance(spellResRef, Sender, tar->Pos);
 
 	if (act) {
+		// make sure we can still see the target
+		const Actor* target = Scriptable::As<const Actor>(tar);
+		const Spell* spl = gamedata->GetSpell(Sender->SpellResRef, true);
+		if (Sender != tar && !(flags & SC_NOINTERRUPT) && !(spl->Flags & SF_TARGETS_INVISIBLE) && target->IsInvisibleTo(Sender)) {
+			Sender->ReleaseCurrentAction();
+			Sender->AddTrigger(TriggerEntry(trigger_targetunreachable, tar->GetGlobalID()));
+			core->Autopause(AUTOPAUSE::NOTARGET, Sender);
+			gamedata->FreeSpell(spl, Sender->SpellResRef, false);
+			return;
+		}
+
 		//move near to target
 		if ((flags&SC_RANGE_CHECK) && dist != 0xffffffff) {
 			if (PersonalDistance(tar, Sender) > dist) {
 				MoveNearerTo(Sender, tar, dist);
+				gamedata->FreeSpell(spl, Sender->SpellResRef, false);
 				return;
 			}
 			if (!Sender->GetCurrentArea()->IsVisibleLOS(Sender->Pos, tar->Pos)) {
-				const Spell *spl = gamedata->GetSpell(Sender->SpellResRef, true);
 				if (!(spl->Flags&SF_NO_LOS)) {
 					gamedata->FreeSpell(spl, Sender->SpellResRef, false);
 					MoveNearerTo(Sender, tar, dist);
 					return;
 				}
-				gamedata->FreeSpell(spl, Sender->SpellResRef, false);
 			}
 
 			// finish approach before continuing with casting
-			if (act->InMove()) return;
+			if (act->InMove()) {
+				gamedata->FreeSpell(spl, Sender->SpellResRef, false);
+				return;
+			}
 		}
 
 		//face target
@@ -2767,7 +2747,8 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 		}
 
 		//stop doing anything else
-		act->SetModal(MS_NONE);
+		act->SetModal(Modal::None);
+		gamedata->FreeSpell(spl, Sender->SpellResRef, false);
 	}
 
 	if ((flags&SC_AURA_CHECK) && parameters->int2Parameter && Sender->AuraPolluted()) {
@@ -2779,7 +2760,7 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 	// the originals or at least iwd2 even marked it as IF_NOINT,
 	// so it also guarded against the ClearActions action
 	// ... but just for the actual spellcasting part
-	Sender->CurrentActionInterruptable = false;
+	Sender->CurrentActionInterruptible = false;
 
 	int duration;
 	if (!parameters->int2Parameter) {
@@ -2809,10 +2790,10 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 		return;
 	}
 
-	if (Sender->LastSpellTarget) {
+	if (Sender->objects.LastSpellTarget) {
 		//if target was set, fire spell
 		Sender->CastSpellEnd(level, flags&SC_INSTANT);
-	} else if(!Sender->LastTargetPos.IsInvalid()) {
+	} else if (!Sender->objects.LastTargetPos.IsInvalid()) {
 		//the target was converted to a point
 		Sender->CastSpellPointEnd(level, flags&SC_INSTANT);
 	} else {
@@ -2846,11 +2827,12 @@ void SpellPointCore(Scriptable *Sender, Action *parameters, int flags)
 	}
 
 	// use the passed level instead of the caster's casting level
+	// if it's still 0 afterwards, it will revert to the caster's level
 	if (flags&SC_SETLEVEL) {
-		if (!parameters->resref0Parameter.IsEmpty()) {
-			level = parameters->int0Parameter;
-		} else {
+		if (parameters->resref0Parameter.IsEmpty()) {
 			level = parameters->int1Parameter;
+		} else {
+			level = parameters->int0Parameter;
 		}
 	}
 
@@ -2886,7 +2868,7 @@ void SpellPointCore(Scriptable *Sender, Action *parameters, int flags)
 		//face target
 		act->SetOrientation(parameters->pointParameter, act->Pos, false);
 		//stop doing anything else
-		act->SetModal(MS_NONE);
+		act->SetModal(Modal::None);
 	}
 
 	if ((flags&SC_AURA_CHECK) && parameters->int2Parameter && Sender->AuraPolluted()) {
@@ -2898,7 +2880,7 @@ void SpellPointCore(Scriptable *Sender, Action *parameters, int flags)
 	// the originals or at least iwd2 even marked it as IF_NOINT,
 	// so it also guarded against the ClearActions action
 	// ... but just for the actual spellcasting part
-	Sender->CurrentActionInterruptable = false;
+	Sender->CurrentActionInterruptible = false;
 
 	int duration;
 	if (!parameters->int2Parameter) {
@@ -2925,7 +2907,7 @@ void SpellPointCore(Scriptable *Sender, Action *parameters, int flags)
 		return;
 	}
 
-	if(!Sender->LastTargetPos.IsInvalid()) {
+	if (!Sender->objects.LastTargetPos.IsInvalid()) {
 		//if target was set, fire spell
 		Sender->CastSpellPointEnd(level, flags&SC_INSTANT);
 	} else {
@@ -3083,7 +3065,7 @@ void RunAwayFromCore(Scriptable* Sender, const Action* parameters, int flags)
 		maxDistance = static_cast<int>(maxDistance * gamedata->GetStepTime() / speed);
 	}
 
-	if (flags & RunAwayFlags::NoInterrupt) { // should we just mark the action as CurrentActionInterruptable = false instead?
+	if (flags & RunAwayFlags::NoInterrupt) { // should we just mark the action as CurrentActionInterruptible = false instead?
 		actor->NoInterrupt();
 	}
 
@@ -3118,6 +3100,10 @@ void MoveGlobalObjectCore(Scriptable* Sender, const Action* parameters, int flag
 
 	if (actor->Persistent() || !CreateMovementEffect(actor, map->GetScriptRef(), dest, 0)) {
 		MoveBetweenAreasCore(actor, map->GetScriptRef(), dest, -1, true);
+		const Actor* protagonist = core->GetGame()->GetPC(0, false);
+		if (actor == protagonist) {
+			core->GetGame()->MoveFamiliars(map->GetScriptRef(), dest, -1);
+		}
 	}
 }
 

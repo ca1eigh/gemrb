@@ -26,7 +26,7 @@ IE_GUI_VIEW_RESIZE_BOTTOM		= 1 << 1 # keep my bottom relative to my super
 IE_GUI_VIEW_RESIZE_VERTICAL		= IE_GUI_VIEW_RESIZE_TOP|IE_GUI_VIEW_RESIZE_BOTTOM # top+bottom effectively resizes me vertically
 IE_GUI_VIEW_RESIZE_LEFT			= 1 << 3 # keep my left relative to my super
 IE_GUI_VIEW_RESIZE_RIGHT		= 1 << 4 # keep my right relative to my super
-IE_GUI_VIEW_RESIZE_HORIZONTAL	= IE_GUI_VIEW_RESIZE_LEFT|IE_GUI_VIEW_RESIZE_RIGHT # top+bottom effectively resizes me horizontaly
+IE_GUI_VIEW_RESIZE_HORIZONTAL	= IE_GUI_VIEW_RESIZE_LEFT | IE_GUI_VIEW_RESIZE_RIGHT # left + right effectively resizes me horizontally
 IE_GUI_VIEW_RESIZE_ALL			= IE_GUI_VIEW_RESIZE_VERTICAL|IE_GUI_VIEW_RESIZE_HORIZONTAL # resize me relative to my super
 
 # TODO: move these to TextContainer
@@ -90,6 +90,7 @@ TA_COLOR_SELECTED = 5
 ColorWhite = {'r' : 255, 'g' : 255, 'b' : 255, 'a' : 255}
 ColorWhitish = {'r' : 215, 'g' : 215, 'b' : 215, 'a' : 255}
 ColorRed = {'r' : 255, 'g' : 0, 'b' : 0, 'a' : 255}
+ColorBlackish = {'r' : 33, 'g' : 44, 'b' : 44, 'a' : 205}
 
 #TextEdit
 IE_GUI_TEXTEDIT_ALPHACHARS = 1
@@ -195,8 +196,8 @@ GS_MAPNOTE           = 128
 
 # GameControl screen flags
 # !!! Keep these synchronized with GameControl.h !!!
-SF_CENTERONACTOR     = 1
-SF_ALWAYSCENTER      = 2
+SF_CENTERONACTOR     = 0
+SF_ALWAYSCENTER      = 1
 
 # GameControltarget modes
 # !!! Keep these synchronized with GameControl.h !!!
@@ -336,6 +337,7 @@ SV_SAVEPATH = 5
 GE_SCROLLBARS = 1
 GE_TRY_IDENTIFY_ON_TRANSFER = 2
 GE_ALWAYS_OPEN_CONTAINER_ITEMS = 4
+GE_UNFOCUS_STOPS_SCROLLING = 8
 
 # Log Levels
 # !!! Keep this synchronized with Logging/Logging.h !!!

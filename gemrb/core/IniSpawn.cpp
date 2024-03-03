@@ -60,14 +60,14 @@ static PluginHolder<DataFileMgr> GetIniFile(const ResRef& DefaultArea)
 	}
 
 	PluginHolder<DataFileMgr> ini = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
-	ini->Open(inifile);
+	ini->Open(std::unique_ptr<DataStream>{inifile});
 	return ini;
 }
 
 IniSpawn::IniSpawn(Map* owner, const ResRef& defaultArea)
 : map(owner)
 {
-	this->detail_level = core->GetVariable("Detail Level", 0);
+	this->detail_level = core->GetDictionary().Get("Detail Level", 0);
 
 	const auto inifile = GetIniFile(defaultArea);
 	if (!inifile) {
@@ -92,20 +92,24 @@ IniSpawn::IniSpawn(Map* owner, const ResRef& defaultArea)
 	//36 - getting up
 	NamelessState = inifile->GetKeyAsInt("nameless", "state", 36);
 
-	auto namelessvarcount = inifile->GetKeysCount("namelessvar");
-	NamelessVar.reserve(namelessvarcount);
-	for (int y = 0; y < namelessvarcount; ++y) {
-		StringView Key = inifile->GetKeyNameByIndex("namelessvar", y);
-		auto val = inifile->GetKeyAsInt("namelessvar", Key, 0);
-		NamelessVar.emplace_back(MakeVariable(StringView(Key)), val);
+	auto namelessVarGroupIt = inifile->find("namelessvar");
+	if (namelessVarGroupIt != inifile->end()) {
+		auto& namelessVars = *namelessVarGroupIt;
+		NamelessVar.reserve(namelessVars.size());
+
+		for (auto& p : namelessVars) {
+			NamelessVar.emplace_back(MakeVariable(p.first), namelessVars.GetAs<int>(p.first, 0));
+		}
 	}
 
-	auto localscount = inifile->GetKeysCount("locals");
-	Locals.reserve(localscount);
-	for (int y = 0; y < localscount; ++y) {
-		StringView Key = inifile->GetKeyNameByIndex("locals", y);
-		auto val = inifile->GetKeyAsInt("locals", Key, 0);
-		Locals.emplace_back(MakeVariable(StringView(Key)), val);
+	auto localsGroupIt = inifile->find("locals");
+	if (localsGroupIt != inifile->end()) {
+		auto& localsGroup = *localsGroupIt;
+		Locals.reserve(localsGroup.size());
+
+		for (auto& p : localsGroup) {
+			Locals.emplace_back(MakeVariable(p.first), localsGroup.GetAs<int>(p.first, 0));
+		}
 	}
 
 	s = inifile->GetKeyAsString("spawn_main", "enter");
@@ -377,7 +381,8 @@ CritterEntry IniSpawn::ReadCreature(const DataFileMgr* inifile, StringView critt
 	CritterEntry critter{};
 
 	// does its section even exist?
-	if (!inifile->GetKeysCount(crittername)) {
+	auto lookup = inifile->find(crittername);
+	if (lookup == inifile->end() || lookup->size() == 0) {
 		Log(ERROR, "IniSpawn", "Missing spawn entry: {}", crittername);
 		return critter;
 	}
@@ -564,6 +569,12 @@ void IniSpawn::SetNamelessDeath(const ResRef& area, const Point& pos, ieDword st
 	NamelessState = state;
 }
 
+// complete guesswork
+void IniSpawn::SetNamelessDeathParty(const Point& pos, int /*reserved*/)
+{
+	PartySpawnPoint = pos;
+}
+
 /*** events ***/
 
 //respawn nameless after he bit the dust
@@ -648,7 +659,7 @@ void IniSpawn::SpawnCreature(const CritterEntry& critter) const
 	if (critter.Flags & CF_NO_DIFF_MASK) {
 		ieDword diff_bit;
 
-		ieDword difficulty = core->GetVariable("Difficulty Level", 0);
+		ieDword difficulty = core->GetDictionary().Get("Difficulty Level", 0);
 		switch (difficulty) {
 		case 0:
 			diff_bit = CF_NO_DIFF_1;
@@ -715,10 +726,15 @@ void IniSpawn::SpawnCreature(const CritterEntry& critter) const
 			cre->SetBase(StatValues[x], critter.SetSpec[x]);
 		}
 	}
-	cre->SetPosition(critter.SpawnPoint, 1, 0);
+	cre->SetPosition(critter.SpawnPoint, true);
 	cre->SetOrientation(ClampToOrientation(critter.Orientation), false);
 
-	cre->SetScriptName(critter.ScriptName);
+	//Empty critter script name can remove worked cre script name.
+	//As a result, PST script 1500CS1.bsc step MoveToObject("Hargrim") 
+	//does not work because it doesn’t find a character with this script name.
+	if (!critter.ScriptName.empty()) {
+		cre->SetScriptName(critter.ScriptName);
+	}
 
 	//increases death variable
 	if (critter.Flags & CF_DEATHVAR) {

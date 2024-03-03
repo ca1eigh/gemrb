@@ -36,6 +36,8 @@
 #include <memory>
 #include <string>
 
+#include <sys/stat.h>
+
 #ifdef WIN32
 #include "win32def.h"
 #include <direct.h>
@@ -63,9 +65,11 @@ GEM_EXPORT path_t BundlePath(BundleDirectory dir = BUNDLE);
 
 #ifdef WIN32
 const char PathDelimiter = '\\';
+const char16_t PathDelimiterW = u'\\';
 const char PathListSeparator = ';';
 #else
 const char PathDelimiter = '/';
+const char16_t PathDelimiterW = u'/';
 const char PathListSeparator = ':';
 #endif
 const char SPathDelimiter[] = { PathDelimiter, '\0' };
@@ -87,7 +91,7 @@ GEM_EXPORT void PathAppend(path_t& target, const path_t& name);
  * @param[in] ... list of path components to join
  * @return the joined path
  *
- * properly handles the case when paramater contain slashes.
+ * properly handles the case when parameters contain slashes.
  *
  * Example:
  * path_t path = PathJoin(core->GUIScriptsPath, core->GameType, 'GUIDefines.py');

@@ -162,7 +162,7 @@ def LoadGamePress (btn):
 		LoadScreen.StartLoadScreen ()
 		# it will close windows, including the loadscreen
 		GemRB.EnterGame ()
-		GemRB.SoftEndPL ()
+		GemRB.HardEndPL ()
 	return
 
 def GetQuickLoadSlot():
@@ -170,12 +170,14 @@ def GetQuickLoadSlot():
 
 	Games = GemRB.GetSaveGames()
 	QuickLoadSlot = None
+	idx = 0
 	for Game in Games:
 		Slotname = Game.GetSaveID ()
-		# quick save is 1
-		if Slotname == 1:
+		# quick save is 1 ... but not necessarily in the expansions
+		if Slotname == 1 or (Slotname > 1 and idx == 1):
 			QuickLoadSlot = Game
 			break
+		idx = idx + 1
 	return QuickLoadSlot
 
 def QuickLoadPressed():

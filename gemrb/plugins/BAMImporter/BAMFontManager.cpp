@@ -46,7 +46,7 @@ bool BAMFontManager::Import(DataStream* stream)
 	return bamImp->Open(stream);
 }
 
-Font* BAMFontManager::GetFont(unsigned short /*ptSize*/, FontStyle /*style*/, bool background)
+Holder<Font> BAMFontManager::GetFont(unsigned short /*ptSize*/, FontStyle /*style*/, bool background)
 {
 	auto af = bamImp->GetAnimationFactory(resRef, false); // released by BAMFont
 	// FIXME: this test only exists to let the minimal test pass
@@ -75,7 +75,7 @@ Font* BAMFontManager::GetFont(unsigned short /*ptSize*/, FontStyle /*style*/, bo
 	// I think cycle 1 is for determining line height (it appears to be a cursor)
 	// this is important because iterating the initials font would give an incorrect LineHeight
 	// initials should still have 13 for the line height because they have a descent that covers
-	// multiple lines (2 in BG2). numeric and state fonts don't posess these magic glyphs,
+	// multiple lines (2 in BG2). Numeric and state fonts don't possess these magic glyphs,
 	// but it is harmless to use them the same way
 	ieWord baseLine = 0;
 	ieWord lineHeight = 0;
@@ -88,7 +88,7 @@ Font* BAMFontManager::GetFont(unsigned short /*ptSize*/, FontStyle /*style*/, bo
 	}
 
 	auto pal = af->GetFrameWithoutCycle(0)->GetPalette();
-	Font* fnt = new Font(std::move(pal), lineHeight, baseLine, background);
+	auto fnt = MakeHolder<Font>(std::move(pal), lineHeight, baseLine, background);
 
 	std::map<Sprite2D*, ieWord> tmp;
 	for (ieWord cycle = 0; cycle < af->GetCycleCount(); cycle++) {

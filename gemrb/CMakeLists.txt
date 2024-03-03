@@ -2,7 +2,7 @@ ADD_SUBDIRECTORY( core )
 
 # GUIScripts and override go directly in the bundle
 SET(RESOURCE_LIST "GUIScripts" "override" "unhardcoded" "../demo")
-IF (OPENGL_BACKEND)
+IF (NOT OPENGL_BACKEND STREQUAL "None")
 	LIST(APPEND RESOURCE_LIST "plugins/SDLVideo/Shaders")
 ENDIF()
 SET(RESOURCE_FILES "")
@@ -62,17 +62,17 @@ IF(APPLE) #application bundle generation
 	
 	get_filename_component(SDL_BASENAME "${SDL2_LIBDIR}" NAME)
 	
-	
 	IF(NOT SDL_BASENAME MATCHES ".framework")
 		SET(SDL_BASENAME "libSDL2.dylib")
 		SET(SDL_LIB "${SDL2_LIBDIR}/${SDL_BASENAME}")
 		get_filename_component(SDL_FULL_PATH "${SDL_LIB}" REALPATH)
+
 		FILE(COPY ${SDL_FULL_PATH} DESTINATION ${BUNDLE_FRAMEWORK_PATH} FOLLOW_SYMLINK_CHAIN FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
 		
 		# change the "install name" of the copied SDL
 		ADD_CUSTOM_COMMAND(TARGET gemrb PRE_BUILD COMMAND ${CMAKE_INSTALL_NAME_TOOL} -id "@loader_path/../Frameworks/${SDL_BASENAME}" "${SDL_FULL_PATH}")
 		IF(USE_SDLMIXER)
-			FILE(COPY "${SDL2_MIXER_LIBRARIES}" DESTINATION ${BUNDLE_FRAMEWORK_PATH} FOLLOW_SYMLINK_CHAIN FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
+			FILE(COPY "${SDL_MIXER_LIBRARIES}" DESTINATION ${BUNDLE_FRAMEWORK_PATH} FOLLOW_SYMLINK_CHAIN FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
 		ENDIF()
 	ELSE()
 		SET(SDL_LIB "${SDL2_LIBDIR}")
@@ -81,7 +81,7 @@ IF(APPLE) #application bundle generation
 	MESSAGE(STATUS "Copying SDL: ${SDL_LIB}")
 	FILE(COPY ${SDL_LIB} DESTINATION ${BUNDLE_FRAMEWORK_PATH} FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
 
-	SET(BUNDLE_LOADER "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.app/Contents/MacOS/GemRB") # BUNDLE_LOADER is used by plugins needing to extend the cocoa wrapper (SDLVideo).
+	SET(BUNDLE_LOADER "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.app/Contents/MacOS/${PROJECT_NAME}") # BUNDLE_LOADER is used by plugins needing to extend the cocoa wrapper (SDLVideo).
 	STRING(APPEND CMAKE_MODULE_LINKER_FLAGS " -bundle_loader \"${BUNDLE_LOADER}\"")
 ELSE(APPLE)
 	ADD_SUBDIRECTORY( docs )
@@ -120,8 +120,8 @@ INCLUDE_DIRECTORIES( ${SDL_INCLUDE_DIR} )
 IF(APPLE)
   # custom info.plist
   SET(PRODUCT_BUNDLE_IDENTIFIER "org.gemrb.gemrb")
-  SET(EXECUTABLE_NAME "GemRB")
-  SET_TARGET_PROPERTIES(gemrb PROPERTIES BUNDLE True MACOSX_BUNDLE_INFO_PLIST ../platforms/apple/osx/Info.plist OUTPUT_NAME GemRB)
+  SET(EXECUTABLE_NAME "${PROJECT_NAME}")
+  SET_TARGET_PROPERTIES(gemrb PROPERTIES BUNDLE True MACOSX_BUNDLE_INFO_PLIST ../platforms/apple/osx/Info.plist OUTPUT_NAME ${PROJECT_NAME})
 
   # compile nib
   ADD_CUSTOM_COMMAND (TARGET gemrb POST_BUILD
@@ -132,21 +132,21 @@ IF(APPLE)
 
   if (STATIC_LINK)
     TARGET_LINK_LIBRARIES(gemrb
-        ${COCOA_LIBRARY_PATH} ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT}
+        ${COCOA_LIBRARY_PATH} ${CMAKE_DL_LIBS} Threads::Threads
        gemrb_core ${plugins}  -Wl,-all_load)
   else (STATIC_LINK)
     TARGET_LINK_LIBRARIES(gemrb gemrb_core
-        ${COCOA_LIBRARY_PATH} ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT})
+        ${COCOA_LIBRARY_PATH} ${CMAKE_DL_LIBS} Threads::Threads)
   endif (STATIC_LINK)
 ELSE(APPLE)
   if (STATIC_LINK)
-    TARGET_LINK_LIBRARIES(gemrb ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT}
+    TARGET_LINK_LIBRARIES(gemrb ${CMAKE_DL_LIBS} Threads::Threads
       -Wl,--whole-archive gemrb_core ${plugins} -Wl,--no-whole-archive)
   else (STATIC_LINK)
     IF (MSVC)
       TARGET_LINK_LIBRARIES(gemrb gemrb_core)
     ELSE (MSVC)
-      TARGET_LINK_LIBRARIES(gemrb gemrb_core ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT})
+      TARGET_LINK_LIBRARIES(gemrb gemrb_core ${CMAKE_DL_LIBS} Threads::Threads)
     ENDIF (MSVC)
   endif (STATIC_LINK)
 ENDIF(APPLE)
@@ -168,3 +168,36 @@ ENDIF()
 IF(VITA)
 	INCLUDE(${CMAKE_SOURCE_DIR}/platforms/vita/vita_build_vpk.cmake)
 ENDIF(VITA)
+
+# Tests
+IF (BUILD_TESTING)
+  ADD_EXECUTABLE(Test_gemrb_core
+    tests/core/Streams/Test_DataStream.cpp
+    tests/core/Strings/Test_CString.cpp
+    tests/core/Strings/Test_String.cpp
+    tests/core/Strings/Test_StringView.cpp
+    tests/core/Strings/Test_UTF8Comparison.cpp
+    tests/core/System/Test_VFS.cpp
+  )
+
+  TARGET_LINK_LIBRARIES(Test_gemrb_core GTest::gtest GTest::gtest_main gemrb_core ${Iconv_LIBRARY})
+  IF (WIN32)
+    TARGET_LINK_LIBRARIES(Test_gemrb_core shlwapi)
+  ENDIF()
+
+  IF (MSVC)
+    ADD_TEST(NAME Test_gemrb_core
+      COMMAND ${CMAKE_COMMAND} -E env "PATH=${CMAKE_BINARY_DIR}/gemrb;$ENV{PATH}" Test_gemrb_core
+      WORKING_DIRECTORY $<TARGET_FILE_DIR:gemrb_core>
+    )
+  ELSE()
+    ADD_TEST(NAME Test_gemrb_core COMMAND Test_gemrb_core
+      WORKING_DIRECTORY $<TARGET_FILE_DIR:gemrb_core>
+    )
+  ENDIF()
+
+  ADD_CUSTOM_COMMAND(TARGET Test_gemrb_core POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:gemrb_core>/tests/resources
+      && ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/gemrb/tests/resources $<TARGET_FILE_DIR:gemrb_core>/tests/resources
+  )
+ENDIF()

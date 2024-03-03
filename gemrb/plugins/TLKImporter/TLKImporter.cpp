@@ -41,7 +41,7 @@ TLKImporter::TLKImporter(void)
 		charname=-1;
 	}
 
-	AutoTable tm = gamedata->LoadTable("gender");
+	AutoTable tm = gamedata->LoadTable("gender", true);
 	TableMgr::index_t gtcount = 0;
 	if (tm) {
 		gtcount = tm->GetRowCount();
@@ -106,6 +106,11 @@ bool TLKImporter::Open(DataStream* stream)
 		Log(ERROR, "TLKImporter", "Too many strings ({}), increase OVERRIDE_START.", StrRefCount);
 		return false;
 	}
+
+	if (GetString(ieStrRef(1)).back() == u'\n') {
+		hasEndingNewline = true;
+	}
+
 	return true;
 }
 
@@ -203,7 +208,7 @@ String TLKImporter::BuiltinToken(const ieVariable& Token)
 
 	//these are hardcoded, all engines are the same or don't use them
 	if (Token == "DAYANDMONTH") {
-		ieDword dayandmonth = core->GetVariable("DAYANDMONTH", 0);
+		ieDword dayandmonth = core->GetDictionary().Get("DAYANDMONTH", 0);
 		//preparing sub-tokens
 		core->GetCalendar()->GetMonthName((int) dayandmonth);
 		return GetString(ieStrRef::DAYANDMONTH, STRING_FLAGS::RESOLVE_TAGS);
@@ -244,7 +249,7 @@ String TLKImporter::BuiltinToken(const ieVariable& Token)
 	}
 	if (Token == "MAGESCHOOL") {
 		//this is subject to change, the row number in magesch.2da, default value is 0 (generalist)
-		ieDword row = core->GetVariable("MAGESCHOOL", 0);
+		ieDword row = core->GetDictionary().Get("MAGESCHOOL", 0);
 		AutoTable tm = gamedata->LoadTable("magesch");
 		if (tm) {
 			ieStrRef value = tm->QueryFieldAsStrRef(row, 2);
@@ -335,7 +340,7 @@ String TLKImporter::GetString(ieStrRef strref, STRING_FLAGS flags)
 		if (OverrideTLK) {
 			size_t Length;
 			char* cstr = OverrideTLK->ResolveAuxString(strref, Length);
-			string = StringFromCString(cstr);
+			string = StringFromTLK(StringView(cstr, Length));
 			free(cstr);
 		}
 		type = 0;
@@ -355,23 +360,31 @@ String TLKImporter::GetString(ieStrRef strref, STRING_FLAGS flags)
 		str->ReadDword(l);
 				
 		if (type & 1) {
-			str->Seek( StrOffset + Offset, GEM_STREAM_START );
+			if (str->Seek(StrOffset + Offset, GEM_STREAM_START) == GEM_ERROR) {
+				return u"";
+			}
 			std::string mbstr(l, '\0');
 			str->Read(&mbstr[0], l);
-			string = StringFromCString(mbstr.c_str());
+			string = StringFromTLK(mbstr);
 		}
 	}
 
 	if (bool(flags & STRING_FLAGS::RESOLVE_TAGS) || (type & 4)) {
 		string = ResolveTags(string);
 	}
-	if (type & 2 && bool(flags & STRING_FLAGS::SOUND) && !SoundResRef.IsEmpty()) {
+	if ((type & 2) && bool(flags & STRING_FLAGS::SOUND) && !SoundResRef.IsEmpty()) {
 		// GEM_SND_SPEECH will stop the previous sound source
-		unsigned int flag = GEM_SND_RELATIVE | (uint32_t(flags) & (GEM_SND_SPEECH | GEM_SND_QUEUE));
-		core->GetAudioDrv()->Play(SoundResRef, SFX_CHAN_DIALOG, Point(), flag);
+		unsigned int flag = (uint32_t(flags) & (GEM_SND_SPEECH | GEM_SND_QUEUE));
+
+		// Narrator's error announcements (ambush, incomplete party)
+		unsigned int channel = SoundResRef.BeginsWith("ERROR") ? SFX_CHAN_NARRATOR : SFX_CHAN_DIALOG;
+		core->GetAudioDrv()->Play(SoundResRef, channel, Point(), flag);
 	}
 	if (bool(flags & STRING_FLAGS::STRREFON)) {
 		string = fmt::format(u"{}: {}", ieDword(strref), string);
+	}
+	if (hasEndingNewline) {
+		RTrim(string, u"\n");
 	}
 	return string;
 }
@@ -389,7 +402,9 @@ StringBlock TLKImporter::GetStringBlock(ieStrRef strref, STRING_FLAGS flags)
 		return StringBlock();
 	}
 	ieWord type;
-	str->Seek( 18 + (ieDword(strref) * 0x1A), GEM_STREAM_START );
+	if (str->Seek(18 + (ieDword(strref) * 0x1A), GEM_STREAM_START) == GEM_ERROR) {
+		return StringBlock();
+	}
 	str->ReadWord(type);
 	ResRef soundRef;
 	str->ReadResRef( soundRef );

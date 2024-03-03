@@ -74,8 +74,11 @@ class TableMgr;
 #define SELECT_QUIET    0x02 // do not run handler when changing selection
 
 // Flags bits for EveryoneNearPoint()
-#define ENP_CANMOVE     1    // also check if the PC can move
-#define ENP_ONLYSELECT  2    // check only selected PC
+enum ENP {
+	CanMove = 1, // also check if the PC can move
+	OnlySelect = 2, // check only selected PC
+	Familars = 4, // also check familiars
+};
 
 // GUI Control Status flags (saved in game)
 #define CS_PARTY_AI  1   //enable party AI
@@ -252,6 +255,7 @@ public:
 	ieDword StateOverrideTime = 0;
 	ieDword BanterBlockFlag = 0;
 	ieDword BanterBlockTime = 0;
+	int nextBored = 0;
 
 	/** Index of PC selected in non-walking environment (shops, inventory...) */
 	int SelectedSingle = 1;
@@ -272,13 +276,21 @@ public:
 	ieDword Reputation = 0;
 	ieDword ControlStatus = 0; // used in bg2, iwd (where you can switch panes off)
 	ieDword Expansion = 0; // mostly used by BG2. IWD games set it to 3 on newgame
-	ieDword zoomLevel = 0; // ee-style zoom
+	ieDword zoomLevel = 0; // ee-style zoom, 0 or 100: default zoom level, >100: zoomed out, <100: zoomed in
 	ResRef AnotherArea;
 	ResRef CurrentArea;
 	ResRef PreviousArea; //move here if the worldmap exit is illegal?
 	ResRef LastMasterArea; // last party-visited master area
 	ResRef LoadMos;
 	ResRef TextScreen;
+
+	// EE-only stuff that we don't really need yet
+	ResRef RandomEncounterArea;
+	ResRef CurrentWorldMap;
+	ResRef CurrentCampaign; // eg. "SOD"
+	ieDword FamiliarOwner = 0; // IWDEE: which player has the familiar? InParty - 1
+	FixedSizeString<20> RandomEncounterEntry;
+
 	Particles *weather = nullptr;
 	int event_timer = 0;
 	EventHandler event_handler = nullptr;
@@ -372,7 +384,7 @@ public:
 	/** Adds a journal entry from dialog data.
 	 * Time and chapter are calculated on the fly
 	 * Returns false if the entry already exists */
-	bool AddJournalEntry(ieStrRef strRef, ieByte section, ieByte group);
+	bool AddJournalEntry(ieStrRef strRef, ieByte section, ieByte group, ieStrRef feedback = ieStrRef::INVALID);
 	/** Adds a journal entry while loading the .gam structure */
 	void AddJournalEntry(GAMJournalEntry* entry);
 	unsigned int GetJournalCount() const;
@@ -425,7 +437,7 @@ public:
 	bool EveryoneStopped() const;
 	bool EveryoneNearPoint(const Map *map, const Point &p, int flags) const;
 	/** a party member just died now */
-	void PartyMemberDied(const Actor *);
+	void PartyMemberDied(const Actor*) const;
 	/** Increments chapter variable and refreshes kill stats */
 	void IncrementChapter();
 	/** Sets party reputation */
@@ -489,11 +501,13 @@ public:
 	bool OnlyNPCsSelected() const;
 	void MovePCs(const ResRef& targetArea, const Point& targetPoint, int orientation) const;
 	void MoveFamiliars(const ResRef& targetArea, const Point& targetPoint, int orientation) const;
-	void DumpKaputz() const;
 	// GLOBAL is just the LOCALS of the Game Scriptable, but we want to avoid any confusion
 	ieDword GetGlobal(const ieVariable& key, ieDword fallback) const { return GetLocal(key, fallback); };
+	bool CheckPartyBanter() const;
+	void CheckBored();
+	void CheckAreaComment();
+
 private:
-	bool DetermineStartPosType(const TableMgr* strTable) const;
 	ResRef *GetDream(Map *area);
 	void CastOnRest() const;
 	void PlayerDream() const;

@@ -29,14 +29,16 @@
 #include "DisplayMessage.h"
 #include "Game.h"
 #include "GameData.h"
-#include "GameScript/GSUtils.h"
 #include "Interface.h"
 #include "Item.h"
 #include "Map.h"
 #include "ScriptEngine.h"
+
+#include "GameScript/GSUtils.h"
 #include "Scriptable/Actor.h"
 
 #include <cstdio>
+#include <fmt/ranges.h>
 
 namespace GemRB {
 
@@ -66,28 +68,14 @@ static void InvalidSlot(int slot)
 void ItemExtHeader::CopyITMExtHeader(const ITMExtHeader &src)
 {
 	AttackType = src.AttackType;
-	IDReq = src.IDReq;
-	Location = src.Location;
 	UseIcon = src.UseIcon;
 	Tooltip = src.Tooltip;
 	Target = src.Target;
 	TargetNumber = src.TargetNumber;
 	Range = src.Range;
-	Speed = src.Speed;
-	THAC0Bonus = src.THAC0Bonus;
-	DiceSides = src.DiceSides;
-	DiceThrown = src.DiceThrown;
-	DamageBonus = src.DamageBonus;
-	DamageType = src.DamageType;
-	FeatureOffset = src.FeatureOffset;
 	Charges = src.Charges;
 	ChargeDepletion = src.ChargeDepletion;
-	RechargeFlags = src.RechargeFlags;
 	ProjectileAnimation = src.ProjectileAnimation;
-	MeleeAnimation[0] = src.MeleeAnimation[0];
-	MeleeAnimation[1] = src.MeleeAnimation[1];
-	MeleeAnimation[2] = src.MeleeAnimation[2];
-	ProjectileQualifier = src.ProjectileQualifier;
 }
 
 //This inline function returns both an item pointer and the slot data.
@@ -232,7 +220,7 @@ void Inventory::AddSlotEffects(ieDword index)
 
 //no need to know the item effects 'personally', the equipping slot
 //is stored in them
-void Inventory::RemoveSlotEffects(ieDword index)
+void Inventory::RemoveSlotEffects(size_t index)
 {
 	if (Owner->fxqueue.RemoveEquippingEffects(index)) {
 		Owner->RefreshEffects();
@@ -248,14 +236,14 @@ void Inventory::SetInventoryType(ieInventoryType arg)
 	InventoryType = arg;
 }
 
-void Inventory::SetSlotCount(unsigned int size)
+void Inventory::SetSlotCount(size_t size)
 {
 	if (!Slots.empty()) {
 		error("Core", "Inventory size changed???");
 		//we don't allow reassignment,
 		//if you want this, delete the previous Slots here
 	}
-	Slots.assign((size_t) size, NULL);
+	Slots.assign(size, nullptr);
 }
 
 /** if you supply a "" string, then it checks if the slot is empty */
@@ -341,7 +329,7 @@ bool Inventory::HasItem(const ResRef &resref, ieDword flags) const
 	return false;
 }
 
-void Inventory::KillSlot(unsigned int index)
+void Inventory::KillSlot(size_t index)
 {
 	if (InventoryType == ieInventoryType::HEAP) {
 		Slots.erase(Slots.begin()+index);
@@ -360,11 +348,11 @@ void Inventory::KillSlot(unsigned int index)
 	Slots[index] = NULL;
 	CalculateWeight();
 
-	int effect = core->QuerySlotEffects( index );
+	int effect = core->QuerySlotEffects((unsigned int) index);
 	if (!effect) {
 		return;
 	}
-	RemoveSlotEffects( index );
+	RemoveSlotEffects(index);
 	const Item *itm = gamedata->GetItem(item->ItemResRef, true);
 	//this cannot happen, but stuff happens!
 	if (!itm) {
@@ -479,6 +467,11 @@ void Inventory::KillSlot(unsigned int index)
 			}
 			recache = false;
 			break;
+		case SLOT_EFFECT_ALIAS:
+			break;
+		default:
+			Log(FATAL, "Inventory", "Unknown slot effect type set: {}", effect);
+			break;
 	}
 	if (recache) CacheAllWeaponInfo();
 	gamedata->FreeItem(itm, item->ItemResRef, false);
@@ -521,11 +514,11 @@ unsigned int Inventory::DestroyItem(const ResRef& resref, ieDword flags, ieDword
 				item = RemoveItem( (unsigned int) slot, removed );
 			}
 			else {
-				KillSlot( (unsigned int) slot);
+				KillSlot(slot);
 			}
 		} else {
 			removed=1;
-			KillSlot( (unsigned int) slot);
+			KillSlot(slot);
 		}
 		delete item;
 		destructed+=removed;
@@ -647,10 +640,8 @@ int Inventory::AddSlotItem(CREItem* item, int slot, int slottype, bool ranged)
 		if (!(core->QuerySlotType(i)&slottype))
 			continue;
 		//the slot has been disabled for this actor
-		if (i>=SLOT_MELEE && i<=LAST_MELEE) {
-			if (Owner->GetQuickSlot(i-SLOT_MELEE)==0xffff) {
-				continue;
-			}
+		if (i >= SLOT_MELEE && i <= LAST_MELEE && Owner->GetQuickSlot(i - SLOT_MELEE) == 0xffff) {
+			continue;
 		}
 		int part_res = AddSlotItem (item, i);
 		if (part_res == ASI_SUCCESS) return ASI_SUCCESS;
@@ -762,9 +753,7 @@ int Inventory::DepleteItem(ieDword flags) const
 				continue;
 		}
 		//deplete item
-		item->Usages[0]=0;
-		item->Usages[1]=0;
-		item->Usages[2]=0;
+		item->Usages.fill(0);
 	}
 	return -1;
 }
@@ -856,7 +845,7 @@ bool Inventory::DropItemAtLocation(const ResRef& resRef, unsigned int flags, Map
 		item->Flags &= ~ IE_INV_ITEM_EQUIPPED;
 		map->AddItemToLocation(loc, item);
 		dropped = true;
-		KillSlot((unsigned int) i);
+		KillSlot(i);
 		//if it isn't all items then we stop here
 		if (!resRef.IsEmpty())
 			break;
@@ -955,7 +944,7 @@ bool Inventory::EquipItem(ieDword slot)
 		}
 		header = itm->GetExtHeader(EquippedHeader);
 		if (!header) return false; // in case of broken saves
-		if (header->AttackType == ITEM_AT_BOW || header->AttackType == ITEM_AT_PROJECTILE) {
+		if (header->AttackType == ITEM_AT_BOW || (header->AttackType == ITEM_AT_PROJECTILE && !header->Charges)) {
 			// find the ranged projectile associated with it, this returns equipped code
 			equip = FindRangedProjectile(header->ProjectileQualifier);
 			// this is the real item slot of the quarrel
@@ -997,6 +986,8 @@ bool Inventory::EquipItem(ieDword slot)
 		} else {
 			UpdateShieldAnimation(itm);
 		}
+		break;
+	default: // none, SLOT_EFFECT_MAGIC (handled indirectly elsewhere) or alias
 		break;
 	}
 	gamedata->FreeItem(itm, item->ItemResRef, false);
@@ -1092,7 +1083,7 @@ int Inventory::FindTypedRangedWeapon(unsigned int type) const
 		//always look for a ranged header when looking for a projectile/projector
 		const ITMExtHeader *ext_header = itm->GetWeaponHeader(true);
 		int weapontype = 0;
-		if (ext_header && (ext_header->AttackType == ITEM_AT_BOW || ext_header->AttackType == ITEM_AT_PROJECTILE)) {
+		if (ext_header && (ext_header->AttackType == ITEM_AT_BOW || (ext_header->AttackType == ITEM_AT_PROJECTILE && !ext_header->Charges))) {
 			weapontype = ext_header->ProjectileQualifier;
 		}
 		gamedata->FreeItem(itm, Slot->ItemResRef, false);
@@ -1257,7 +1248,7 @@ bool Inventory::SetEquippedSlot(ieWordSigned slotcode, ieWord header, bool noFX)
 		EquippedHeader = 0;
 	}
 
-	int oldslot = GetEquippedSlot();
+	unsigned int oldslot = GetEquippedSlot();
 	int newslot = GetWeaponSlot(slotcode);
 
 	//remove previous slot effects
@@ -1266,8 +1257,8 @@ bool Inventory::SetEquippedSlot(ieWordSigned slotcode, ieWord header, bool noFX)
 		//for projectiles we may need to remove the launcher effects too
 		int oldeffects = core->QuerySlotEffects(oldslot);
 		if (oldeffects == SLOT_EFFECT_MISSILE) {
-			int launcher = FindSlotRangedWeapon(oldslot);
-			if (launcher != SLOT_FIST) {
+			size_t launcher = FindSlotRangedWeapon(oldslot);
+			if (launcher != (unsigned int) SLOT_FIST) {
 				RemoveSlotEffects(launcher);
 			}
 		}
@@ -1577,18 +1568,18 @@ void Inventory::AddSlotItemRes(const ResRef& ItemResRef, int SlotID, int Charge0
 	}
 }
 
-void Inventory::SetSlotItemRes(const ResRef& ItemResRef, int SlotID, int Charge0, int Charge1, int Charge2)
+void Inventory::SetSlotItemRes(const ResRef& ItemResRef, size_t SlotID, int Charge0, int Charge1, int Charge2)
 {
 	if (!ItemResRef.IsEmpty()) {
 		CREItem *TmpItem = new CREItem();
 		if (CreateItemCore(TmpItem, ItemResRef, Charge0, Charge1, Charge2)) {
-			SetSlotItem( TmpItem, SlotID );
+			SetSlotItem(TmpItem, (unsigned int) SlotID);
 		} else {
 			delete TmpItem;
 		}
 	} else {
 		//if the item isn't creatable, we still destroy the old item
-		KillSlot( SlotID );
+		KillSlot(SlotID);
 	}
 }
 
@@ -1660,7 +1651,7 @@ std::string Inventory::dump(bool print) const
 			continue;
 		}
 
-		AppendFormat(buffer, "{}: {} - ({} {} {}) Fl:{:#x}", i, itm->ItemResRef, itm->Usages[0], itm->Usages[1], itm->Usages[2], itm->Flags);
+		AppendFormat(buffer, "{}: {} - {} Flags:{:#x}", i, itm->ItemResRef, itm->Usages, itm->Flags);
 		AppendFormat(buffer, "Wt: {} x {}Lb\n", (itm->Usages[0] && itm->MaxStackAmount) ? itm->Usages[0] : 1, itm->Weight);
 	}
 
@@ -1742,13 +1733,15 @@ void Inventory::EquipBestWeapon(int flags)
 	UpdateWeaponAnimation();
 }
 
-#define ID_NONEED  0   //id is not important
-#define ID_NEED    1   //id is important
-#define ID_NO      2   //shouldn't id
-
 // returns true if there are more item usages not fitting in given vector
 bool Inventory::GetEquipmentInfo(std::vector<ItemExtHeader>& headerList, int startindex, int count) const
 {
+	enum class IDNeeded {
+		No, // id is not important
+		Yes, // id is important
+		Never // shouldn't id
+	};
+
 	int pos = 0;
 	int actual = 0;
 	for(unsigned int idx=0;idx<Slots.size();idx++) {
@@ -1768,9 +1761,9 @@ bool Inventory::GetEquipmentInfo(std::vector<ItemExtHeader>& headerList, int sta
 			}
 			//skipping if we cannot use the item
 			int idreq1 = (slot->Flags&IE_INV_ITEM_IDENTIFIED);
-			int idreq2 = ext_header->IDReq;
-			if (idreq2 == ID_NO && idreq1) continue;
-			if (idreq2 == ID_NEED && !idreq1) continue;
+			IDNeeded idreq2 = static_cast<IDNeeded>(ext_header->IDReq);
+			if (idreq2 == IDNeeded::Never && idreq1) continue;
+			if (idreq2 == IDNeeded::Yes && !idreq1) continue;
 
 			actual++;
 			if (actual <= startindex) {
@@ -1794,7 +1787,7 @@ bool Inventory::GetEquipmentInfo(std::vector<ItemExtHeader>& headerList, int sta
 			}
 
 			// don't modify ehc, it is a counter
-			if (ehc >= CHARGE_COUNTERS) {
+			if (ehc >= slot->Usages.size()) {
 				headerList[pos].Charges = slot->Usages[0];
 			} else {
 				headerList[pos].Charges = slot->Usages[ehc];
@@ -1848,10 +1841,8 @@ void Inventory::UpdateWeaponAnimation()
 	}
 
 	AnimRef AnimationType;
-	ieWord MeleeAnimation[3]={100,0,0};
+	std::array<ieWord, 3> meleeAnimation = { 100, 0, 0 };
 	CREItem *Slot;
-
-	// TODO: fix bows?
 
 	const ITMExtHeader *header = nullptr;
 	const Item *itm = GetItemPointer(slot, Slot);
@@ -1867,7 +1858,6 @@ void Inventory::UpdateWeaponAnimation()
 		WeaponType = IE_ANI_WEAPON_2H;
 	} else {
 		// Examine shield slot to check if we're using two weapons
-		// TODO: for consistency, use same Item* access method as above
 		int shieldSlot = GetShieldSlot();
 		const CREItem* si = nullptr;
 		if (shieldSlot > 0) {
@@ -1887,11 +1877,10 @@ void Inventory::UpdateWeaponAnimation()
 		}
 	}
 
-	if (header)
-		memcpy(MeleeAnimation,header->MeleeAnimation, sizeof(MeleeAnimation) );
+	if (header) meleeAnimation = header->MeleeAnimation;
 	if (itm)
 		gamedata->FreeItem( itm, Slot->ItemResRef, false );
-	Owner->SetUsedWeapon(AnimationType, MeleeAnimation, WeaponType);
+	Owner->SetUsedWeapon(AnimationType, meleeAnimation, WeaponType);
 }
 
 //this function will also check disabled slots (if that feature will be imped)
@@ -1908,20 +1897,29 @@ bool Inventory::IsSlotBlocked(int slot) const
 	return !IsSlotEmpty(otherslot);
 }
 
-inline bool Inventory::TwoHandedInSlot(int slot) const
+inline HCStrings Inventory::CanUseShieldSlot(int slot, bool ranged) const
 {
-	const CREItem *item = GetSlotItem(slot);
-	if (!item) return false;
-	if (item->Flags&IE_INV_ITEM_TWOHANDED) {
-		return true;
+	const CREItem* item = GetSlotItem(slot);
+	if (!item) return HCStrings::count;
+
+	if (item->Flags & IE_INV_ITEM_TWOHANDED) {
+		return HCStrings::TwohandedUsed;
+	} else if (item->Flags & IE_INV_ITEM_NOT_OFFHAND) {
+		return HCStrings::TwohandedUsed;
+	} else if (ranged) {
+		return HCStrings::NoRangedOffhand;
 	}
-	return false;
+	return HCStrings::count;
 }
 
 HCStrings Inventory::WhyCantEquip(int slot, int twohanded, bool ranged) const
 {
 	// check only for hand slots
-	if ((slot<SLOT_MELEE || slot>LAST_MELEE) && (slot != SLOT_LEFT) ) {
+	if (IWD2) {
+		if (slot < SLOT_MELEE || slot > LAST_MELEE + 1) { // up to last adjacent shield slot
+			return HCStrings::count;
+		}
+	} else if ((slot < SLOT_MELEE || slot > LAST_MELEE) && slot != SLOT_LEFT) {
 		return HCStrings::count;
 	}
 
@@ -1942,11 +1940,9 @@ HCStrings Inventory::WhyCantEquip(int slot, int twohanded, bool ranged) const
 		}
 		if (slot != otherslot) continue;
 
-		if (TwoHandedInSlot(i)) {
-			return HCStrings::TwohandedUsed;
-		}
-		if (ranged) {
-			return HCStrings::NoRangedOffhand;
+		HCStrings shieldSlotUsable = CanUseShieldSlot(i, ranged);
+		if (shieldSlotUsable != HCStrings::count) {
+			return shieldSlotUsable;
 		}
 	}
 
@@ -1979,7 +1975,7 @@ void Inventory::ChargeAllItems(int hours) const
 
 		const Item *itm = gamedata->GetItem(item->ItemResRef, true);
 		if (!itm) continue;
-		for(int h=0;h<CHARGE_COUNTERS;h++) {
+		for (size_t h = 0; h < item->Usages.size(); h++) {
 			const ITMExtHeader *header = itm->GetExtHeader(h);
 			if (!header || !(header->RechargeFlags & IE_ITEM_RECHARGE)) {
 				continue;
@@ -1988,7 +1984,6 @@ void Inventory::ChargeAllItems(int hours) const
 			unsigned short add = header->Charges;
 			if (hours && add > hours) add = hours;
 			item->Usages[h] = std::min<ieWord>(add + item->Usages[h], header->Charges);
-
 		}
 		gamedata->FreeItem( itm, item->ItemResRef, false );
 	}

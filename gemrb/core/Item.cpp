@@ -92,11 +92,12 @@ EffectQueue Item::GetEffectBlock(Scriptable *self, const Point &pos, int usage, 
 	EffectQueue fxqueue;
 	EffectQueue selfqueue;
 	Actor* target = Scriptable::As<Actor>(self);
+	static int casterLevel = gamedata->GetMiscRule("ITEM_CASTERLEVEL");
 
 	for (size_t i = 0; i < count; ++i) {
 		Effect *fx = features[i];
 		fx->InventorySlot = invslot;
-		fx->CasterLevel = ITEM_CASTERLEVEL; //items all have casterlevel 10
+		fx->CasterLevel = casterLevel;
 		fx->CasterID = self->GetGlobalID();
 		if (usage >= 0) {
 			//this is not coming from the item header, but from the recharge flags
@@ -209,31 +210,31 @@ const ITMExtHeader* Item::GetExtHeader(int which) const
 	return &ext_headers[which];
 }
 
-int Item::UseCharge(ieWord *Charges, int header, bool expend) const
+int Item::UseCharge(std::array<ieWord, CHARGE_COUNTERS>& charges, int header, bool expend) const
 {
 	const ITMExtHeader *ieh = GetExtHeader(header);
 	if (!ieh) return 0;
 	int type = ieh->ChargeDepletion;
 
 	int ccount = 0;
-	if ((header>=CHARGE_COUNTERS) || (header<0) || MaxStackAmount) {
+	if (header >= CHARGE_COUNTERS || header < 0 || MaxStackAmount) {
 		header = 0;
 	}
-	ccount=Charges[header];
+	ccount = charges[header];
 
 	//if the item started from 0 charges, then it isn't depleting
 	if (ieh->Charges==0) {
 		return CHG_NONE;
 	}
 	if (expend) {
-		Charges[header] = --ccount;
+		charges[header] = --ccount;
 	}
 
 	if (ccount>0) {
 		return CHG_NONE;
 	}
 	if (type == CHG_NONE) {
-		Charges[header]=0;
+		charges[header] = 0;
 	}
 	return type;
 }
@@ -256,6 +257,7 @@ Projectile *Item::GetProjectile(Scriptable *self, int header, const Point &targe
 		pro->SetEffects(GetEffectBlock(self, target, usage, invslot, idx));
 	}
 	pro->Range = eh->Range;
+	pro->form = eh->AttackType;
 	return pro;
 }
 

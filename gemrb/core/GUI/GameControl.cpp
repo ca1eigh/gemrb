@@ -49,6 +49,7 @@
 
 #include <array>
 #include <cmath>
+#include <fmt/ranges.h>
 
 namespace GemRB {
 
@@ -111,14 +112,14 @@ void GameControl::SetTracker(const Actor *actor, ieDword dist)
 GameControl::GameControl(const Region& frame)
 : View(frame)
 {
-	this->AlwaysRun = core->GetVariable("Always Run", 0);
+	this->AlwaysRun = core->GetDictionary().Get("Always Run", 0);
 
 	ResetTargetMode();
 	SetCursor(nullptr);
 
-	int lookup = core->GetVariable("Center", 0);
+	int lookup = core->GetDictionary().Get("Center", 0);
 	if (lookup) {
-		ScreenFlags |= SF_ALWAYSCENTER;
+		screenFlags.Set(ScreenFlags::AlwaysCenter);
 	}
 	// the game always starts paused so nothing happens till we are ready
 	dialoghandler = new DialogHandler();
@@ -272,9 +273,9 @@ void GameControl::ClearMouseState()
 // only PST supports RunToPoint
 void GameControl::CreateMovement(Actor *actor, const Point &p, bool append, bool tryToRun) const
 {
-	Action *action = NULL;
-	tryToRun |= AlwaysRun;
-	
+	Action* action = nullptr;
+	tryToRun = tryToRun || AlwaysRun;
+
 	if (append) {
 		action = GenerateAction(fmt::format("AddWayPoint([{}.{}])", p.x, p.y));
 		assert(action);
@@ -298,10 +299,9 @@ void GameControl::CreateMovement(Actor *actor, const Point &p, bool append, bool
 bool GameControl::CanRun(const Actor *actor) const
 {
 	if (!actor) return false;
-	if (actor->GetEncumbranceFactor(true) != 1) {
-		return false;
-	}
-	return true;
+	static bool hasRun = GenerateActionDirect("RunToPoint([0.0])", actor) != nullptr;
+	if (!hasRun) return false;
+	return actor->GetEncumbranceFactor(true) == 1;
 }
 
 bool GameControl::ShouldRun(const Actor *actor) const
@@ -385,7 +385,7 @@ void GameControl::DrawTargetReticle(uint16_t size, const Color& color, const Poi
 	}
 	
 	// the current points are the ends of the top/bottom segments
-	VideoDriver->DrawLine(points[i++] + offsetV, p + offsetV, color); // begin top segement
+	VideoDriver->DrawLine(points[i++] + offsetV, p + offsetV, color); // begin top segment
 	VideoDriver->DrawLine(points[i++] + offsetV, p + offsetV, color); // end top segment
 	VideoDriver->DrawLine(points[i++] - offsetV, p - offsetV, color); // begin bottom segment
 	VideoDriver->DrawLine(points[i++] - offsetV, p - offsetV, color); // end bottom segment
@@ -420,7 +420,7 @@ void GameControl::WillDraw(const Region& /*drawFrame*/, const Region& /*clip*/)
 	bool update_scripts = !(DialogueFlags & DF_FREEZE_SCRIPTS);
 	
 	// handle keeping the actor in the spotlight, but only when unpaused
-	if ((ScreenFlags & SF_ALWAYSCENTER) && update_scripts) {
+	if (screenFlags.Test(ScreenFlags::AlwaysCenter) && update_scripts) {
 		const Actor *star = core->GetFirstSelectedActor();
 		if (star) {
 			vpVector = star->Pos - vpOrigin - Point(frame.w / 2, frame.h / 2);
@@ -428,7 +428,7 @@ void GameControl::WillDraw(const Region& /*drawFrame*/, const Region& /*clip*/)
 	}
 
 	if (!vpVector.IsZero() && MoveViewportTo(vpOrigin + vpVector, false)) {
-		if ((Flags() & IgnoreEvents) == 0 && core->GetMouseScrollSpeed() && (ScreenFlags & SF_ALWAYSCENTER) == 0) {
+		if ((Flags() & IgnoreEvents) == 0 && core->GetMouseScrollSpeed() && !screenFlags.Test(ScreenFlags::AlwaysCenter)) {
 			orient_t orient = GetOrient(vpVector, Point());
 			// set these cursors on game window so they are universal
 			window->SetCursor(core->GetScrollCursorSprite(orient, numScrollCursor));
@@ -440,7 +440,7 @@ void GameControl::WillDraw(const Region& /*drawFrame*/, const Region& /*clip*/)
 	}
 
 	const Map* area = CurrentArea();
-	assert(area);
+	if (!area) return;
 
 	int flags = GA_NO_DEAD|GA_NO_UNSCHEDULED|GA_SELECT|GA_NO_ENEMY|GA_NO_NEUTRAL;
 	auto ab = area->GetActorsInRect(SelectionRect(), flags);
@@ -459,90 +459,131 @@ void GameControl::WillDraw(const Region& /*drawFrame*/, const Region& /*clip*/)
 	}
 }
 
-/** Draws the Control on the Output Display */
-void GameControl::DrawSelf(const Region& screen, const Region& /*clip*/)
+// FIXME: some of this should happen during mouse events
+void GameControl::OutlineInfoPoints() const
 {
 	const Game* game = core->GetGame();
-	Map *area = game->GetCurrentArea();
+	const Map* area = game->GetCurrentArea();
 
-	// FIXME: some of this should happen during mouse events
-	// setup outlines
-	InfoPoint *i;
-	for (size_t idx = 0; (i = area->TMap->GetInfoPoint(idx)); idx++) {
-		i->Highlight = false;
-		if (i->VisibleTrap(0)) {
-			if (overMe == i && target_mode) {
-				i->outlineColor = ColorGreen;
+	InfoPoint* infoPoint;
+	for (size_t idx = 0; (infoPoint = area->TMap->GetInfoPoint(idx)); idx++) {
+		infoPoint->Highlight = false;
+
+		if (infoPoint->VisibleTrap(0)) {
+			if (overMe == infoPoint && targetMode != TargetMode::None) {
+				infoPoint->outlineColor = displaymsg->GetColor(GUIColors::HOVERTARGETABLE);
 			} else {
-				i->outlineColor = ColorRed;
+				infoPoint->outlineColor = displaymsg->GetColor(GUIColors::TRAPCOLOR);
 			}
-			i->Highlight = true;
+			infoPoint->Highlight = true;
 			continue;
 		}
 	}
+}
 
-	// FIXME: some of this should happen during mouse events
-	Door *d;
-	for (size_t idx = 0; (d = area->TMap->GetDoor(idx)); idx++) {
-		d->Highlight = false;
-		if (d->Flags & DOOR_HIDDEN) {
+// FIXME: some of this should happen during mouse events
+void GameControl::OutlineDoors() const
+{
+	const Game* game = core->GetGame();
+	const Map* area = game->GetCurrentArea();
+
+	Door* door;
+	for (size_t idx = 0; (door = area->TMap->GetDoor(idx)); idx++) {
+		door->Highlight = false;
+		if (door->Flags & DOOR_HIDDEN) {
 			continue;
 		}
 
-		if (d->Flags & DOOR_SECRET) {
-			if (d->Flags & DOOR_FOUND) {
-				d->Highlight = true;
-				d->outlineColor = displaymsg->GetColor(GUIColors::HIDDENDOOR);
+		if (door->Flags & DOOR_SECRET) {
+			if (door->Flags & DOOR_FOUND) {
+				door->Highlight = true;
+				door->outlineColor = displaymsg->GetColor(GUIColors::HIDDENDOOR);
 			} else {
 				continue;
 			}
 		}
 
-		if (overMe == d) {
-			d->Highlight = true;
-			if (target_mode) {
-				if (d->Visible() && (d->VisibleTrap(0) || (d->Flags & DOOR_LOCKED))) {
-					// only highlight targettable doors
-					d->outlineColor = ColorGreen;
-				}
-			} else if (!(d->Flags & DOOR_SECRET)) {
-				// mouse over, not in target mode, no secret door
-				d->outlineColor = ColorCyan;
-			}
-		}
-
 		// traps always take precedence
-		if (d->VisibleTrap(0)) {
-			d->Highlight = true;
-			d->outlineColor = ColorRed;
-		}
-	}
-
-	// FIXME: some of this should happen during mouse events
-	Container *c;
-	for (size_t idx = 0; (c = area->TMap->GetContainer(idx)); ++idx) {
-		c->Highlight = false;
-		if (c->Flags & CONT_DISABLED) {
+		if (door->VisibleTrap(0)) {
+			door->Highlight = true;
+			door->outlineColor = displaymsg->GetColor(GUIColors::TRAPCOLOR);
 			continue;
 		}
 
-		if (overMe == c) {
-			c->Highlight = true;
-			if (target_mode) {
-				if (c->Flags & CONT_LOCKED) {
-					c->outlineColor = ColorGreen;
-				}
-			} else {
-				c->outlineColor = displaymsg->GetColor(GUIColors::HOVERCONTAINER);
+		if (overMe != door) continue;
+
+		door->Highlight = true;
+		if (targetMode != TargetMode::None) {
+			if (door->Visible() && (door->Flags & DOOR_LOCKED)) {
+				// only highlight targetable doors
+				door->outlineColor = displaymsg->GetColor(GUIColors::HOVERTARGETABLE);
+			}
+		} else if (!(door->Flags & DOOR_SECRET)) {
+			// mouse over, not in target mode, no secret door
+			door->outlineColor = displaymsg->GetColor(GUIColors::HOVERDOOR);
+		}
+	}
+}
+
+// FIXME: some of this should happen during mouse events
+void GameControl::OutlineContainers() const
+{
+	const Game* game = core->GetGame();
+	const Map* area = game->GetCurrentArea();
+
+	Container* container;
+	for (size_t idx = 0; (container = area->TMap->GetContainer(idx)); ++idx) {
+		container->Highlight = false;
+		if (container->Flags & CONT_DISABLED) {
+			continue;
+		}
+
+		if (overMe == container) {
+			container->Highlight = true;
+			if (targetMode == TargetMode::None) {
+				container->outlineColor = displaymsg->GetColor(GUIColors::HOVERCONTAINER);
+			} else if (container->Flags & CONT_LOCKED) {
+				container->outlineColor = displaymsg->GetColor(GUIColors::HOVERTARGETABLE);
 			}
 		}
 
 		// traps always take precedence
-		if (c->VisibleTrap(0)) {
-			c->Highlight = true;
-			c->outlineColor = ColorRed; // traps
+		if (container->VisibleTrap(0)) {
+			container->Highlight = true;
+			container->outlineColor = displaymsg->GetColor(GUIColors::TRAPCOLOR);
 		}
 	}
+}
+
+void GameControl::DrawTrackingArrows()
+{
+	if (!trackerID) return;
+
+	const Game* game = core->GetGame();
+	Map* area = game->GetCurrentArea();
+	const Actor* actor = area->GetActorByGlobalID(trackerID);
+	if (actor) {
+		std::vector<Actor*> monsters = area->GetAllActorsInRadius(actor->Pos, GA_NO_DEAD | GA_NO_LOS | GA_NO_UNSCHEDULED, distance);
+		for (const auto& monster : monsters) {
+			if (monster->IsPartyMember()) continue;
+			if (monster->GetStat(IE_NOTRACKING)) continue;
+			DrawArrowMarker(monster->Pos, ColorBlack);
+		}
+	} else {
+		trackerID = 0;
+	}
+}
+
+/** Draws the Control on the Output Display */
+void GameControl::DrawSelf(const Region& screen, const Region& /*clip*/)
+{
+	const Game* game = core->GetGame();
+	Map* area = game->GetCurrentArea();
+	if (!area) return;
+
+	OutlineInfoPoints();
+	OutlineDoors();
+	OutlineContainers();
 
 	uint32_t tmpflags = DebugFlags;
 	if (EventMgr::ModState(GEM_MOD_ALT)) {
@@ -551,20 +592,7 @@ void GameControl::DrawSelf(const Region& screen, const Region& /*clip*/)
 	//drawmap should be here so it updates fog of war
 	area->DrawMap(Viewport(), core->GetFogRenderer(), tmpflags);
 
-	if (trackerID) {
-		const Actor *actor = area->GetActorByGlobalID(trackerID);
-
-		if (actor) {
-			std::vector<Actor*> monsters = area->GetAllActorsInRadius(actor->Pos, GA_NO_DEAD|GA_NO_LOS|GA_NO_UNSCHEDULED, distance);
-			for (const auto& monster : monsters) {
-				if (monster->IsPartyMember()) continue;
-				if (monster->GetStat(IE_NOTRACKING)) continue;
-				DrawArrowMarker(monster->Pos, ColorBlack);
-			}
-		} else {
-			trackerID = 0;
-		}
-	}
+	DrawTrackingArrows();
 
 	if (lastActorID) {
 		const Actor* actor = GetLastActor();
@@ -655,7 +683,8 @@ bool GameControl::DispatchEvent(const Event& event) const
 /** Key Press Event */
 bool GameControl::OnKeyPress(const KeyboardEvent& Key, unsigned short mod)
 {
-	unsigned int i, pc;
+	int i;
+	int pc;
 	Game* game = core->GetGame();
 
 	KeyboardKey keycode = Key.keycode;
@@ -667,69 +696,70 @@ bool GameControl::OnKeyPress(const KeyboardEvent& Key, unsigned short mod)
 			game->SendHotKey(towupper(Key.character));
 			return View::OnKeyPress(Key, mod);
 		}
-	} else {
-			switch (keycode) {
-				case GEM_UP:
-				case GEM_DOWN:
-				case GEM_LEFT:
-				case GEM_RIGHT:
-					{
-						ieDword keyScrollSpd = core->GetVariable("Keyboard Scroll Speed", 64);
+		return true;
+	}
 
-						if (keycode >= GEM_UP) {
-							int v = (keycode == GEM_UP) ? -1 : 1;
-							Scroll( Point(0, keyScrollSpd * v) );
-						} else {
-							int v = (keycode == GEM_LEFT) ? -1 : 1;
-							Scroll( Point(keyScrollSpd * v, 0) );
-						}
-					}
-					break;
-				case GEM_TAB: // show partymember hp/maxhp as overhead text
-				// fallthrough
-				case GEM_ESCAPE: // redraw actionbar
-					// do nothing; these are handled in DispatchEvent due to tab having two functions
-					break;
-				case '0':
-					game->SelectActor( NULL, false, SELECT_NORMAL );
-					i = game->GetPartySize(false)/2+1;
-					while(i--) {
-						SelectActor(i, true);
-					}
-					break;
-				case '-':
-					game->SelectActor( NULL, true, SELECT_NORMAL );
-					i = game->GetPartySize(false)/2+1;
-					while(i--) {
-						SelectActor(i, false);
-					}
-					break;
-				case '=':
-					SelectActor(-1);
-					break;
-				case '7': // 1 & 2
-				case '8': // 3 & 4
-				case '9': // 5 & 6
-					// We do not handle the range 1..6, these are handled as hotkeys
-					// for the portrait buttons, so that they remain working when the
-					// inventory screen is open.
-					game->SelectActor( NULL, false, SELECT_NORMAL );
-					i = game->GetPartySize(false);
-					pc = 2*(keycode - '6')-1;
-					if (pc >= i) {
-						SelectActor(i, true);
-						break;
-					}
-					SelectActor(pc, true);
-					SelectActor(pc+1, true);
-					break;
-				default:
-					if (!core->GetKeyMap()->ResolveKey(Key.keycode, 0)) {
-						game->SendHotKey(towupper(Key.character));
-						return View::OnKeyPress(Key, 0);
-					}
-					break;
+	switch (keycode) {
+		case GEM_UP:
+		case GEM_DOWN:
+		case GEM_LEFT:
+		case GEM_RIGHT:
+			{
+				ieDword keyScrollSpd = core->GetDictionary().Get("Keyboard Scroll Speed", 64);
+
+				if (keycode >= GEM_UP) {
+					int v = (keycode == GEM_UP) ? -1 : 1;
+					Scroll(Point(0, keyScrollSpd * v));
+				} else {
+					int v = (keycode == GEM_LEFT) ? -1 : 1;
+					Scroll(Point(keyScrollSpd * v, 0));
+				}
 			}
+			break;
+		case GEM_TAB: // show partymember hp/maxhp as overhead text
+		// fallthrough
+		case GEM_ESCAPE: // redraw actionbar
+			// do nothing; these are handled in DispatchEvent due to tab having two functions
+			break;
+		case '0':
+			game->SelectActor(nullptr, false, SELECT_NORMAL);
+			i = game->GetPartySize(false) / 2 + 1;
+			while (i--) {
+				SelectActor(i, true);
+			}
+			break;
+		case '-':
+			game->SelectActor(nullptr, true, SELECT_NORMAL);
+			i = game->GetPartySize(false) / 2 + 1;
+			while (i--) {
+				SelectActor(i, false);
+			}
+			break;
+		case '=':
+			SelectActor(-1);
+			break;
+		case '7': // 1 & 2
+		case '8': // 3 & 4
+		case '9': // 5 & 6
+			// We do not handle the range 1..6, these are handled as hotkeys
+			// for the portrait buttons, so that they remain working when the
+			// inventory screen is open.
+			game->SelectActor(nullptr, false, SELECT_NORMAL);
+			i = game->GetPartySize(false);
+			pc = 2 * (keycode - '6') - 1;
+			if (pc >= i) {
+				SelectActor(i, true);
+				break;
+			}
+			SelectActor(pc, true);
+			SelectActor(pc + 1, true);
+			break;
+		default:
+			if (!core->GetKeyMap()->ResolveKey(Key.keycode, 0)) {
+				game->SendHotKey(towupper(Key.character));
+				return View::OnKeyPress(Key, 0);
+			}
+			break;
 	}
 	return true;
 }
@@ -759,10 +789,49 @@ void GameControl::SelectActor(int whom, int type)
 
 	bool was_selected = actor->IsSelected();
 	if (game->SelectActor( actor, true, SELECT_REPLACE )) {
-		if (was_selected || (ScreenFlags & SF_ALWAYSCENTER)) {
-			ScreenFlags |= SF_CENTERONACTOR;
+		if (was_selected || screenFlags.Test(ScreenFlags::AlwaysCenter)) {
+			screenFlags.Set(ScreenFlags::CenterOnActor);
 		}
 	}
+}
+
+void GameControl::DumpActorInfo(ActorDump dump, const Map* area) const noexcept
+{
+	const Point gameMousePos = GameMousePos();
+	const Actor* act = area->GetActorByGlobalID(lastActorID);
+	if (!act) {
+		act = area->GetActor(gameMousePos, GA_DEFAULT);
+	}
+	if (!act) {
+		// ValidTarget never returns immobile targets, making debugging a nightmare
+		// so if we don't have an actor, we make really really sure by checking manually
+		unsigned int count = area->GetActorCount(true);
+		while (count--) {
+			const Actor *actor = area->GetActor(count, true);
+			if (actor->IsOver(gameMousePos)) {
+				act = actor;
+				break;
+			}
+		}
+	}
+
+	if (act) {
+		if (dump == ActorDump::Stats) {
+			fmt::println("{}", act->dump());
+		} else if (dump == ActorDump::Anims) {
+			constexpr int width = 10;
+			const CharAnimations* anims = act->GetAnims();
+			fmt::println("{1:<{0}}: {2:#x}", width, "Anim ID", anims->GetAnimationID());
+			fmt::println("{1:<{0}}: {2}", width, "BloodColor", anims->GetBloodColor());
+			fmt::println("{1:<{0}}: {2:#x}", width, "Flags", anims->GetFlags());
+		}
+	}
+}
+
+template <typename CONTAIN>
+static void PrintCollection(const char* name, const CONTAIN& container)
+{
+	fmt::println("{} ({}):\n{}", name, container.size(), fmt::join(container, "\n"));
 }
 
 //Effect for the ctrl-r cheatkey (resurrect)
@@ -803,7 +872,7 @@ bool GameControl::OnKeyRelease(const KeyboardEvent& Key, unsigned short Mod)
 					if (target) {
 						src->SetSpellResRef(TestSpell);
 						src->CastSpell(target, false);
-						if (src->LastSpellTarget) {
+						if (src->objects.LastSpellTarget) {
 							src->CastSpellEnd(0, false);
 						} else {
 							src->CastSpellPointEnd(0, false);
@@ -822,7 +891,7 @@ bool GameControl::OnKeyRelease(const KeyboardEvent& Key, unsigned short Mod)
 				break;
 			// f
 			case 'g'://shows loaded areas and other game information
-				Log(DEBUG, "Game", "{}", game->dump());
+				fmt::println("{}", game->dump());
 				break;
 			// h
 			case 'i'://interact trigger (from the original game)
@@ -850,7 +919,7 @@ bool GameControl::OnKeyRelease(const KeyboardEvent& Key, unsigned short Mod)
 			case 'k': //kicks out actor
 				if (lastActor && lastActor->InParty) {
 					lastActor->Stop();
-					lastActor->AddAction( GenerateAction("LeaveParty()") );
+					lastActor->AddAction("LeaveParty()");
 				}
 				break;
 			case 'l': //play an animation (vvc/bam) over an actor
@@ -860,62 +929,28 @@ bool GameControl::OnKeyRelease(const KeyboardEvent& Key, unsigned short Mod)
 				}
 				break;
 			case 'M':
-				if (!lastActor) {
-					lastActor = area->GetActor( gameMousePos, GA_DEFAULT);
-				}
-				if (!lastActor) {
-					// ValidTarget never returns immobile targets, making debugging a nightmare
-					// so if we don't have an actor, we make really really sure by checking manually
-					unsigned int count = area->GetActorCount(true);
-					while (count--) {
-						const Actor *actor = area->GetActor(count, true);
-						if (actor->IsOver(gameMousePos)) {
-							actor->GetAnims()->DebugDump();
-						}
-					}
-				}
-				if (lastActor) {
-					lastActor->GetAnims()->DebugDump();
-					break;
-				}
+				DumpActorInfo(ActorDump::Anims, area);
 				break;
 			case 'm': //prints a debug dump (ctrl-m in the original game too)
-				if (!lastActor) {
-					lastActor = area->GetActor( gameMousePos, GA_DEFAULT);
-				}
-				if (!lastActor) {
-					// ValidTarget never returns immobile targets, making debugging a nightmare
-					// so if we don't have an actor, we make really really sure by checking manually
-					unsigned int count = area->GetActorCount(true);
-					while (count--) {
-						const Actor *actor = area->GetActor(count, true);
-						if (actor->IsOver(gameMousePos)) {
-							actor->dump();
-						}
-					}
-				}
-				if (lastActor) {
-					lastActor->dump();
-					break;
-				}
 				if (overMe && overMe->Type != ST_ACTOR) {
-					overMe->dump();
-					break;
+					fmt::println("{}", overMe->dump());
+				} else {
+					DumpActorInfo(ActorDump::Stats, area);
 				}
-				core->GetGame()->GetCurrentArea()->dump(false);
+				game->GetCurrentArea()->dump(false);
 				break;
 			case 'n': //prints a list of all the live actors in the area
-				core->GetGame()->GetCurrentArea()->dump(true);
+				game->GetCurrentArea()->dump(true);
 				break;
 			// o
 			case 'p': //center on actor
-				ScreenFlags|=SF_CENTERONACTOR;
-				ScreenFlags^=SF_ALWAYSCENTER;
+				screenFlags.Flip(ScreenFlags::CenterOnActor);
+				screenFlags.Flip(ScreenFlags::AlwaysCenter);
 				break;
 			case 'q': //joins actor to the party
 				if (lastActor && !lastActor->InParty) {
 					lastActor->Stop();
-					lastActor->AddAction( GenerateAction("JoinParty()") );
+					lastActor->AddAction("JoinParty()");
 				}
 				break;
 			case 'r'://resurrects actor
@@ -939,13 +974,13 @@ bool GameControl::OnKeyRelease(const KeyboardEvent& Key, unsigned short Mod)
 				//refresh gui here once we got it
 				break;
 			case 'u': // dump GameScript GLOBAL vars
-				core->GetGame()->DumpLocals();
+				PrintCollection("locals", core->GetGame()->locals);
 				break;
 			case 'U': // dump death vars
-				core->GetGame()->DumpKaputz();
+				PrintCollection("kaputz", core->GetGame()->kaputz);
 				break;
 			case 'V': // dump GemRB vars like the game ini settings
-				core->DumpVariables();
+				PrintCollection("variables", core->GetDictionary());
 				break;
 			case 'v': //marks some of the map visited (random vision distance)
 				area->ExploreMapChunk( gameMousePos, RAND(0,29), 1 );
@@ -954,7 +989,7 @@ bool GameControl::OnKeyRelease(const KeyboardEvent& Key, unsigned short Mod)
 				area->MoveVisibleGroundPiles(gameMousePos);
 				break;
 			case 'x': // shows coordinates on the map
-				Log(MESSAGE, "GameControl", "Position: {} [{}.{}]", area->GetScriptName(), gameMousePos.x, gameMousePos.y);
+				fmt::println("{}: {}", area->GetScriptName(), gameMousePos);
 				break;
 			case 'Y': // damages all enemies by 300 (resistances apply)
 				// mwahaha!
@@ -1158,21 +1193,23 @@ String GameControl::TooltipText() const {
 Holder<Sprite2D> GameControl::GetTargetActionCursor() const
 {
 	int curIdx = -1;
-	switch(target_mode) {
-		case TARGET_MODE_TALK:
+	switch (targetMode) {
+		case TargetMode::Talk:
 			curIdx = IE_CURSOR_TALK;
 			break;
-		case TARGET_MODE_ATTACK:
+		case TargetMode::Attack:
 			curIdx = IE_CURSOR_ATTACK;
 			break;
-		case TARGET_MODE_CAST:
+		case TargetMode::Cast:
 			curIdx = IE_CURSOR_CAST;
 			break;
-		case TARGET_MODE_DEFEND:
+		case TargetMode::Defend:
 			curIdx = IE_CURSOR_DEFEND;
 			break;
-		case TARGET_MODE_PICK:
+		case TargetMode::Pick:
 			curIdx = IE_CURSOR_PICK;
+			break;
+		default:
 			break;
 	}
 	if (curIdx != -1) {
@@ -1216,10 +1253,8 @@ bool GameControl::OnMouseOver(const MouseEvent& /*me*/)
 		}
 	}
 
-	if ((target_types & GA_NO_SELF) && lastActor ) {
-		if (lastActor == core->GetFirstSelectedActor()) {
-			lastActor=NULL;
-		}
+	if ((target_types & GA_NO_SELF) && lastActor == core->GetFirstSelectedActor()) {
+		lastActor = nullptr;
 	}
 
 	if (lastActor && lastActor->GetStat(IE_NOCIRCLE)) {
@@ -1260,7 +1295,7 @@ void GameControl::UpdateCursor()
 	// ignore infopoints and containers beneath doors
 	if (overDoor) {
 		if (overDoor->Visible()) {
-			nextCursor = overDoor->GetCursor(target_mode, lastCursor);
+			nextCursor = overDoor->GetCursor(targetMode, lastCursor);
 		} else {
 			overMe = nullptr;
 		}
@@ -1268,7 +1303,7 @@ void GameControl::UpdateCursor()
 		InfoPoint* overInfoPoint = area->TMap->GetInfoPoint(gameMousePos, false);
 		overMe = overInfoPoint;
 		if (overInfoPoint) {
-			nextCursor = overInfoPoint->GetCursor(target_mode);
+			nextCursor = overInfoPoint->GetCursor(targetMode);
 		}
 		// recheck in case the position was different, resulting in a new isVisible check
 		if (nextCursor == IE_CURSOR_INVALID) {
@@ -1288,7 +1323,7 @@ void GameControl::UpdateCursor()
 	}
 
 	if (overContainer) {
-		nextCursor = overContainer->GetCursor(target_mode, lastCursor);
+		nextCursor = overContainer->GetCursor(targetMode, lastCursor);
 	}
 	// recheck in case the position was different, resulting in a new isVisible check
 	// fixes bg2 long block door in ar0801 above vamp beds, crashing on mouseover (too big)
@@ -1318,7 +1353,7 @@ void GameControl::UpdateCursor()
 		}
 	}
 
-	if (target_mode == TARGET_MODE_TALK) {
+	if (targetMode == TargetMode::Talk) {
 		nextCursor = IE_CURSOR_TALK;
 		if (!lastActor) {
 			nextCursor |= IE_CURSOR_GRAY;
@@ -1329,23 +1364,26 @@ void GameControl::UpdateCursor()
 				nextCursor |= IE_CURSOR_GRAY;
 			}
 		}
-	} else if (target_mode == TARGET_MODE_ATTACK) {
+	} else if (targetMode == TargetMode::Attack) {
 		nextCursor = IE_CURSOR_ATTACK;
 		if (!lastActor && (!overMe || overMe->Type <= ST_TRIGGER)) {
 			nextCursor |= IE_CURSOR_GRAY;
 		}
-	} else if (target_mode == TARGET_MODE_CAST) {
+	} else if (targetMode == TargetMode::Cast) {
 		nextCursor = IE_CURSOR_CAST;
-		//point is always valid
-		if (!(target_types & GA_POINT) && !lastActor) {
+		// point is always valid if accessible
+		// knock ignores that
+		bool blocked = bool(area->GetBlocked(gameMousePos) & (PathMapFlags::PASSABLE | PathMapFlags::TRAVEL | PathMapFlags::ACTOR));
+		bool ignoreSM = gamedata->GetSpecialSpell(spellName) & SPEC_AREA;
+		if (!ignoreSM && (!blocked || (!(target_types & GA_POINT) && !lastActor))) {
 			nextCursor |= IE_CURSOR_GRAY;
 		}
-	} else if (target_mode == TARGET_MODE_DEFEND) {
+	} else if (targetMode == TargetMode::Defend) {
 		nextCursor = IE_CURSOR_DEFEND;
 		if(!lastActor) {
 			nextCursor |= IE_CURSOR_GRAY;
 		}
-	} else if (target_mode == TARGET_MODE_PICK) {
+	} else if (targetMode == TargetMode::Pick) {
 		if (lastActor) {
 			nextCursor = IE_CURSOR_PICK;
 		} else if (!overMe) {
@@ -1407,7 +1445,7 @@ bool GameControl::OnMouseDrag(const MouseEvent& me)
 		return true;
 	}
 
-	if (target_mode != TARGET_MODE_NONE) {
+	if (targetMode != TargetMode::None) {
 		// we are in a target mode; nothing here applies
 		return true;
 	}
@@ -1459,7 +1497,7 @@ bool GameControl::OnTouchUp(const TouchEvent& te, unsigned short mod)
 bool GameControl::OnTouchGesture(const GestureEvent& gesture)
 {
 	if (gesture.numFingers == 1) {
-		if (target_mode != TARGET_MODE_NONE) {
+		if (targetMode != TargetMode::None) {
 			// we are in a target mode; nothing here applies
 			return true;
 		}
@@ -1658,7 +1696,7 @@ void GameControl::TryToAttack(Actor *source, const Actor *tgt) const
 //generate action code for source actor to try to defend a target
 void GameControl::TryToDefend(Actor *source, const Actor *tgt) const
 {
-	source->SetModal(MS_NONE);
+	source->SetModal(Modal::None);
 	source->CommandActor(GenerateActionDirect( "NIDSpecial4()", tgt));
 }
 
@@ -1667,7 +1705,7 @@ void GameControl::TryToDefend(Actor *source, const Actor *tgt) const
 // The -1 flag is a placeholder for dynamic target IDs
 void GameControl::TryToPick(Actor *source, const Scriptable *tgt) const
 {
-	source->SetModal(MS_NONE);
+	source->SetModal(Modal::None);
 	std::string cmdString;
 	cmdString.reserve(20);
 	switch (tgt->Type) {
@@ -1683,7 +1721,7 @@ void GameControl::TryToPick(Actor *source, const Scriptable *tgt) const
 			}
 			break;
 		default:
-			Log(ERROR, "GameControl", "Invalid pick target of type {}", fmt::underlying(tgt->Type));
+			Log(ERROR, "GameControl", "Invalid pick target of type {}", tgt->Type);
 			return;
 	}
 	source->CommandActor(GenerateActionDirect(std::move(cmdString), tgt));
@@ -1694,7 +1732,7 @@ void GameControl::TryToDisarm(Actor *source, const InfoPoint *tgt) const
 {
 	if (tgt->Type!=ST_PROXIMITY) return;
 
-	source->SetModal(MS_NONE);
+	source->SetModal(Modal::None);
 	source->CommandActor(GenerateActionDirect( "RemoveTraps([-1])", tgt ));
 }
 
@@ -1832,8 +1870,8 @@ void GameControl::TryToTalk(Actor *source, const Actor *tgt) const
 	//Nidspecial1 is just an unused action existing in all games
 	//(non interactive demo)
 	//i found no fitting action which would emulate this kind of
-	//dialog initation
-	source->SetModal(MS_NONE);
+	// dialog initiation
+	source->SetModal(Modal::None);
 	dialoghandler->SetTarget(tgt); //this is a hack, but not so deadly
 	source->CommandActor(GenerateActionDirect( "NIDSpecial1()", tgt));
 }
@@ -1847,7 +1885,7 @@ void GameControl::HandleContainer(Container *container, Actor *actor)
 		return;
 	}
 
-	if ((target_mode == TARGET_MODE_CAST) && spellCount) {
+	if ((targetMode == TargetMode::Cast) && spellCount) {
 		//we'll get the container back from the coordinates
 		TryToCast(actor, container->Pos);
 		//Do not reset target_mode, TryToCast does it for us!!
@@ -1856,14 +1894,20 @@ void GameControl::HandleContainer(Container *container, Actor *actor)
 
 	core->SetEventFlag(EF_RESETTARGET);
 
-	if (target_mode == TARGET_MODE_ATTACK) {
+	if (targetMode == TargetMode::Attack) {
 		std::string Tmp = fmt::format("BashDoor(\"{}\")", container->GetScriptName());
 		actor->CommandActor(GenerateAction(std::move(Tmp)));
 		return;
 	}
 
-	if (target_mode == TARGET_MODE_PICK) {
+	if (targetMode == TargetMode::Pick) {
 		TryToPick(actor, container);
+		return;
+	}
+
+	// familiars can not pick up items
+	if (actor->GetBase(IE_EA) == EA_FAMILIAR) {
+		displaymsg->DisplayConstantString(HCStrings::FamiliarNoHands, GUIColors::WHITE, actor);
 		return;
 	}
 
@@ -1876,7 +1920,7 @@ void GameControl::HandleContainer(Container *container, Actor *actor)
 void GameControl::HandleDoor(Door *door, Actor *actor)
 {
 	if (actor->GetStat(IE_SEX) == SEX_ILLUSION) return;
-	if ((target_mode == TARGET_MODE_CAST) && spellCount) {
+	if ((targetMode == TargetMode::Cast) && spellCount) {
 		//we'll get the door back from the coordinates
 		const Point *p = door->toOpen;
 		const Point *otherp = door->toOpen+1;
@@ -1889,13 +1933,13 @@ void GameControl::HandleDoor(Door *door, Actor *actor)
 
 	core->SetEventFlag(EF_RESETTARGET);
 
-	if (target_mode == TARGET_MODE_ATTACK) {
+	if (targetMode == TargetMode::Attack) {
 		std::string Tmp = fmt::format("BashDoor(\"{}\")", door->GetScriptName());
 		actor->CommandActor(GenerateAction(std::move(Tmp)));
 		return;
 	}
 
-	if (target_mode == TARGET_MODE_PICK) {
+	if (targetMode == TargetMode::Pick) {
 		TryToPick(actor, door);
 		return;
 	}
@@ -1910,13 +1954,13 @@ void GameControl::HandleDoor(Door *door, Actor *actor)
 bool GameControl::HandleActiveRegion(InfoPoint *trap, Actor * actor, const Point& p)
 {
 	if (actor->GetStat(IE_SEX) == SEX_ILLUSION) return false;
-	if ((target_mode == TARGET_MODE_CAST) && spellCount) {
+	if ((targetMode == TargetMode::Cast) && spellCount) {
 		//we'll get the active region from the coordinates (if needed)
 		TryToCast(actor, p);
 		//don't bother with this region further
 		return true;
 	}
-	if (target_mode == TARGET_MODE_PICK) {
+	if (targetMode == TargetMode::Pick) {
 		TryToDisarm(actor, trap);
 		return true;
 	}
@@ -1924,14 +1968,14 @@ bool GameControl::HandleActiveRegion(InfoPoint *trap, Actor * actor, const Point
 	switch(trap->Type) {
 		case ST_TRAVEL:
 			trap->AddTrigger(TriggerEntry(trigger_clicked, actor->GetGlobalID()));
-			actor->LastMarked = trap->GetGlobalID();
+			actor->objects.LastMarked = trap->GetGlobalID();
 			//clear the go closer flag
 			trap->GetCurrentArea()->LastGoCloser = 0;
 			return false;
 		case ST_TRIGGER:
 			// pst, eg. ar1500
 			if (!trap->GetDialog().IsEmpty()) {
-				trap->AddAction(GenerateAction("Dialogue([PC])"));
+				trap->AddAction("Dialogue([PC])");
 				return true;
 			}
 
@@ -1947,7 +1991,7 @@ bool GameControl::HandleActiveRegion(InfoPoint *trap, Actor * actor, const Point
 			if (trap->Scripts[0]) {
 				if (!(trap->Flags & TRAP_DEACTIVATED) && !(GetDialogueFlags() & DF_FREEZE_SCRIPTS)) {
 					trap->AddTrigger(TriggerEntry(trigger_clicked, actor->GetGlobalID()));
-					actor->LastMarked = trap->GetGlobalID();
+					actor->objects.LastMarked = trap->GetGlobalID();
 					//directly feeding the event, even if there are actions in the queue
 					//trap->Scripts[0]->Update();
 					// FIXME
@@ -2088,19 +2132,19 @@ bool GameControl::OnMouseUp(const MouseEvent& me, unsigned short Mod)
 	bool isDoubleClick = me.repeats == 2;
 	bool tryToRun = isDoubleClick;
 	if (core->HasFeature(GFFlags::HAS_FLOAT_MENU)) {
-		tryToRun |= Mod & GEM_MOD_SHIFT;
+		tryToRun = tryToRun || (Mod & GEM_MOD_SHIFT);
 	}
 
 	// right click
 	if (me.button == GEM_MB_MENU) {
-		ieDword actionLevel = core->GetVariable("ActionLevel", 0);
+		ieDword actionLevel = core->GetDictionary().Get("ActionLevel", 0);
 
-		if (target_mode != TARGET_MODE_NONE || actionLevel) {
+		if (targetMode != TargetMode::None || actionLevel) {
 			if (!core->HasFeature(GFFlags::HAS_FLOAT_MENU)) {
-				SetTargetMode(TARGET_MODE_NONE);
+				SetTargetMode(TargetMode::None);
 			}
 			// update the action bar
-			core->GetDictionary()["ActionLevel"] = 0;
+			core->GetDictionary().Set("ActionLevel", 0);
 			core->SetEventFlag(EF_ACTION);
 			ClearMouseState();
 			return true;
@@ -2116,28 +2160,28 @@ bool GameControl::OnMouseUp(const MouseEvent& me, unsigned short Mod)
 			MoveViewportTo(p, true);
 
 		// handle actions
-		if (target_mode == TARGET_MODE_NONE && lastActorID) {
+		if (targetMode == TargetMode::None && lastActorID) {
 			switch (lastCursor & ~IE_CURSOR_GRAY) {
 				case IE_CURSOR_TALK:
-					SetTargetMode(TARGET_MODE_TALK);
+					SetTargetMode(TargetMode::Talk);
 					break;
 				case IE_CURSOR_ATTACK:
-					SetTargetMode(TARGET_MODE_ATTACK);
+					SetTargetMode(TargetMode::Attack);
 					break;
 				case IE_CURSOR_CAST:
-					SetTargetMode(TARGET_MODE_CAST);
+					SetTargetMode(TargetMode::Cast);
 					break;
 				case IE_CURSOR_DEFEND:
-					SetTargetMode(TARGET_MODE_DEFEND);
+					SetTargetMode(TargetMode::Defend);
 					break;
 				case IE_CURSOR_PICK:
-					SetTargetMode(TARGET_MODE_PICK);
+					SetTargetMode(TargetMode::Pick);
 					break;
 				default: break;
 			}
 		}
 
-		if (target_mode == TARGET_MODE_NONE && (isSelectionRect || lastActorID)) {
+		if (targetMode == TargetMode::None && (isSelectionRect || lastActorID)) {
 			MakeSelection(Mod & GEM_MOD_SHIFT);
 			ClearMouseState();
 			return true;
@@ -2147,8 +2191,8 @@ bool GameControl::OnMouseUp(const MouseEvent& me, unsigned short Mod)
 			// don't allow travel if the destination is actually blocked
 			return false;
 		}
-		
-		if (overMe && (overMe->Type == ST_DOOR || overMe->Type == ST_CONTAINER || (overMe->Type == ST_TRAVEL && target_mode == TARGET_MODE_NONE))) {
+
+		if (overMe && (overMe->Type == ST_DOOR || overMe->Type == ST_CONTAINER || (overMe->Type == ST_TRAVEL && targetMode == TargetMode::None))) {
 			// move to the object before trying to interact with it
 			Actor* mainActor = GetMainSelectedActor();
 			if (mainActor && overMe->Type == ST_CONTAINER) {
@@ -2157,8 +2201,8 @@ bool GameControl::OnMouseUp(const MouseEvent& me, unsigned short Mod)
 				CommandSelectedMovement(p, true, false, tryToRun);
 			}
 		}
-		
-		if (target_mode != TARGET_MODE_NONE || (overMe && overMe->Type != ST_ACTOR)) {
+
+		if (targetMode != TargetMode::None || (overMe && overMe->Type != ST_ACTOR)) {
 			PerformSelectedAction(p);
 			ClearMouseState();
 			return true;
@@ -2170,7 +2214,9 @@ bool GameControl::OnMouseUp(const MouseEvent& me, unsigned short Mod)
 	}
 
 	// handle movement/travel, but not if we just opened the float window
-	if ((!core->HasFeature(GFFlags::HAS_FLOAT_MENU) || me.button != GEM_MB_MENU) && lastCursor != IE_CURSOR_BLOCKED && lastCursor != IE_CURSOR_NORMAL) {
+	// or if it doesn't make sense due to the location
+	bool saneCursor = lastCursor != IE_CURSOR_BLOCKED && lastCursor != IE_CURSOR_NORMAL && lastCursor != IE_CURSOR_TALK;
+	if ((!core->HasFeature(GFFlags::HAS_FLOAT_MENU) || me.button != GEM_MB_MENU) && saneCursor) {
 		// pst has different mod keys
 		int modKey = GEM_MOD_SHIFT;
 		if (core->HasFeature(GFFlags::HAS_FLOAT_MENU)) modKey = GEM_MOD_CTRL;
@@ -2196,7 +2242,7 @@ void GameControl::PerformSelectedAction(const Point& p)
 	}
 
 	//add a check if you don't want some random monster handle doors and such
-	if (target_mode == TARGET_MODE_CAST) {
+	if (targetMode == TargetMode::Cast && !(gamedata->GetSpecialSpell(spellName) & SPEC_AREA)) {
 		//the player is using an item or spell on the ground
 		TryToCast(selectedActor, p);
 	} else if (!overMe) {
@@ -2205,7 +2251,7 @@ void GameControl::PerformSelectedAction(const Point& p)
 		HandleDoor(Scriptable::As<Door>(overMe), selectedActor);
 	} else if (overMe->Type == ST_CONTAINER) {
 		HandleContainer(Scriptable::As<Container>(overMe), selectedActor);
-	} else if (overMe->Type == ST_TRAVEL && target_mode == TARGET_MODE_NONE) {
+	} else if (overMe->Type == ST_TRAVEL && targetMode == TargetMode::None) {
 		ieDword exitID = overMe->GetGlobalID();
 		if (core->HasFeature(GFFlags::TEAM_MOVEMENT)) {
 			// pst forces everyone to travel (eg. ar0201 outside_portal)
@@ -2278,7 +2324,7 @@ void GameControl::CommandSelectedMovement(const Point& p, bool formation, bool a
 
 	// p is a searchmap travel region or a plain travel region in pst (matching several other criteria)
 	if (party[0]->GetCurrentArea()->GetCursor(p) == IE_CURSOR_TRAVEL || doWorldMap) {
-		party[0]->AddAction(GenerateAction("NIDSpecial2()"));
+		party[0]->AddAction("NIDSpecial2()");
 	}
 }
 bool GameControl::OnMouseWheelScroll(const Point& delta)
@@ -2311,6 +2357,28 @@ void GameControl::Scroll(const Point& amt)
 	MoveViewportTo(vpOrigin + amt, false);
 }
 
+// only party members and familiars can start conversations from the GUI
+static Actor* GetTalkInitiator()
+{
+	const Game* game = core->GetGame();
+	Actor* source;
+	if (core->HasFeature(GFFlags::PROTAGONIST_TALKS)) {
+		source = game->GetPC(0, false); // protagonist
+	} else {
+		source = core->GetFirstSelectedPC(false);
+		if (!source) {
+			// check also for familiars
+			for (auto& npc : game->selected) {
+				if (npc->GetBase(IE_EA) == EA_FAMILIAR) {
+					source = npc;
+					break;
+				}
+			}
+		}
+	}
+	return source;
+}
+
 void GameControl::PerformActionOn(Actor *actor)
 {
 	const Game* game = core->GetGame();
@@ -2325,15 +2393,15 @@ void GameControl::PerformActionOn(Actor *actor)
 		type = ACT_NONE; //party
 	}
 
-	if (target_mode == TARGET_MODE_ATTACK) {
+	if (targetMode == TargetMode::Attack) {
 		type = ACT_ATTACK;
-	} else if (target_mode == TARGET_MODE_TALK) {
+	} else if (targetMode == TargetMode::Talk) {
 		type = ACT_TALK;
-	} else if (target_mode == TARGET_MODE_CAST) {
+	} else if (targetMode == TargetMode::Cast) {
 		type = ACT_CAST;
-	} else if (target_mode == TARGET_MODE_DEFEND) {
+	} else if (targetMode == TargetMode::Defend) {
 		type = ACT_DEFEND;
-	} else if (target_mode == TARGET_MODE_PICK) {
+	} else if (targetMode == TargetMode::Pick) {
 		type = ACT_THIEVING;
 	}
 
@@ -2344,7 +2412,7 @@ void GameControl::PerformActionOn(Actor *actor)
 	//we shouldn't zero this for two reasons in case of spell or item
 	//1. there could be multiple targets
 	//2. the target mode is important
-	if (!(target_mode == TARGET_MODE_CAST) || !spellCount) {
+	if (targetMode != TargetMode::Cast || !spellCount) {
 		ResetTargetMode();
 	}
 
@@ -2367,16 +2435,9 @@ void GameControl::PerformActionOn(Actor *actor)
 				return;
 			}
 
-			//talk (first selected talks)
+			// talk (first selected talks)
 			if (!game->selected.empty()) {
-				//if we are in PST modify this to NO!
-				Actor *source;
-				if (core->HasFeature(GFFlags::PROTAGONIST_TALKS) ) {
-					source = game->GetPC(0, false); //protagonist
-				} else {
-					source = core->GetFirstSelectedPC(false);
-				}
-				// only party members can start conversations
+				Actor* source = GetTalkInitiator();
 				if (source) {
 					TryToTalk(source, actor);
 				}
@@ -2413,17 +2474,18 @@ void GameControl::PerformActionOn(Actor *actor)
 }
 
 //sets target mode, and resets the cursor
-void GameControl::SetTargetMode(int mode) {
-	target_mode = mode;
+void GameControl::SetTargetMode(TargetMode mode)
+{
+	targetMode = mode;
 }
 
 void GameControl::ResetTargetMode() {
 	target_types = GA_NO_DEAD|GA_NO_HIDDEN|GA_NO_UNSCHEDULED;
-	SetTargetMode(TARGET_MODE_NONE);
+	SetTargetMode(TargetMode::None);
 }
 
 void GameControl::UpdateTargetMode() {
-	SetTargetMode(target_mode);
+	SetTargetMode(targetMode);
 }
 
 Region GameControl::SelectionRect() const
@@ -2455,11 +2517,11 @@ void GameControl::SetCutSceneMode(bool active)
 {
 	WindowManager* wm = core->GetWindowManager();
 	if (active) {
-		ScreenFlags |= SF_CUTSCENE;
+		screenFlags.Set(ScreenFlags::Cutscene);
 		vpVector.reset();
 		wm->SetCursorFeedback(WindowManager::MOUSE_NONE);
 	} else {
-		ScreenFlags &= ~SF_CUTSCENE;
+		screenFlags.Clear(ScreenFlags::Cutscene);
 		wm->SetCursorFeedback(WindowManager::CursorFeedback(core->config.MouseFeedback));
 	}
 	SetFlags(IgnoreEvents, (active || InDialog()) ? BitOp::OR : BitOp::NAND);
@@ -2474,7 +2536,7 @@ void GameControl::DisplayString(Scriptable* target) const
 	}
 
 	// add as a "subtitle" to the main message window
-	auto lookup = core->GetVariable("Duplicate Floating Text", 0);
+	auto lookup = core->GetDictionary().Get("Duplicate Floating Text", 0);
 	if (lookup) {
 		displaymsg->DisplayString(target->overHead.GetText());
 	}
@@ -2506,7 +2568,7 @@ void GameControl::ChangeMap(const Actor *pc, bool forced)
 		if (!core->InCutSceneMode()) {
 			// don't interfere with any scripted moves of the viewport
 			// checking core->timer->ViewportIsMoving() is not enough
-			ScreenFlags |= SF_CENTERONACTOR;
+			screenFlags.Set(ScreenFlags::CenterOnActor);
 		}
 		
 		SetDisabled(false);
@@ -2516,9 +2578,9 @@ void GameControl::ChangeMap(const Actor *pc, bool forced)
 		}
 	}
 	//center on first selected actor
-	if (pc && (ScreenFlags&SF_CENTERONACTOR)) {
+	if (pc && screenFlags.Test(ScreenFlags::CenterOnActor)) {
 		MoveViewportTo( pc->Pos, true );
-		ScreenFlags&=~SF_CENTERONACTOR;
+		screenFlags.Clear(ScreenFlags::CenterOnActor);
 	}
 }
 
@@ -2530,15 +2592,18 @@ void GameControl::FlagsChanged(unsigned int /*oldflags*/)
 	}
 }
 
-bool GameControl::SetScreenFlags(unsigned int value, BitOp mode)
+bool GameControl::SetScreenFlags(ScreenFlags value, BitOp mode)
 {
-	return SetBits(ScreenFlags, value, mode);
+	auto bits = screenFlags.to_ulong();
+	bool toggled = SetBits(bits, (unsigned long) (1 << UnderType(value)), mode);
+	screenFlags = EnumBitset<ScreenFlags>(bits);
+	return toggled;
 }
 
 void GameControl::SetDialogueFlags(unsigned int value, BitOp mode)
 {
 	SetBits(DialogueFlags, value, mode);
-	SetFlags(IgnoreEvents, (DialogueFlags&DF_IN_DIALOG || ScreenFlags&SF_CUTSCENE) ? BitOp::OR : BitOp::NAND);
+	SetFlags(IgnoreEvents, (DialogueFlags & DF_IN_DIALOG || screenFlags.Test(ScreenFlags::Cutscene)) ? BitOp::OR : BitOp::NAND);
 }
 
 Map* GameControl::CurrentArea() const
@@ -2594,7 +2659,7 @@ void GameControl::SetupItemUse(int slot, size_t header, Actor *u, int targettype
 	spellSlot = slot;
 	spellIndex = static_cast<int>(header);
 	//item use also uses the casting icon, this might be changed in some custom game?
-	SetTargetMode(TARGET_MODE_CAST);
+	SetTargetMode(TargetMode::Cast);
 	target_types = targettype;
 	spellCount = cnt;
 }
@@ -2613,7 +2678,7 @@ void GameControl::SetupCasting(const ResRef& spellname, int type, int level, int
 	spellUser = u;
 	spellSlot = level;
 	spellIndex = idx;
-	SetTargetMode(TARGET_MODE_CAST);
+	SetTargetMode(TargetMode::Cast);
 	target_types = targettype;
 	spellCount = cnt;
 }
@@ -2632,7 +2697,7 @@ void GameControl::SetDisplayText(HCStrings text, unsigned int time)
 void GameControl::ToggleAlwaysRun()
 {
 	AlwaysRun = !AlwaysRun;
-	core->GetDictionary()["Always Run"] = AlwaysRun;
+	core->GetDictionary().Set("Always Run", AlwaysRun);
 }
 
 int GameControl::GetOverheadOffset() const

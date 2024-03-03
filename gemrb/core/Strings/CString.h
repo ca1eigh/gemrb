@@ -20,6 +20,8 @@
 #define CSTRING_H
 
 #include "exports.h"
+#include "StringView.h"
+#include <fmt/format.h>
 
 #include <algorithm>
 #include <cassert>
@@ -30,9 +32,6 @@
 #include <cstring>
 #include <cwctype>
 
-#include "Format.h"
-#include "StringView.h"
-
 #ifndef WIN32
 # define stricmp strcasecmp
 # define strnicmp strncasecmp
@@ -42,33 +41,53 @@ namespace GemRB {
 
 constexpr int NoTransform(int c) { return c; }
 
-template <typename STR_T, int(*TRANS)(int) = NoTransform>
+template <int(*TRANS)(int) = NoTransform>
 struct CstrHash
 {
-	size_t operator() (const STR_T &str) const {
+	size_t operator() (const StringView& str) const {
 		size_t nHash = 0;
 		for (const auto& c : str) {
-			if (c == '\0')
-				break;
 			nHash = (nHash << 5) ^ TRANS(c);
 		}
 		return nHash;
 	}
 };
 
-template <typename STR_T>
-using CstrHashCI = CstrHash<STR_T, std::tolower>;
-
-template <typename STR_T, int(*CMP)(const char*, const char*) = strcmp>
-struct CstrCmp
+// work around linking issue on Mac where std::tolower is mangled differently in ObjC++
+inline int tolower(int ch)
 {
-	bool operator() (const STR_T& lhs, const STR_T& rhs) const {
-		return CMP(lhs.c_str(), rhs.c_str()) < 0;
+	return std::tolower(ch);
+}
+
+using CstrHashCI = CstrHash<tolower>;
+
+template <int(*CMP)(const char*, const char*, size_t) = strncmp>
+struct CstrLess
+{
+	bool operator() (const StringView& lhs, const StringView& rhs) const {
+		// FIXME: this is broken when a StringView contains '\0'
+		size_t len = std::min(lhs.length(), rhs.length());
+		int ret = CMP(lhs.c_str(), rhs.c_str(), len);
+		if (ret == 0 && lhs.length() < rhs.length()) {
+			return true;
+		}
+		return ret < 0;
 	}
 };
 
-template <typename STR_T>
-using CstrCmpCI = CstrCmp<STR_T, stricmp>;
+using CstrLessCI = CstrLess<strnicmp>;
+
+template <int(*CMP)(const char*, const char*, size_t) = strncmp>
+struct CstrEq
+{
+	bool operator() (const StringView& lhs, const StringView& rhs) const {
+		// FIXME: this is broken when a StringView contains '\0'
+		if (lhs.length() != rhs.length()) return false;
+		return CMP(lhs.c_str(), rhs.c_str(), lhs.length()) == 0;
+	}
+};
+
+using CstrEqCI = CstrEq<strnicmp>;
 
 template<size_t LEN, int(*CMP)(const char*, const char*, size_t) = strncmp>
 class FixedSizeString {
@@ -238,7 +257,16 @@ public:
 	std::reverse_iterator<iterator> rend() noexcept {
 		return std::reverse_iterator<iterator>(begin());
 	}
+
+	bool IsASCII() noexcept {
+		return std::none_of(begin(), end(), [](char c) { return c < 0; });
+	}
 };
+
+template <size_t LEN, int(*CMP)(const char*, const char*, size_t)>
+auto format_as(const GemRB::FixedSizeString<LEN, CMP>& str) {
+	return str.c_str();
+}
 
 }
 

@@ -93,7 +93,7 @@ int main(int argc, char* argv[])
 		Interface gemrb(LoadFromArgs(argc, argv));
 		gemrb.Main();
 	} catch (CoreInitializationException& cie) {
-		Log(FATAL, "Main", "Aborting due to fatal error... {}", cie.what());
+		Log(FATAL, "Main", "Aborting due to fatal error... {}", cie);
 		ToggleLogging(false);
 		return sceKernelExitProcess(GEM_ERROR);
 	}
@@ -109,7 +109,7 @@ int main(int argc, char* argv[])
 		vitaDestRect.w = width;
 		vitaDestRect.h = height;
 
-		if (core->GetVideoDriver()->GetFullscreenMode()) {
+		if (VideoDriver->GetFullscreenMode()) {
 			const char* optstr = config->GetValueForKey("VitaKeepAspectRatio");
 			if (optstr && atoi(optstr) > 0) {
 				if ((static_cast<float>(VITA_FULLSCREEN_WIDTH) / VITA_FULLSCREEN_HEIGHT) >= (static_cast<float>(width) / height)) {

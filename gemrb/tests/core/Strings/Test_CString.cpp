@@ -1,5 +1,5 @@
 /* GemRB - Infinity Engine Emulator
- * Copyright (C) 2022 The GemRB Project
+ * Copyright (C) 2023 The GemRB Project
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -14,34 +14,27 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ *
  */
 
-#ifndef FORMAT_H
-#define FORMAT_H
+#include <gtest/gtest.h>
 
-#define FMT_HEADER_ONLY
-#define FMT_EXCEPTIONS 0
-#include <fmt/format.h>
+#include "Strings/CString.h"
 
 namespace GemRB {
 
-// C++17 provides void_t...
-template<typename... Ts>
-struct make_void { typedef void type; };
- 
-template<typename... Ts>
-using void_t = typename make_void<Ts...>::type;
+TEST(CString_Test, IsASCII) {
+	auto unit0 = FixedSizeString<0>{""};
+	EXPECT_TRUE(unit0.IsASCII());
 
-template <typename, typename = void>
-struct has_c_str : std::false_type {};
+	auto unit3 = FixedSizeString<3>{"abc"};
+	EXPECT_TRUE(unit3.IsASCII());
 
-template <typename T>
-struct has_c_str<T, void_t<decltype(&T::c_str)>> : std::is_same<char const*, decltype(std::declval<T>().c_str())>
-{};
+	unit3 = FixedSizeString<3>{"äöü"};
+	EXPECT_FALSE(unit3.IsASCII());
 
-template <typename STR, FMT_ENABLE_IF(has_c_str<STR>::value && !std::is_same<std::string, STR>::value)>
-auto format_as(const STR& str) { return str.c_str(); }
-
+	unit3 = FixedSizeString<3>{"ab\xFE"};
+	EXPECT_FALSE(unit3.IsASCII());
 }
 
-#endif /* FORMAT_H */
+}

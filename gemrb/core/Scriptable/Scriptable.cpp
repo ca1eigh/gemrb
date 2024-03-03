@@ -99,13 +99,6 @@ ieDword Scriptable::GetLocal(const ieVariable& key, ieDword fallback) const {
 	return fallback;
 }
 
-void Scriptable::DumpLocals() const {
-	Log(DEBUG, "Scriptable", "Locals item count: {}", locals.size());
-	for (const auto& entry : locals) {
-		Log(DEBUG, "Scriptable", "{} = {}", entry.first, entry.second);
-	}
-}
-
 void Scriptable::SetScriptName(const ieVariable& text)
 {
 	// recreate to remove internal spaces
@@ -153,7 +146,7 @@ void Scriptable::SetScript(const ResRef &aScript, int idx, bool ai)
 		delete Scripts[idx];
 	}
 	Scripts[idx] = NULL;
-	// NONE is an 'invalid' script name, seldomly used to reset the slot, which we do above
+	// NONE is an 'invalid' script name, seldom used to reset the slot, which we do above
 	// This check is to prevent flooding of the console
 	if (!aScript.IsEmpty() && aScript != "NONE") {
 		if (idx!=AI_SCRIPT_LEVEL) ai = false;
@@ -197,6 +190,7 @@ void Scriptable::Update()
 				core->SetEventFlag(EF_PORTRAIT);
 			}
 		}
+		if (!UnselectableTimer) UnselectableType = 0;
 	}
 
 	TickScripting();
@@ -226,6 +220,8 @@ void Scriptable::TickScripting()
 	ScriptTicks++;
 
 	// If no action is running, we've had triggers set recently or we haven't checked recently, do a script update.
+	// we potentially delay a forced update for 1 tick, since TriggerCountdown is only set later (like the original)
+	// NOTE: however the original also had another bool for when a condition returned true, avoiding this
 	bool needsUpdate = (!CurrentAction) || (TriggerCountdown > 0) || (IdleTicks > 15);
 
 	// Also do a script update if one was forced..
@@ -267,17 +263,18 @@ void Scriptable::ExecuteScript(int scriptCount)
 
 	// area scripts still run for at least the current area, in bg1 (see ar2631, confirmed by testing)
 	// but not in bg2 (kill Abazigal in ar6005)
-	if (gc->GetScreenFlags() & SF_CUTSCENE) {
+	if (gc->GetScreenFlags().Test(ScreenFlags::Cutscene)) {
 		if (! (core->HasFeature(GFFlags::CUTSCENE_AREASCRIPTS) && Type == ST_AREA)) {
 			return;
 		}
 	}
 
-	// Don't abort if there is a running non-interruptable action.
+	// Don't abort if there is a running non-interruptible action.
+	// NOTE: the original didn't check for the next action, causing odd timing bugs
 	if ((InternalFlags & IF_NOINT) && (CurrentAction || GetNextAction())) {
 		return;
 	}
-	if (!CurrentActionInterruptable) {
+	if (!CurrentActionInterruptible) {
 		// sanity check
 		if (!CurrentAction && !GetNextAction()) {
 			error("Scriptable", "No current action and no next action.");
@@ -291,6 +288,14 @@ void Scriptable::ExecuteScript(int scriptCount)
 
 	bool changed = false;
 	Actor* act = Scriptable::As<Actor>(this);
+	if (act && (act->GetStat(IE_CASTERHOLD) || act->GetStat(IE_SUMMONDISABLE))) return;
+
+	// (EE-only?) bg2 special casing, probably fine elsewhere, so not ifdefing to bg2/bg2ee just yet
+	// don't touch if we're on autopilot for everything but the party, except for Edwin
+	// TODO: check if the Edwin hack is really needed (his quests once he joins, other MakeUnselectable calls)
+	if (UnselectableTimer && (UnselectableType & 1) == 0) {
+		if (!act || !act->InParty || act->GetName() != u"Edwin") return;
+	}
 
 	// don't run if the final dialog action queue is still playing out (we're already out of dialog!)
 	// currently limited with GFFlags::CUTSCENE_AREASCRIPTS and to area scripts, to minimize risk into known test cases
@@ -305,22 +310,30 @@ void Scriptable::ExecuteScript(int scriptCount)
 	}
 
 	if (act) {
+		Game* game = core->GetGame();
+		if (act->InParty && game->nextBored > 100 && // throtle a bit, since it could get expensive
+		    (CurrentAction || act->Modal.State == Modal::BattleSong || act->Modal.State == Modal::ShamanDance) &&
+		    act->ValidTarget(GA_SELECT)) {
+			game->nextBored = 0;
+		}
+
 		// if party AI is disabled, don't run non-override scripts
-		if (act->InParty && !(core->GetGame()->ControlStatus & CS_PARTY_AI))
-			scriptCount = 1;
+		if (act->InParty && !(game->ControlStatus & CS_PARTY_AI)) scriptCount = 1;
+
 		// hardcoded action overrides like charm, confusion, panic and berserking
-		// TODO: check why everything else but charm is handled separately and unify if possible
-		changed |= act->OverrideActions();
+		if (act->OverrideActions()) {
+			// we just need to execute, no more processing needed
+			ClearTriggers();
+			return;
+		}
 	}
 
 	bool continuing = false, done = false;
-	for (scriptlevel = 0;scriptlevel<scriptCount;scriptlevel++) {
-		GameScript *Script = Scripts[scriptlevel];
-		if (Script) {
-			changed |= Script->Update(&continuing, &done);
-			if (Script->dead) {
-				delete Script;
-			}
+	for (scriptLevel = 0; scriptLevel < scriptCount; scriptLevel++) {
+		GameScript* script = Scripts[scriptLevel];
+		if (script) {
+			changed |= script->Update(&continuing, &done);
+			if (script->dead) delete script;
 		}
 
 		/* scripts are not concurrent, see WAITPC override script for example */
@@ -337,6 +350,12 @@ void Scriptable::ExecuteScript(int scriptCount)
 	}
 }
 
+void Scriptable::AddAction(std::string actStr)
+{
+	Action* aC = GenerateAction(std::move(actStr));
+	AddAction(aC);
+}
+
 void Scriptable::AddAction(Action* aC)
 {
 	if (!aC) {
@@ -350,7 +369,7 @@ void Scriptable::AddAction(Action* aC)
 	}
 	aC->IncRef();
 	if (actionflags[aC->actionID] & AF_SCRIPTLEVEL) {
-		aC->int0Parameter = scriptlevel;
+		aC->int0Parameter = scriptLevel;
 	}
 
 	// attempt to handle 'instant' actions, from instant.ids, which run immediately
@@ -413,7 +432,7 @@ void Scriptable::ClearActions(int skipFlags)
 			savedCurrentAction = true;
 		} else if (skipFlags == 2 && CurrentAction && actionflags[CurrentAction->actionID] & AF_IWD2_OVERRIDE) {
 			savedCurrentAction = true;
-		} else if (skipFlags == 3 && (CurrentActionInterruptable == false || InternalFlags & IF_NOINT)) {
+		} else if (skipFlags == 3 && (CurrentActionInterruptible == false || InternalFlags & IF_NOINT)) {
 			savedCurrentAction = true;
 		} else {
 			ReleaseCurrentAction();
@@ -432,10 +451,10 @@ void Scriptable::ClearActions(int skipFlags)
 	if (savedCurrentAction) return;
 
 	WaitCounter = 0;
-	LastTarget = 0;
-	LastTargetPos.Invalidate();
+	objects.LastTarget = 0;
+	objects.LastTargetPos.Invalidate();
 	// intentionally not resetting LastTargetPersistent
-	LastSpellTarget = 0;
+	objects.LastSpellTarget = 0;
 
 	if (Type == ST_ACTOR) {
 		Interrupt();
@@ -458,7 +477,7 @@ void Scriptable::ReleaseCurrentAction()
 
 	CurrentActionState = 0;
 	CurrentActionTarget = 0;
-	CurrentActionInterruptable = true;
+	CurrentActionInterruptible = true;
 	CurrentActionTicks = 0;
 }
 
@@ -471,7 +490,7 @@ void Scriptable::ProcessActions()
 
 	int lastAction = -1;
 	while (true) {
-		CurrentActionInterruptable = true;
+		CurrentActionInterruptible = true;
 		if (!CurrentAction) {
 			if (! (CurrentActionTicks == 0 && CurrentActionState == 0)) {
 				Log(ERROR, "Scriptable", "Last action: {}", lastAction);
@@ -558,9 +577,6 @@ void Scriptable::Deactivate()
 	InternalFlags &=~(IF_ACTIVE|IF_IDLE);
 }
 
-//turning off the not interruptable flag, actions should reenable it themselves
-//also turning off the idle flag
-//heh, no, i wonder why did i touch the interruptable flag here
 void Scriptable::Activate()
 {
 	InternalFlags |= IF_ACTIVE;
@@ -609,7 +625,7 @@ void Scriptable::SetLastTrigger(ieDword triggerID, ieDword scriptableID)
 			}
 		}
 		ScriptDebugLog(DebugMode::TRIGGERS, "Scriptable", "{}: Added LastTrigger: {} ({}) for trigger {}", scriptName, scriptableID, name, triggerID);
-		LastTrigger = scriptableID;
+		objects.LastTrigger = scriptableID;
 	}
 }
 
@@ -668,7 +684,7 @@ void Scriptable::ModifyProjectile(Projectile* &pro, Spell* spl, ieDword tgt, int
 			// we need to fetch the projectile, so the effect queue is created
 			// (skipped above)
 			delete pro;
-			pro = spl->GetProjectile(this, SpellHeader, level, LastTargetPos);
+			pro = spl->GetProjectile(this, SpellHeader, level, objects.LastTargetPos);
 			pro->SetCaster(GetGlobalID(), level);
 			break;
 		case WSTC_ADDTYPE:
@@ -684,7 +700,7 @@ void Scriptable::ModifyProjectile(Projectile* &pro, Spell* spl, ieDword tgt, int
 			}
 			// we need to refetch the projectile, so the effect queue is created
 			delete pro; // don't leak the original one
-			pro = spl->GetProjectile(this, SpellHeader, level, LastTargetPos);
+			pro = spl->GetProjectile(this, SpellHeader, level, objects.LastTargetPos);
 			pro->SetCaster(GetGlobalID(), level);
 			break;
 		case WSTC_RANDOMIZE:
@@ -696,11 +712,11 @@ void Scriptable::ModifyProjectile(Projectile* &pro, Spell* spl, ieDword tgt, int
 				}
 			}
 			if (tgt) {
-				LastSpellTarget = newact->GetGlobalID();
-				LastTargetPos = newact->Pos;
+				objects.LastSpellTarget = newact->GetGlobalID();
+				objects.LastTargetPos = newact->Pos;
 			} else {
 				// no better idea; I wonder if the original randomized point targets at all
-				LastTargetPos = newact->Pos;
+				objects.LastTargetPos = newact->Pos;
 			}
 
 			// make it also work for self-targeting spells:
@@ -714,7 +730,7 @@ void Scriptable::ModifyProjectile(Projectile* &pro, Spell* spl, ieDword tgt, int
 			// we need to fetch the projectile, so the effect queue is created
 			// (skipped above)
 			delete pro;
-			pro = spl->GetProjectile(this, SpellHeader, level, LastTargetPos);
+			pro = spl->GetProjectile(this, SpellHeader, level, objects.LastTargetPos);
 			pro->SetCaster(GetGlobalID(), level);
 			break;
 		default: //0 - do nothing
@@ -742,7 +758,7 @@ void Scriptable::ModifyProjectile(Projectile* &pro, Spell* spl, ieDword tgt, int
 		}
 		// we need to refetch the projectile, so the new one is used
 		delete pro; // don't leak the original one
-		pro = spl->GetProjectile(this, SpellHeader, level, LastTargetPos);
+		pro = spl->GetProjectile(this, SpellHeader, level, objects.LastTargetPos);
 		pro->SetCaster(GetGlobalID(), level);
 	}
 
@@ -787,7 +803,7 @@ void Scriptable::CreateProjectile(const ResRef& spellResRef, ieDword tgt, int le
 			tct = caster->wildSurgeMods.target_change_type;
 		}
 		if (!caster || !tct || tct == WSTC_ADDTYPE || !caster->wildSurgeMods.projectile_id) {
-			pro = spl->GetProjectile(this, SpellHeader, level, LastTargetPos);
+			pro = spl->GetProjectile(this, SpellHeader, level, objects.LastTargetPos);
 			if (!pro) {
 				return;
 			}
@@ -809,7 +825,7 @@ void Scriptable::CreateProjectile(const ResRef& spellResRef, ieDword tgt, int le
 		if (tgt) {
 			area->AddProjectile(pro, origin, tgt, fake);
 		} else {
-			area->AddProjectile(pro, origin, LastTargetPos);
+			area->AddProjectile(pro, origin, objects.LastTargetPos);
 		}
 	}
 
@@ -864,9 +880,10 @@ void Scriptable::DisplaySpellCastMessage(ieDword tgt, const Spell* spl) const
 }
 
 // NOTE: currently includes the sender
-void Scriptable::SendTriggerToAll(TriggerEntry entry)
+void Scriptable::SendTriggerToAll(TriggerEntry entry, int extraFlags)
 {
-	std::vector<Actor *> nearActors = area->GetAllActorsInRadius(Pos, GA_NO_DEAD|GA_NO_UNSCHEDULED, 15);
+	int flags = GA_NO_DEAD | GA_NO_UNSCHEDULED | extraFlags;
+	std::vector<Actor*> nearActors = area->GetAllActorsInRadius(Pos, flags, 15);
 	for (const auto& neighbour : nearActors) {
 		neighbour->AddTrigger(entry);
 	}
@@ -876,8 +893,8 @@ void Scriptable::SendTriggerToAll(TriggerEntry entry)
 inline void Scriptable::ResetCastingState(Actor *caster) {
 	SpellHeader = -1;
 	SpellResRef.Reset();
-	LastTargetPos.Invalidate();
-	LastSpellTarget = 0;
+	objects.LastTargetPos.Invalidate();
+	objects.LastSpellTarget = 0;
 	if (caster) {
 		memset(&(caster->wildSurgeMods), 0, sizeof(caster->wildSurgeMods));
 	}
@@ -906,11 +923,11 @@ void Scriptable::CastSpellPointEnd(int level, bool keepStance)
 	}
 
 	if (SpellHeader == -1) {
-		LastTargetPos.Invalidate();
+		objects.LastTargetPos.Invalidate();
 		return;
 	}
 
-	if (LastTargetPos.IsInvalid()) {
+	if (objects.LastTargetPos.IsInvalid()) {
 		SpellHeader = -1;
 		return;
 	}
@@ -931,7 +948,7 @@ void Scriptable::CastSpellPointEnd(int level, bool keepStance)
 
 	if (!keepStance) {
 		// yep, the original didn't use the casting channel for this!
-		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos);
+		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
 	}
 
 	CreateProjectile(SpellResRef, 0, level, false);
@@ -951,10 +968,10 @@ void Scriptable::CastSpellPointEnd(int level, bool keepStance)
 		break;
 	}
 
-	Actor *target = area->GetActor(LastTargetPos, GA_NO_UNSCHEDULED|GA_NO_HIDDEN);
+	Actor* target = area->GetActor(objects.LastTargetPos, GA_NO_UNSCHEDULED | GA_NO_HIDDEN);
 	if (target) {
 		target->AddTrigger(TriggerEntry(trigger_spellcastonme, GetGlobalID(), spellID));
-		target->LastSpellOnMe = spellID;
+		target->objects.LastSpellOnMe = spellID;
 	}
 
 	ResetCastingState(caster);
@@ -983,10 +1000,10 @@ void Scriptable::CastSpellEnd(int level, bool keepStance)
 	}
 
 	if (SpellHeader == -1) {
-		LastSpellTarget = 0;
+		objects.LastSpellTarget = 0;
 		return;
 	}
-	if (!LastSpellTarget) {
+	if (!objects.LastSpellTarget) {
 		SpellHeader = -1;
 		return;
 	}
@@ -1004,11 +1021,11 @@ void Scriptable::CastSpellEnd(int level, bool keepStance)
 	}
 
 	if (!keepStance) {
-		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos);
+		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
 	}
 
 	//if the projectile doesn't need to follow the target, then use the target position
-	CreateProjectile(SpellResRef, LastSpellTarget, level, GetSpellDistance(SpellResRef, this)==0xffffffff);
+	CreateProjectile(SpellResRef, objects.LastSpellTarget, level, GetSpellDistance(SpellResRef, this) == 0xffffffff);
 
 	// the original engine saves lasttrigger only in case of SpellCast, so we have to differentiate
 	// NOTE: unused in iwd2, so the fact that it has no stored spelltype is of no consequence
@@ -1025,10 +1042,10 @@ void Scriptable::CastSpellEnd(int level, bool keepStance)
 		break;
 	}
 
-	Actor *target = area->GetActorByGlobalID(LastSpellTarget);
+	Actor* target = area->GetActorByGlobalID(objects.LastSpellTarget);
 	if (target) {
 		target->AddTrigger(TriggerEntry(trigger_spellcastonme, GetGlobalID(), spellID));
-		target->LastSpellOnMe = spellID;
+		target->objects.LastSpellOnMe = spellID;
 	}
 
 	ResetCastingState(caster);
@@ -1160,16 +1177,16 @@ void Scriptable::DirectlyCastSpellPoint(const Point& target, const ResRef& spell
 	}
 
 	// save and restore the casting targets, so we don't interrupt any gui triggered casts with spells like true seeing (repeated fx_cast_spell)
-	Point TmpPos = LastTargetPos;
-	ieDword TmpTarget = LastSpellTarget;
+	Point TmpPos = objects.LastTargetPos;
+	ieDword TmpTarget = objects.LastSpellTarget;
 	int TmpHeader = SpellHeader;
 
 	SetSpellResRef(spellRef);
 	CastSpellPoint(target, deplete, true, true, level);
 	CastSpellPointEnd(level, keepStance);
 
-	LastTargetPos = TmpPos;
-	LastSpellTarget = TmpTarget;
+	objects.LastTargetPos = TmpPos;
+	objects.LastSpellTarget = TmpTarget;
 	SpellHeader = TmpHeader;
 }
 
@@ -1182,16 +1199,16 @@ void Scriptable::DirectlyCastSpell(Scriptable* target, const ResRef& spellRef, i
 	}
 
 	// save and restore the casting targets, so we don't interrupt any gui triggered casts with spells like true seeing (repeated fx_cast_spell)
-	Point TmpPos = LastTargetPos;
-	ieDword TmpTarget = LastSpellTarget;
+	Point TmpPos = objects.LastTargetPos;
+	ieDword TmpTarget = objects.LastSpellTarget;
 	int TmpHeader = SpellHeader;
 
 	SetSpellResRef(spellRef);
 	CastSpell(target, deplete, true, true, level);
 	CastSpellEnd(level, keepStance);
 
-	LastTargetPos = TmpPos;
-	LastSpellTarget = TmpTarget;
+	objects.LastTargetPos = TmpPos;
+	objects.LastSpellTarget = TmpTarget;
 	SpellHeader = TmpHeader;
 }
 
@@ -1200,8 +1217,8 @@ void Scriptable::DirectlyCastSpell(Scriptable* target, const ResRef& spellRef, i
 //if spell is illegal stop casting
 int Scriptable::CastSpellPoint(const Point& target, bool deplete, bool instant, bool noInterrupt, int level)
 {
-	LastSpellTarget = 0;
-	LastTargetPos.Invalidate();
+	objects.LastSpellTarget = 0;
+	objects.LastTargetPos.Invalidate();
 	Actor* actor = Scriptable::As<Actor>(this);
 	if (actor && actor->HandleCastingStance(SpellResRef, deplete, instant)) {
 		Log(ERROR, "Scriptable", "Spell {} not known or memorized, aborting cast!", SpellResRef);
@@ -1218,7 +1235,7 @@ int Scriptable::CastSpellPoint(const Point& target, bool deplete, bool instant, 
 		return -1;
 	}
 
-	LastTargetPos = target;
+	objects.LastTargetPos = target;
 
 	if(!CheckWildSurge()) {
 		return -1;
@@ -1235,8 +1252,8 @@ int Scriptable::CastSpellPoint(const Point& target, bool deplete, bool instant, 
 //if spell is illegal stop casting
 int Scriptable::CastSpell(Scriptable* target, bool deplete, bool instant, bool noInterrupt, int level)
 {
-	LastSpellTarget = 0;
-	LastTargetPos.Invalidate();
+	objects.LastSpellTarget = 0;
+	objects.LastTargetPos.Invalidate();
 	Actor* actor = Scriptable::As<Actor>(this);
 	if (actor && actor->HandleCastingStance(SpellResRef, deplete, instant)) {
 		Log(ERROR, "Scriptable", "Spell {} not known or memorized, aborting cast!", SpellResRef);
@@ -1256,9 +1273,9 @@ int Scriptable::CastSpell(Scriptable* target, bool deplete, bool instant, bool n
 		return -1;
 	}
 
-	LastTargetPos = target->Pos;
+	objects.LastTargetPos = target->Pos;
 	if (target->Type==ST_ACTOR) {
-		LastSpellTarget = target->GetGlobalID();
+		objects.LastSpellTarget = target->GetGlobalID();
 	}
 
 	if(!CheckWildSurge()) {
@@ -1267,7 +1284,7 @@ int Scriptable::CastSpell(Scriptable* target, bool deplete, bool instant, bool n
 
 	if (!instant) {
 		SpellcraftCheck(actor, SpellResRef);
-		// self-targetted spells that are not hostile maintain invisibility
+		// self-targeted spells that are not hostile maintain invisibility
 		if (actor && target != this) actor->CureInvisibility();
 	}
 	return SpellCast(instant, target, level);
@@ -1454,14 +1471,14 @@ bool Scriptable::HandleHardcodedSurge(const ResRef& surgeSpell, const Spell *spl
 			tmp = caster->Modified[IE_FORCESURGE];
 			tmp3 = caster->WMLevelMod; // also save caster level; the original didn't reroll the bonus
 			caster->Modified[IE_FORCESURGE] = 7;
-			if (LastSpellTarget) {
-				target = area->GetActorByGlobalID(LastSpellTarget);
+			if (objects.LastSpellTarget) {
+				target = area->GetActorByGlobalID(objects.LastSpellTarget);
 				if (!target) {
-					target = core->GetGame()->GetActorByGlobalID(LastSpellTarget);
+					target = core->GetGame()->GetActorByGlobalID(objects.LastSpellTarget);
 				}
 			}
-			if (LastTargetPos.IsInvalid()) {
-				targetpos = LastTargetPos;
+			if (objects.LastTargetPos.IsInvalid()) {
+				targetpos = objects.LastTargetPos;
 			} else if (target) {
 				targetpos = target->Pos;
 			}
@@ -1560,8 +1577,8 @@ bool Scriptable::AuraPolluted()
 
 bool Scriptable::TimerActive(ieDword ID)
 {
-	std::map<ieDword,ieDword>::iterator tit = script_timers.find(ID);
-	if (tit == script_timers.end()) {
+	const auto& tit = scriptTimers.find(ID);
+	if (tit == scriptTimers.end()) {
 		return false;
 	}
 	return tit->second > core->GetGame()->GameTime;
@@ -1569,13 +1586,13 @@ bool Scriptable::TimerActive(ieDword ID)
 
 bool Scriptable::TimerExpired(ieDword ID)
 {
-	std::map<ieDword,ieDword>::iterator tit = script_timers.find(ID);
-	if (tit == script_timers.end()) {
+	const auto& tit = scriptTimers.find(ID);
+	if (tit == scriptTimers.end()) {
 		return false;
 	}
 	if (tit->second <= core->GetGame()->GameTime) {
 		// expired timers become inactive after being checked
-		script_timers.erase(tit);
+		scriptTimers.erase(tit);
 		return true;
 	}
 	return false;
@@ -1584,12 +1601,12 @@ bool Scriptable::TimerExpired(ieDword ID)
 void Scriptable::StartTimer(ieDword ID, ieDword expiration)
 {
 	ieDword newTime = core->GetGame()->GameTime + expiration * core->Time.defaultTicksPerSec;
-	std::map<ieDword,ieDword>::iterator tit = script_timers.find(ID);
-	if (tit != script_timers.end()) {
+	const auto& tit = scriptTimers.find(ID);
+	if (tit != scriptTimers.end()) {
 		tit->second = newTime;
 		return;
 	}
-	script_timers.insert(std::pair<ieDword,ieDword>(ID, newTime));
+	scriptTimers.emplace(ID, newTime);
 }
 
 /********************
@@ -1613,16 +1630,6 @@ int Selectable::CircleSize2Radius() const
 
 void Selectable::DrawCircle(const Point& p) const
 {
-	/* BG2 colours ground circles as follows:
-	dark green for unselected party members
-	bright green for selected party members
-	flashing green/white for a party member the mouse is over
-	bright red for enemies
-	yellow for panicked actors
-	flashing red/white for enemies the mouse is over
-	flashing cyan/white for neutrals the mouse is over
-	*/
-
 	if (circleSize <= 0) {
 		return;
 	}
@@ -1720,11 +1727,17 @@ void Highlightable::DrawOutline(Point origin) const
 	}
 	origin = outline->BBox.origin - origin;
 
-	if (core->HasFeature(GFFlags::PST_STATE_FLAGS)) {
-		VideoDriver->DrawPolygon(outline.get(), origin, outlineColor, true, BlitFlags::MOD | BlitFlags::HALFTRANS);
-	} else {
-		VideoDriver->DrawPolygon( outline.get(), origin, outlineColor, true, BlitFlags::BLENDED|BlitFlags::HALFTRANS );
-		VideoDriver->DrawPolygon( outline.get(), origin, outlineColor, false );
+	bool highlightOutlineOnly = core->HasFeature(GFFlags::HIGHLIGHT_OUTLINE_ONLY);
+	bool pstStateFlags = core->HasFeature(GFFlags::PST_STATE_FLAGS);
+
+	if (!highlightOutlineOnly) {
+		BlitFlags flag = BlitFlags::HALFTRANS | (pstStateFlags ? BlitFlags::MOD : BlitFlags::BLENDED);
+
+		VideoDriver->DrawPolygon(outline.get(), origin, outlineColor, true, flag);
+	}
+
+	if (highlightOutlineOnly || !pstStateFlags) {
+		VideoDriver->DrawPolygon(outline.get(), origin, outlineColor, false);
 	}
 }
 
@@ -1958,11 +1971,9 @@ void Movable::SetOrientation(const Point& from, const Point& to, bool slow)
 	SetOrientation(GetOrient(from, to), slow);
 }
 
-void Movable::SetAttackMoveChances(const ieWord *amc)
+void Movable::SetAttackMoveChances(const std::array<ieWord, 3>& amc)
 {
-	AttackMovements[0]=amc[0];
-	AttackMovements[1]=amc[1];
-	AttackMovements[2]=amc[2];
+	AttackMovements = amc;
 }
 
 //this could be used for WingBuffet as well
@@ -2070,6 +2081,14 @@ void Movable::DoStep(unsigned int walkScale, ieDword time) {
 		double dx = nmptStep.x - Pos.x;
 		double dy = nmptStep.y - Pos.y;
 		Map::NormalizeDeltas(dx, dy, double(gamedata->GetStepTime()) / double(walkScale));
+		if (dx == 0 && dy == 0) {
+			// probably shouldn't happen, but it does when running bg2's cut28a set of cutscenes
+			ClearPath(true);
+			Log(DEBUG, "PathFinderWIP", "Abandoning because I'm exactly at the goal");
+			pathAbandoned = true;
+			return;
+		}
+
 		Actor *actorInTheWay = nullptr;
 		// We can't use GetActorInRadius because we want to only check directly along the way
 		// and not be blocked by actors who are on the sides
@@ -2228,7 +2247,7 @@ void Movable::RandomWalk(bool can_stop, bool run)
 	if (path) {
 		return;
 	}
-	//if not continous random walk, then stops for a while
+	// if not continuous random walk, then stops for a while
 	if (can_stop) {
 		Region vp = core->GetGameControl()->Viewport();
 		if (!vp.PointInside(Pos)) {
@@ -2348,38 +2367,4 @@ void Movable::HandleAnkhegStance(bool emerge)
 		SetWait(15); // both stances have 15 frames, at 15 fps
 	}
 }
-
-/**********************
- * Tiled Object Class *
- **********************/
-
-TileObject::~TileObject()
-{
-	if (opentiles) {
-		free( opentiles );
-	}
-	if (closedtiles) {
-		free( closedtiles );
-	}
-}
-
-void TileObject::SetOpenTiles(unsigned short* Tiles, int cnt)
-{
-	if (opentiles) {
-		free( opentiles );
-	}
-	opentiles = Tiles;
-	opencount = cnt;
-}
-
-void TileObject::SetClosedTiles(unsigned short* Tiles, int cnt)
-{
-	if (closedtiles) {
-		free( closedtiles );
-	}
-	closedtiles = Tiles;
-	closedcount = cnt;
-}
-
-
 }

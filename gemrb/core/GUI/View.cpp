@@ -111,13 +111,33 @@ bool View::NeedsDraw() const
 	return false;
 }
 
-void View::InvalidateSubviews() const
+void View::InvalidateDirtySubviewRegions()
 {
+	for (const View* subview : subViews) {
+		// FIXME: this is the real code we should be using (if we supported dirty subrects)
+		// for (const Region& rgn : subview->DirtySuperViewRegions()) {
+		//  	MarkDirty(&rgn);
+		// }
+		// since we dont, just MarkDirty() and bail if we have any
+		if (!subview->DirtySuperViewRegions().empty()) {
+			MarkDirty();
+			return;
+		}
+	}
+}
+
+void View::InvalidateSubviews(const Region& rgn) const
+{
+	if (rgn.size.IsInvalid()) {
+		return;
+	}
 	for (View* subview : subViews) {
-		Region r = ConvertRegionFromSuper(frame);
-		r = r.Intersect(subview->frame);
-		r.origin = subview->ConvertPointFromSuper(r.origin);
-		subview->MarkDirty(&r);
+		Region r = rgn.Intersect(subview->frame);
+		if (!r.size.IsInvalid()) {
+			r.origin = subview->ConvertPointFromSuper(r.origin);
+			subview->MarkDirty(&r);
+			subview->InvalidateSubviews(r);
+		}
 	}
 }
 
@@ -157,10 +177,10 @@ Regions View::DirtySuperViewRegions() const
 		return {};
 	}
 
-	if (NeedsDraw()) {
+	if (NeedsDraw() || !IsVisible()) {
 		return { frame };
 	}
-	
+
 	Regions dirtyAreas;
 	for (const View* subview : subViews) {
 		Regions r = subview->DirtySuperViewRegions();
@@ -172,15 +192,9 @@ Regions View::DirtySuperViewRegions() const
 	return dirtyAreas;
 }
 
-void View::DrawSubviews(bool drawBG) const
+void View::DrawSubviews() const
 {
-	drawBG = drawBG && HasBackground();
 	for (View* subview : subViews) {
-		if (drawBG && !subview->IsOpaque()) {
-			for (const Region& r : subview->DirtySuperViewRegions()) {
-				DrawBackground(&r);
-			}
-		}
 		subview->Draw();
 	}
 }
@@ -206,14 +220,14 @@ void View::DrawBackground(const Region* rgn) const
 			Region r = superView->ConvertRegionToWindow(frame);
 			VideoDriver->DrawRect(r, backgroundColor, true);
 		} else {
-			// FIXME: this is a Window and we need this hack becasue Window::WillDraw() changed the coordinate system
+			// FIXME: this is a Window and we need this hack because Window::WillDraw() changed the coordinate system
 			VideoDriver->DrawRect(Region(Point(), Dimensions()), backgroundColor, true);
 		}
 	}
-		
+
 	// NOTE: technically it's possible for the BG to be smaller than the view
 	// if this were to happen then the areas outside the BG wouldnt get redrawn
-	// you should make sure the backgound color is set to something suitable in those cases
+	// you should make sure the background color is set to something suitable in those cases
 
 	if (background) {
 		if (rgn) {
@@ -240,18 +254,20 @@ void View::Draw()
 	// clip drawing to the view bounds, then restore after drawing
 	VideoDriver->SetScreenClip(&intersect);
 
+	InvalidateDirtySubviewRegions();
+
 	bool needsDraw = NeedsDraw(); // check this before WillDraw else an animation update might get missed
 	// notify subclasses that drawing is about to happen. could pass the rects too, but no need ATM.
 	WillDraw(drawFrame, intersect);
 
 	if (needsDraw) {
-		InvalidateSubviews();
+		InvalidateSubviews(ConvertRegionFromSuper(frame));
 		DrawBackground(nullptr);
 		DrawSelf(drawFrame, intersect);
 	}
 
 	// always call draw on subviews because they can be dirty without us
-	DrawSubviews(!needsDraw);
+	DrawSubviews();
 	DidDraw(drawFrame, intersect); // notify subclasses that drawing finished
 	dirty = false;
 
@@ -270,12 +286,12 @@ void View::Draw()
 		if (debuginfo) {
 			const ViewScriptingRef* ref = GetScriptingRef();
 			if (ref) {
-				const Font* fnt = core->GetTextFont();
+				auto fnt = core->GetTextFont();
 				ScriptingId id = ref->Id;
 				id &= 0x00000000ffffffff; // control id is lower 32bits
 
 				std::string formatted = fmt::format("id: {}  grp: {}  \nflgs: {}\ntype:{}", id, ref->ScriptingGroup(), flags, typeid(*this).name());
-				const String& string = StringFromCString(formatted.c_str());
+				const String& string = StringFromASCII(formatted);
 				
 				Region r = drawFrame;
 				r.w = win ? win->Frame().w - r.x : Frame().w - r.x;

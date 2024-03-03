@@ -52,8 +52,6 @@ enum ProHeights {
 	Background = 50 // this is supposed to move the projectile to the background
 };
 
-#define BACK_DEPTH 50
-
 //projectile phases
 #define P_UNINITED  -1
 #define P_TRAVEL     0   //projectile moves to target
@@ -126,7 +124,7 @@ enum ProHeights {
 #define PAF_VISIBLE    1      //the travel projectile is visible until explosion; CPROJECTILEAREAFILEFORMAT_FLAGS_CENTERBAM
 #define PAF_INANIMATE  2      //target inanimates
 #define PAF_TRIGGER    4      //explosion needs to be triggered
-#define PAF_SYNC       8      //one explosion at a time
+#define PAF_DELAYED    8 // one explosion at a time, a delayed trigger
 #define PAF_SECONDARY  16     //secondary projectiles at explosion
 #define PAF_FRAGMENT   32     //fragments (charanimation) at explosion
 #define PAF_ENEMY      64     //target party or not party
@@ -252,7 +250,8 @@ public:
 	//these are public but not in the .pro file
 	Holder<ProjectileExtension> Extension;
 	Holder<Palette> palette = nullptr;
-	//internals
+	int form = 0; // gemrb extension
+
 private:
 	ResRef smokebam;
 	tick_t timeStartStep = 0;
@@ -348,6 +347,8 @@ public:
 	int GetPhase() const;
 	void Cleanup();
 
+	Point GetPos() const { return Pos; }
+	int GetZPos() const;
 	inline Point GetDestination() const { return Destination; }
 	inline const ResRef& GetName() const { return projectileName; }
 	inline ieWord GetType() const { return type; }
@@ -409,8 +410,9 @@ public:
 	void ClearPath();
 	//handle phases, return 0 when expired
 	int Update();
+	Region DrawingRegion(const Region& viewPort) const;
 	//draw object
-	void Draw(const Region &screen);
+	void Draw(const Region& screen, BlitFlags flags);
 	void SetGradient(int gradient, bool tinted);
 	void StaticTint(const Color &newtint);
 	static Point GetStartOffset(const Actor* actor);
@@ -447,17 +449,21 @@ private:
 	void CheckTrigger(unsigned int radius);
 	//calculate target and destination points for a firewall
 	void SetupWall();
+	void BendPosition(Point& pos) const;
+	void DrawPopping(unsigned int face, const Point& pos, BlitFlags flags, const Color& popTint);
 	void DrawLine(const Region &screen, int face, BlitFlags flag);
-	void DrawTravel(const Region &screen);
-	bool DrawChildren(const Region &screen);
-	void DrawExplosion(const Region &screen);
+	void DrawTravel(const Region& screen, BlitFlags flags);
+	bool DrawChildren(const Region& screen, BlitFlags flags);
+	void DrawExplodingPhase1() const;
+	void DrawSpread();
+	void DrawSpreadChild(size_t idx, bool firstExplosion, const Point& offset);
+	void DrawExplosion(const Region& screen, BlitFlags flags);
 	void SpawnFragment(Point& pos) const;
 	void SpawnFragments(const Holder<ProjectileExtension>& extension) const;
-	void DrawExploded(const Region &screen);
+	void DrawExploded(const Region& screen, BlitFlags flags);
 	int GetTravelPos(int face) const;
 	int GetShadowPos(int face) const;
 	void SetFrames(int face, int frame1, int frame2);
-	inline int GetZPos() const;
 
 	//logic to resolve target when single projectile hit destination
 	int CalculateTargetFlag() const;

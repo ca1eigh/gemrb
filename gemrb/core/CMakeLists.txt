@@ -101,13 +101,17 @@ FILE(GLOB gemrb_core_LIB_SRCS
 	Scriptable/OverHeadText.cpp
 	Scriptable/Scriptable.cpp
 	Scriptable/PCStatStruct.cpp
+	Scriptable/TileObject.cpp
 	Streams/DataStream.cpp
 	Streams/FileCache.cpp
 	Streams/FileStream.cpp
 	Streams/MemoryStream.cpp
+	Streams/PosixFile.cpp
 	Streams/SlicedStream.cpp
+	Strings/UTF8Comparison.cpp
 	Strings/String.cpp
 	Strings/StringConversion.cpp
+	Strings/StringMap.cpp
 	System/swab.cpp
 	System/VFS.cpp
 	Video/Pixels.cpp
@@ -133,6 +137,7 @@ IF(WIN32)
 		${gemrb_core_LIB_SRCS}
 		../../platforms/windows/CodepageToIconv.cpp
 		../../platforms/windows/CodepageToIconvMap.cpp
+		../../platforms/windows/WindowsFile.cpp
 	)
 	INCLUDE_DIRECTORIES(${Iconv_INCLUDE_DIR})
 ENDIF()
@@ -152,6 +157,14 @@ else (STATIC_LINK)
 	ENDIF(WIN32)
 endif (STATIC_LINK)
 
+IF(WIN32)
+	TARGET_LINK_LIBRARIES(gemrb_core shlwapi)
+ENDIF()
+
+IF(USE_TRACY)
+  TARGET_LINK_LIBRARIES(gemrb_core TracyClient)
+ENDIF()
+
 target_compile_definitions(gemrb_core PRIVATE _USE_MATH_DEFINES)
 
 # make lintian happy
@@ -162,7 +175,13 @@ SET_TARGET_PROPERTIES(gemrb_core PROPERTIES
 
 IF (APPLE)
 	SET_TARGET_PROPERTIES(gemrb_core PROPERTIES
-	INSTALL_NAME_DIR ${LIB_DIR}
-	LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/gemrb/${PROJECT_NAME}.app/Contents/Frameworks
-)
+		INSTALL_NAME_DIR ${LIB_DIR}
+		LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/gemrb/${PROJECT_NAME}.app/Contents/Frameworks
+	)
+
+	IF (BUILD_TESTING)
+		ADD_CUSTOM_COMMAND(TARGET gemrb_core POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:gemrb_core> ${CMAKE_BINARY_DIR}/Frameworks/$<TARGET_FILE_NAME:gemrb_core>
+		)
+	ENDIF()
 ENDIF (APPLE)

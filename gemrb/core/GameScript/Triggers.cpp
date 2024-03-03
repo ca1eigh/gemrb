@@ -1150,19 +1150,47 @@ int GameScript::HasItemEquipped(Scriptable * Sender, const Trigger *parameters)
 	if (!actor) {
 		return 0;
 	}
+
 	int slot = actor->inventory.FindItem(parameters->resref0Parameter, IE_INV_ITEM_UNDROPPABLE);
-	if (slot == -1) {
+	int skip = 0;
+	while (slot != -1) {
+		// instead of looking for IE_INV_ITEM_EQUIPPED, which we set only on weapons,
+		// just inspect in which part of the inventory the slot is
+		// bg2/ddguard7.baf needs it (strohm mask) and the bg1re (Branwen) girdle of gender banter
+		// confirmed by RE: only checked the item is not in the magic slot or general inventory
+		if (!actor->inventory.InBackpack(slot) && slot != Inventory::GetMagicSlot()) {
+			return 1;
+		}
+		slot = actor->inventory.FindItem(parameters->resref0Parameter, IE_INV_ITEM_UNDROPPABLE, ++skip);
+	}
+	return 0;
+}
+
+// this is only used for Lilarcor in the originals, where it matter that the weapon is actually being used
+// same as HasItemEquipped, but only the currently equipped weapon slot is checked alongside the rest
+int GameScript::HasItemEquippedReal(Scriptable* Sender, const Trigger* parameters)
+{
+	const Scriptable* scr = GetScriptableFromObject(Sender, parameters->objectParameter);
+	const Actor* actor = Scriptable::As<Actor>(scr);
+	if (!actor) {
 		return 0;
 	}
 
-	// instead of looking for IE_INV_ITEM_EQUIPPED, which we set only on weapons,
-	// just inspect in which part of the inventory the slot is
-	// bg2/ddguard7.baf needs it (strohm mask) and the bg1re (Branwen) girdle of gender banter
-	if (actor->inventory.InBackpack(slot)) {
-		return 0;
+	int slot = actor->inventory.FindItem(parameters->resref0Parameter, IE_INV_ITEM_UNDROPPABLE);
+	int skip = 0;
+	int firstWeaponSlot = Inventory::GetWeaponSlot();
+	while (slot != -1) {
+		if (slot >= firstWeaponSlot && slot <= firstWeaponSlot + 3) {
+			const CREItem* item = actor->inventory.GetSlotItem(slot);
+			if (item->Flags & IE_INV_ITEM_EQUIPPED) {
+				return 1;
+			}
+		} else if (!actor->inventory.InBackpack(slot) && slot != Inventory::GetMagicSlot()) {
+			return 1;
+		}
+		slot = actor->inventory.FindItem(parameters->resref0Parameter, IE_INV_ITEM_UNDROPPABLE, ++skip);
 	}
-
-	return 1;
+	return 0;
 }
 
 int GameScript::Acquired(Scriptable * Sender, const Trigger *parameters)
@@ -1244,7 +1272,7 @@ int GameScript::HaveSpell(Scriptable *Sender, const Trigger *parameters)
 		return 0;
 	}
 
-	if (parameters->int0Parameter == 0 && Sender->LastMarkedSpell == 0) {
+	if (parameters->int0Parameter == 0 && Sender->objects.LastMarkedSpell == 0) {
 		return false;
 	}
 
@@ -1252,7 +1280,7 @@ int GameScript::HaveSpell(Scriptable *Sender, const Trigger *parameters)
 		return actor->spellbook.HaveSpell(parameters->resref0Parameter, 0);
 	}
 	int spellNum = parameters->int0Parameter;
-	if (!spellNum) spellNum = Sender->LastMarkedSpell;
+	if (!spellNum) spellNum = Sender->objects.LastMarkedSpell;
 	return actor->spellbook.HaveSpell(spellNum, 0);
 }
 
@@ -1505,7 +1533,7 @@ int GameScript::Range(Scriptable *Sender, const Trigger *parameters)
 		return 0;
 	}
 	if (Sender->Type == ST_ACTOR) {
-		Sender->LastMarked = scr->GetGlobalID();
+		Sender->objects.LastMarked = scr->GetGlobalID();
 	}
 	int distance = SquaredMapDistance(Sender, scr);
 	bool matched = DiffCore(distance, (parameters->int0Parameter + 1) * (parameters->int0Parameter + 1), parameters->int1Parameter);
@@ -1735,7 +1763,7 @@ int GameScript::IsOverMe(Scriptable *Sender, const Trigger *parameters)
 
 	// manually set LastTrigger, since IsOverMe is not in svtriobj
 	if (ret != 0) {
-		Sender->LastTrigger = ret;
+		Sender->objects.LastTrigger = ret;
 		ret = 1;
 	}
 	return ret;
@@ -2180,7 +2208,7 @@ int GameScript::SetLastMarkedObject(Scriptable *Sender, const Trigger *parameter
 	if (!tar || tar->Type != ST_ACTOR) {
 		return 0;
 	}
-	scr->LastMarked = tar->GetGlobalID();
+	scr->objects.LastMarked = tar->GetGlobalID();
 	return 1;
 }
 
@@ -2196,12 +2224,12 @@ int GameScript::SetSpellTarget(Scriptable *Sender, const Trigger *parameters)
 	const Scriptable* tar = GetScriptableFromObject(Sender, parameters->objectParameter);
 	if (!tar) {
 		// we got called with Nothing to invalidate the target
-		scr->LastSpellTarget = 0;
-		scr->LastTargetPos.Invalidate();
+		scr->objects.LastSpellTarget = 0;
+		scr->objects.LastTargetPos.Invalidate();
 		return 1;
 	}
-	scr->LastTargetPos.Invalidate();
-	scr->LastSpellTarget = tar->GetGlobalID();
+	scr->objects.LastTargetPos.Invalidate();
+	scr->objects.LastSpellTarget = tar->GetGlobalID();
 	return 1;
 }
 
@@ -2259,7 +2287,7 @@ int GameScript::ForceMarkedSpell_Trigger(Scriptable *Sender, const Trigger *para
 		return 0;
 	}
 
-	scr->LastMarkedSpell = parameters->int0Parameter;
+	scr->objects.LastMarkedSpell = parameters->int0Parameter;
 	return 1;
 }
 
@@ -2270,7 +2298,7 @@ int GameScript::IsMarkedSpell(Scriptable *Sender, const Trigger *parameters)
 		return 0;
 	}
 
-	return scr->LastMarkedSpell == parameters->int0Parameter;
+	return scr->objects.LastMarkedSpell == parameters->int0Parameter;
 }
 
 
@@ -3142,7 +3170,7 @@ int GameScript::CharName(Scriptable *Sender, const Trigger *parameters)
 		return 0;
 	}
 
-	return actor->GetShortName() == StringFromCString(parameters->string0Parameter.c_str());
+	return actor->GetShortName() == StringFromTLK(parameters->string0Parameter);
 }
 
 int GameScript::AnimationID(Scriptable *Sender, const Trigger *parameters)
@@ -3251,7 +3279,7 @@ int GameScript::LastPersonTalkedTo(Scriptable *Sender, const Trigger *parameters
 		return 0;
 	}
 
-	if (MatchActor(Sender, scr->LastTalker, parameters->objectParameter)) {
+	if (MatchActor(Sender, scr->objects.LastTalker, parameters->objectParameter)) {
 		return 1;
 	}
 	return 0;
@@ -3309,7 +3337,7 @@ int GameScript::AttackedBy(Scriptable *Sender, const Trigger *parameters)
 	bool match = Sender->MatchTriggerWithObject(trigger_attackedby, parameters->objectParameter, parameters->int0Parameter);
 	const Scriptable* target = GetScriptableFromObject(Sender, parameters->objectParameter);
 	if (match && target && Sender->Type == ST_ACTOR) {
-		Sender->LastMarked = target->GetGlobalID();
+		Sender->objects.LastMarked = target->GetGlobalID();
 	}
 	return match;
 }
@@ -3341,7 +3369,7 @@ int GameScript::LastMarkedObject_Trigger(Scriptable *Sender, const Trigger *para
 		return 0;
 	}
 
-	if (MatchActor(Sender, actor->LastMarked, parameters->objectParameter)) {
+	if (MatchActor(Sender, actor->objects.LastMarked, parameters->objectParameter)) {
 		//don't mark this object for clear
 		//Sender->AddTrigger(&actor->LastSeen);
 		return 1;
@@ -3361,7 +3389,7 @@ int GameScript::HelpEX(Scriptable *Sender, const Trigger *parameters)
 		return 0;
 	}
 
-	const Actor *help = Sender->GetCurrentArea()->GetActorByGlobalID(actor->LastHelp);
+	const Actor* help = Sender->GetCurrentArea()->GetActorByGlobalID(actor->objects.LastHelp);
 	if (!help) {
 		//no help required
 		return 0;
@@ -3388,7 +3416,7 @@ int GameScript::HelpEX(Scriptable *Sender, const Trigger *parameters)
 		match = true;
 	}
 	if (match && Sender->Type == ST_ACTOR) {
-		Sender->LastMarked = actor->GetGlobalID();
+		Sender->objects.LastMarked = actor->GetGlobalID();
 	}
 	return match;
 }
@@ -3398,7 +3426,7 @@ int GameScript::Help_Trigger(Scriptable *Sender, const Trigger *parameters)
 	 bool match = Sender->MatchTriggerWithObject(trigger_help, parameters->objectParameter);
 	 const Scriptable* target = GetScriptableFromObject(Sender, parameters->objectParameter);
 	 if (match && target && Sender->Type == ST_ACTOR) {
-		 Sender->LastMarked = target->GetGlobalID();
+		 Sender->objects.LastMarked = target->GetGlobalID();
 	 }
 	 return match;
 }
@@ -3445,7 +3473,7 @@ int GameScript::NightmareModeOn(Scriptable */*Sender*/, const Trigger */*paramet
 	const Game *game = core->GetGame();
 
 	if (game->version == 11) { // GAM_VER_IWD
-		core->GetVariable("Nightmare Mode", 0);
+		diff = core->GetDictionary().Get("Nightmare Mode", 0);
 	} else if (game->version == 22) { // GAM_VER_IWD2
 		diff = game->HOFMode;
 	}
@@ -3458,7 +3486,7 @@ int GameScript::NightmareModeOn(Scriptable */*Sender*/, const Trigger */*paramet
 
 int GameScript::StoryModeOn(Scriptable */*Sender*/, const Trigger */*parameters*/)
 {
-	ieDword mode = core->GetVariable("Story Mode", 0);
+	ieDword mode = core->GetDictionary().Get("Story Mode", 0);
 	if (mode) {
 		return 1;
 	}
@@ -3475,7 +3503,7 @@ int GameScript::CheckAreaDiffLevel(Scriptable */*Sender*/, const Trigger *parame
 
 int GameScript::Difficulty(Scriptable */*Sender*/, const Trigger *parameters)
 {
-	ieDword diff = core->GetVariable("Difficulty Level", 0);
+	ieDword diff = core->GetDictionary().Get("Difficulty Level", 0);
 	int mode = parameters->int1Parameter;
 	//hack for compatibility
 	if (!mode) {
@@ -3486,14 +3514,14 @@ int GameScript::Difficulty(Scriptable */*Sender*/, const Trigger *parameters)
 
 int GameScript::DifficultyGT(Scriptable */*Sender*/, const Trigger *parameters)
 {
-	ieDword diff = core->GetVariable("Difficulty Level", 0);
+	ieDword diff = core->GetDictionary().Get("Difficulty Level", 0);
 
 	return diff+1>(ieDword) parameters->int0Parameter;
 }
 
 int GameScript::DifficultyLT(Scriptable */*Sender*/, const Trigger *parameters)
 {
-	ieDword diff = core->GetVariable("Difficulty Level", 0);
+	ieDword diff = core->GetDictionary().Get("Difficulty Level", 0);
 
 	return diff+1<(ieDword) parameters->int0Parameter;
 }
@@ -3817,7 +3845,7 @@ int GameScript::ModalState( Scriptable *Sender, const Trigger *parameters)
 		return 0;
 	}
 
-	if (actor->Modal.State == (ieDword) parameters->int0Parameter) {
+	if (actor->Modal.State == (Modal) parameters->int0Parameter) {
 		return 1;
 	}
 	return 0;
@@ -3831,7 +3859,7 @@ int GameScript::IsCreatureHiddenInShadows( Scriptable *Sender, const Trigger */*
 		return 0;
 	}
 
-	if (actor->Modal.State == MS_STEALTH) {
+	if (actor->Modal.State == Modal::Stealth) {
 		return 1;
 	}
 	return 0;
@@ -4089,7 +4117,7 @@ int GameScript::SystemVariable_Trigger(Scriptable *Sender, const Trigger *parame
 
 	switch (parameters->int0Parameter) {
 	case SYSV_SCREENFLAGS:
-		value = core->GetGameControl()->GetScreenFlags();
+		value = core->GetGameControl()->GetScreenFlags().to_ulong();
 		break;
 	case SYSV_CONTROLSTATUS:
 		value = core->GetGame()->ControlStatus;
@@ -4771,8 +4799,24 @@ int GameScript::Switch(Scriptable* Sender, const Trigger* parameters)
 {
 	ieDword value = CheckVariable(Sender, parameters->string0Parameter, parameters->string1Parameter);
 	Sender->weightsAsCases = static_cast<unsigned char>(value);
-	Log(ERROR, "GameScript", "Switch has not been implemented yet!");
 	return 0;
+}
+
+int GameScript::Summoned(Scriptable* Sender, const Trigger* parameters)
+{
+	const Scriptable* summon = GetScriptableFromObject(Sender, parameters->objectParameter);
+	if (!summon) return 0;
+
+	return Sender->MatchTrigger(trigger_summoned, summon->GetGlobalID());
+}
+
+int GameScript::Reset(Scriptable* Sender, const Trigger* parameters)
+{
+	const Scriptable* target = GetScriptableFromObject(Sender, parameters->objectParameter);
+	const Highlightable* trap = Scriptable::As<Highlightable>(target);
+	if (!trap) return 0;
+
+	return Sender->MatchTrigger(trigger_reset, trap->GetGlobalID());
 }
 
 }

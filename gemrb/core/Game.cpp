@@ -396,16 +396,6 @@ int Game::LeaveParty(Actor* actor, bool returnCriticalItems)
 	return ( int ) NPCs.size() - 1;
 }
 
-//determines if startpos.2da has rotation rows (it cannot have tutorial line)
-bool Game::DetermineStartPosType(const TableMgr* strTable) const
-{
-	if (strTable->GetRowCount() >=6 && strTable->GetRowName(4) == "START_ROT")
-	{
-		return true;
-	}
-	return false;
-}
-
 #define PMODE_COUNT 3
 
 void Game::InitActorPos(Actor *actor) const
@@ -418,7 +408,7 @@ void Game::InitActorPos(Actor *actor) const
 		error("Game", "Game is missing character start data.");
 	}
 	// 0 - single player, 1 - tutorial, 2 - expansion
-	ieDword playmode = core->GetVariable("PlayMode", 0);
+	ieDword playmode = core->GetDictionary().Get("PlayMode", 0);
 
 	//Sometimes playmode is set to -1 (in pregenerate)
 	//normally execution shouldn't ever come here, but it actually does
@@ -623,7 +613,7 @@ bool Game::SelectActor(Actor* actor, bool select, unsigned flags)
 		assert(actor->IsSelected());
 		selected.push_back( actor );
 
-		if (!(flags&SELECT_QUIET)) {
+		if (!(flags & SELECT_QUIET) && selected.size() == 1) {
 			actor->PlaySelectionSound();
 		}
 	} else {
@@ -764,44 +754,53 @@ int Game::DelMap(unsigned int index, int forced)
 	// (definitely if MAX_MAPS_LOADED gets bumped)
 	if (map->INISpawn) map->INISpawn->ExitSpawn();
 
-	if (forced || Maps.size() > MAX_MAPS_LOADED) {
-		//keep at least one master
-		const ResRef name = map->GetScriptRef();
-		if (MasterArea(name) && AnotherArea.IsEmpty()) {
-			AnotherArea = name;
-			if (!forced) {
-				return -1;
-			}
-		}
-		//this check must be the last, because
-		//after PurgeActors you cannot keep the
-		//area in memory
-		//Or the queues should be regenerated!
-		if (!map->CanFree()) {
-			return 1;
-		}
-		//if there are still selected actors on the map (e.g. summons)
-		//unselect them now before they get axed
-		for (auto m = selected.begin(); m != selected.end();) {
-			if (!(*m)->InParty && (*m)->Area == Maps[index]->GetScriptRef()) {
-				m = selected.erase(m);
-			} else {
-				++m;
-			}
-		}
+	if (!forced && Maps.size() <= MAX_MAPS_LOADED) {
+		// not removing the map
+		return 0;
+	}
 
-		//remove map from memory
-		core->SwapoutArea(Maps[index]);
-		delete(Maps[index]);
-		Maps.erase(Maps.begin() + index);
-		//current map will be decreased
-		if (MapIndex > (int) index) {
-			MapIndex--;
+	// keep at least one master
+	const ResRef name = map->GetScriptRef();
+	if (MasterArea(name) && AnotherArea.IsEmpty()) {
+		AnotherArea = name;
+		if (!forced) {
+			return -1;
 		}
+	}
+
+	// this check must be the last, because
+	// after PurgeActors you cannot keep the area in memory
+	// Or the queues should be regenerated!
+	if (!map->CanFree()) {
 		return 1;
 	}
-	//didn't remove the map
-	return 0;
+
+	// if a familiar isn't executing EscapeArea, it warps to the protagonist
+	for (auto& npc : NPCs) {
+		if (npc->GetBase(IE_EA) == EA_FAMILIAR && (!npc->GetCurrentAction() || npc->GetCurrentAction()->actionID != 108)) {
+			npc->SetPosition(PCs[0]->Pos, true);
+		}
+	}
+
+	// if there are still selected actors on the map (e.g. summons)
+	// unselect them now before they get axed
+	for (auto m = selected.begin(); m != selected.end();) {
+		if (!(*m)->InParty && (*m)->Area == Maps[index]->GetScriptRef()) {
+			m = selected.erase(m);
+		} else {
+			++m;
+		}
+	}
+
+	// remove map from memory
+	core->SwapoutArea(Maps[index]);
+	delete Maps[index];
+	Maps.erase(Maps.begin() + index);
+	// current map will be decreased
+	if (MapIndex > (int) index) {
+		MapIndex--;
+	}
+	return 1;
 }
 
 void Game::PlacePersistents(Map *newMap, const ResRef &resRef)
@@ -977,7 +976,7 @@ void Game::SwapPCs(unsigned int pc1, unsigned int pc2) const
 
 	if (idx1==0 || idx2==0) {
 		//leader changed
-		DisplayStringCoreVC(FindPC(1), VB_LEADER, 0);
+		FindPC(1)->VerbalConstant(Verbal::Leader, gamedata->GetVBData("SPECIAL_COUNT"));
 	}
 }
 
@@ -1003,7 +1002,7 @@ void Game::DeleteJournalGroup(ieByte group)
 	}
 }
 /* returns true if it modified or added a journal entry */
-bool Game::AddJournalEntry(ieStrRef strRef, ieByte section, ieByte group)
+bool Game::AddJournalEntry(ieStrRef strRef, ieByte section, ieByte group, ieStrRef feedback)
 {
 	GAMJournalEntry* je = FindJournalEntry(strRef);
 	if (je) {
@@ -1039,7 +1038,36 @@ bool Game::AddJournalEntry(ieStrRef strRef, ieByte section, ieByte group)
 	je->Group = group;
 	je->Text = strRef;
 
-	Journals.push_back( je );
+	Journals.push_back(je);
+
+	// print some feedback, but it has to be constructed first
+	String msg(u"\n[color=bcefbc]");
+	ieStrRef strJournalChange = DisplayMessage::GetStringReference(HCStrings::JournalChange);
+	msg += core->GetString(strJournalChange);
+	if (feedback == ieStrRef::INVALID) feedback = strRef;
+	String str = core->GetString(feedback);
+	if (!str.empty()) {
+		// cutting off the strings at the first crlf
+		size_t newlinePos = str.find_first_of(L'\n');
+		if (newlinePos != String::npos) {
+			str.resize(newlinePos);
+		}
+		msg += u" - [/color][p][color=ffd4a9]" + str + u"[/color][/p]";
+	} else {
+		msg += u"[/color]\n";
+	}
+	if (core->HasFeedback(FT_MISC)) {
+		if (core->HasFeature(GFFlags::ONSCREEN_TEXT)) {
+			core->GetGameControl()->SetDisplayText(HCStrings::JournalChange, 30);
+		} else {
+			displaymsg->DisplayMarkupString(msg);
+		}
+	}
+	// pst/bg2 also has a sound attached to the base string, so play it manually
+	StringBlock sb = core->strings->GetStringBlock(strJournalChange);
+	if (sb.Sound.IsEmpty()) return true;
+	core->GetAudioDrv()->Play(StringView(sb.Sound), SFX_CHAN_DIALOG);
+
 	return true;
 }
 
@@ -1235,15 +1263,16 @@ bool Game::EveryoneStopped() const
 //canmove=true: if some PC can't move (or hostile), then this returns false
 bool Game::EveryoneNearPoint(const Map *area, const Point &p, int flags) const
 {
-	for (const auto& pc : PCs) {
-		if (flags & ENP_ONLYSELECT && !pc->Selected) {
-			continue;
+	auto NearPoint = [area, &p, flags](const Actor* pc) {
+		if (flags & ENP::OnlySelect && !pc->Selected) {
+			return true;
 		}
 		if (pc->GetStat(IE_STATE_ID) & STATE_DEAD) {
-			continue;
+			return true;
 		}
-		if (flags&ENP_CANMOVE) {
-			//someone is uncontrollable, can't move
+
+		if (flags & ENP::CanMove) {
+			// someone is uncontrollable, can't move
 			if (pc->GetStat(IE_EA) > EA_GOODCUTOFF) {
 				return false;
 			}
@@ -1252,6 +1281,7 @@ bool Game::EveryoneNearPoint(const Map *area, const Point &p, int flags) const
 				return false;
 			}
 		}
+
 		if (pc->GetCurrentArea() != area) {
 			return false;
 		}
@@ -1259,20 +1289,43 @@ bool Game::EveryoneNearPoint(const Map *area, const Point &p, int flags) const
 			Log(MESSAGE, "Game", "Actor {} is not near!", fmt::WideToChar{pc->GetName()});
 			return false;
 		}
+		return true;
+	};
+
+	for (const auto& pc : PCs) {
+		if (!NearPoint(pc)) return false;
 	}
+
+	if (flags & ENP::Familars) {
+		for (const auto& npc : NPCs) {
+			if (npc->GetBase(IE_EA) == EA_FAMILIAR && !NearPoint(npc)) {
+				return false;
+			}
+		}
+	}
+
 	return true;
 }
 
+static bool HasSpecialDeathReaction(const ieVariable& scriptName, const ieVariable& deadName)
+{
+	AutoTable tm = gamedata->LoadTable("death", true);
+	if (!tm) return false;
+	const std::string& value = tm->QueryField(scriptName, deadName);
+	return value[0] != '0';
+}
+
 //called when someone died
-void Game::PartyMemberDied(const Actor *actor)
+void Game::PartyMemberDied(const Actor* actor) const
 {
 	//this could be null, in some extreme cases...
 	const Map *area = actor->GetCurrentArea();
 
 	size_t size = PCs.size();
-	Actor *react = NULL;
-	for (size_t i = core->Roll(1, static_cast<int>(size), 0), n = 0; n < size; i++, n++) {
-		Actor *pc = PCs[i%size];
+	Actor* react = nullptr;
+	size_t offset = RAND<size_t>(1, size);
+	for (size_t idx = offset; idx < offset + size; idx++) {
+		Actor* pc = PCs[idx % size];
 		if (pc == actor) {
 			continue;
 		}
@@ -1285,16 +1338,20 @@ void Game::PartyMemberDied(const Actor *actor)
 		if (pc->GetCurrentArea()!=area) {
 			continue;
 		}
-		if (pc->HasSpecialDeathReaction(actor->GetScriptName())) {
+		if (HasSpecialDeathReaction(pc->GetScriptName(), actor->GetScriptName())) {
 			react = pc;
 			break;
 		} else if (react == NULL) {
 			react = pc;
 		}
 	}
-	AddTrigger(TriggerEntry(trigger_partymemberdied, actor->GetGlobalID()));
+
 	if (react != NULL) {
-		react->ReactToDeath(actor->GetScriptName());
+		tick_t len = react->ReactToDeath(actor->GetScriptName());
+		tick_t counter = (core->Time.defaultTicksPerSec * len) / 1000;
+		if (counter > react->GetWait()) { // don't nullify it in case we're waiting already
+			react->SetWait(counter);
+		}
 	}
 }
 
@@ -1369,6 +1426,7 @@ void Game::AdvanceTime(ieDword add, bool fatigue)
 	// emulate speeding through effects than need more than just an expiry check (eg. regeneration)
 	// and delay most idle actions
 	// but only if we skip for at least an hour
+	Map* map = GetCurrentArea();
 	if (add >= core->Time.hour_size) {
 		for (const auto& pc : PCs) {
 			pc->ResetCommentTime();
@@ -1387,7 +1445,13 @@ void Game::AdvanceTime(ieDword add, bool fatigue)
 		}
 
 		// bg1 also closed doors
-		GetCurrentArea()->AutoLockDoors();
+		map->AutoLockDoors();
+		// teleport the familiar to the protagonist, sometimes
+		// resting already ensures all pcs are in the same area
+		// the original also checked if the familiar was controllable, but then we'd have to look it up
+		if (map->AreaType & AT_DAYNIGHT) {
+			MoveFamiliars(map->GetScriptRef(), PCs[0]->Pos, -1);
+		}
 	}
 
 	if (!fatigue) {
@@ -1399,7 +1463,6 @@ void Game::AdvanceTime(ieDword add, bool fatigue)
 	}
 
 	//change the tileset if needed
-	Map *map = GetCurrentArea();
 	if (map && map->ChangeMap(IsDay())) {
 		//play the daylight transition movie appropriate for the area
 		//it is needed to play only when the area truly changed its tileset
@@ -1414,9 +1477,7 @@ void Game::AdvanceTime(ieDword add, bool fatigue)
 		} else {
 			res=&daymovies[areatype];
 		}
-		if (!IsStar(*res)) {
-			core->PlayMovie(*res);
-		}
+		core->PlayMovie(*res);
 	}
 }
 
@@ -1714,6 +1775,16 @@ bool Game::CanPartyRest(int checks, ieStrRef* err) const
 				return false;
 			}
 		}
+
+		// disallowed if a familiar is in an incompatible area
+		for (const auto& npc : NPCs) {
+			if (npc->GetBase(IE_EA) != EA_FAMILIAR) continue;
+			const Map* map = npc->GetCurrentArea();
+			if (map && !(map->AreaType & (AT_OUTDOOR | AT_DUNGEON | AT_CAN_REST_INDOORS))) {
+				*err = DisplayMessage::GetStringReference(HCStrings::MayNotRest);
+				return false;
+			}
+		}
 	}
 
 	return true;
@@ -1751,7 +1822,7 @@ bool Game::RestParty(int checks, int dream, int hp)
 				hp = std::max(1, hp * (hours - hoursLeft) / hours);
 			}
 			hours -= hoursLeft;
-			// the interruption occured before any resting could be done, so just bail out
+			// the interruption occurred before any resting could be done, so just bail out
 			if (!hours) {
 				return false;
 			}
@@ -1765,7 +1836,7 @@ bool Game::RestParty(int checks, int dream, int hp)
 	while (i--) {
 		Actor *tar = GetPC(i, true);
 		tar->ClearPath();
-		tar->SetModal(MS_NONE, false);
+		tar->SetModal(Modal::None, false);
 		//if hp = 0, then healing will be complete
 		tar->Heal(hp);
 		// auto-cast memorized healing spells if requested and available
@@ -1783,7 +1854,7 @@ bool Game::RestParty(int checks, int dream, int hp)
 	for (auto tar : NPCs) {
 		if (tar->GetBase(IE_EA) == EA_FAMILIAR) {
 			tar->ClearPath();
-			tar->SetModal(MS_NONE, false);
+			tar->SetModal(Modal::None, false);
 			tar->Heal(hp);
 			tar->Rest(hours);
 			if (!hoursLeft) tar->PartyRested();
@@ -1815,9 +1886,7 @@ bool Game::RestParty(int checks, int dream, int hp)
 		} else {
 			movie = &restmovies[dream];
 		}
-		if (!IsStar(*movie)) {
-			core->PlayMovie(*movie);
-		}
+		core->PlayMovie(*movie);
 	}
 
 	//set partyrested flags
@@ -1860,7 +1929,7 @@ void Game::CastOnRest() const
 	using RestSpells = std::vector<HealingResource>;
 	using RestTargets = std::vector<Injured>;
 
-	ieDword tmp = core->GetVariable("Heal Party on Rest", 0);
+	ieDword tmp = core->GetDictionary().Get("Heal Party on Rest", 0);
 
 	const auto& special_spells = gamedata->GetSpecialSpells();
 	size_t specialCount = special_spells.size();
@@ -1987,7 +2056,7 @@ void Game::Infravision()
 	const Map *map = GetCurrentArea();
 	if (!map) return;
 
-	ieDword tmp = core->GetVariable("infravision", 0);
+	ieDword tmp = core->GetDictionary().Get("infravision", 0);
 
 	bool someoneWithInfravision = false;
 	bool allSelectedWithInfravision = true;
@@ -2192,7 +2261,7 @@ void Game::SetExpansion(ieDword value)
 		break;
 	//TODO: move this hardcoded hack to the scripts
 	case 0:
-		core->GetDictionary()["PlayMode"] = 2;
+		core->GetDictionary().Set("PlayMode", 2);
 
 		int i = GetPartySize(false);
 		while(i--) {
@@ -2280,6 +2349,119 @@ void Game::ResetPartyCommentTimes() const
 	}
 }
 
+// drop the bored one liner if there was no action for some time
+// this function is deliberately called only for normal passage of time
+void Game::CheckBored()
+{
+	static int boredTimeout = core->GetDictionary().Get("Bored Timeout", 3000);
+	if (!boredTimeout) return;
+	if (core->InCutSceneMode()) return;
+
+	nextBored++;
+	if (nextBored < boredTimeout / 2) return; // likely stored in original double ticks
+
+	// randomly pick a pc, make sure he's "orderable"
+	bool complained = false;
+	size_t size = PCs.size();
+	size_t offset = RAND<size_t>(1, size);
+	for (size_t idx = offset; idx < offset + size; idx++) {
+		const Actor* pc = PCs[idx % size];
+		if (!pc->ValidTarget(GA_SELECT)) continue;
+
+		pc->VerbalConstant(Verbal::Bored, gamedata->GetVBData("SPECIAL_COUNT"));
+		complained = true;
+		break;
+	}
+
+	// reset, otherwise try again in a round
+	if (complained) {
+		// the original reset to (boredTimeout - boredTimeout / 2), which doesn't make much sense
+		nextBored = 0;
+	} else {
+		nextBored -= core->Time.round_size;
+	}
+}
+
+bool Game::CheckPartyBanter() const
+{
+	// don't even bother
+	size_t size = PCs.size();
+	if (size < 2) return false;
+
+	// did scripts disable us
+	if (BanterBlockFlag || BanterBlockTime > GameTime) {
+		return false;
+	}
+	if (core->InCutSceneMode()) return false;
+
+	if (CombatCounter) return false;
+
+	AutoTable bantTiming = gamedata->LoadTable("banttimg", true);
+	// TODO: some guessing is involved and we don't use REPLAYDELAY at all
+	assert(bantTiming);
+	if (GameTime % bantTiming->QueryFieldSigned<int>("FREQUENCY", "VALUE") != 0) return false;
+	if (RAND(1, 100) > bantTiming->QueryFieldSigned<int>("PROBABILITY", "VALUE")) return false;
+
+	// randomly pick a pc
+	size_t offset = RAND<size_t>(1, size);
+	Actor* originator = PCs[offset - 1];
+	const Map* oMap = originator->GetCurrentArea();
+	if (oMap != GetCurrentArea()) return false;
+	static const Actor* prevPC = nullptr;
+	if (originator == prevPC && RAND(1, 100) > bantTiming->QueryFieldSigned<int>("SPECIALPROBABILITY", "VALUE")) return false;
+	prevPC = originator;
+
+	// find target
+	bool bantered = false;
+	for (size_t idx = offset; idx < offset + size; idx++) {
+		const Actor* pc = PCs[idx % size];
+		if (pc == originator) continue;
+
+		// not an NPC
+		if (pc->GetBase(IE_MC_FLAGS) & MC_EXPORTABLE) continue;
+		// don't bother if we're not around
+		if (pc->GetCurrentArea() != oMap) continue;
+		// immobile or otherwise impeded
+		if (!pc->ValidTarget(GA_SELECT)) continue;
+
+		bantered = originator->GetPartyComment(pc);
+		break;
+	}
+
+	return bantered;
+}
+
+// drop area comments now and then
+void Game::CheckAreaComment()
+{
+	if (CombatCounter) return;
+	if (GameTime % 600 != 0) return;
+	if (RAND(1, 100) > 16) return; // yep, the original used 16 %
+
+	// randomly pick a pc
+	size_t offset = RAND<size_t>(1, PCs.size());
+	const Actor* pc = PCs[offset - 1];
+	static const Actor* prevPC = nullptr;
+	if (pc == prevPC && RAND(1, 10) != 1) return;
+
+	prevPC = pc;
+	AutoTable tm = gamedata->LoadTable("comment", true);
+	if (!tm) return;
+
+	TableMgr::index_t rows = tm->GetRowCount();
+	while (rows--) {
+		int areaType = tm->QueryFieldSigned<int>(rows, 0);
+		if (!(pc->GetCurrentArea()->AreaType & areaType)) continue;
+
+		unsigned int vc = tm->QueryFieldUnsigned<unsigned int>(rows, 1);
+		if (tm->QueryFieldSigned<int>(rows, 2) && !core->GetGame()->IsDay()) {
+			vc++;
+		}
+		pc->VerbalConstant(static_cast<Verbal>(vc));
+		break;
+	}
+}
+
 bool Game::OnlyNPCsSelected() const
 {
 	bool hasPC = false;
@@ -2305,13 +2487,6 @@ void Game::MoveFamiliars(const ResRef& targetArea, const Point& targetPoint, int
 		if (npc->GetBase(IE_EA) == EA_FAMILIAR) {
 			MoveBetweenAreasCore(npc, targetArea, targetPoint, orientation, true);
 		}
-	}
-}
-
-void Game::DumpKaputz() const {
-	Log(DEBUG, "Game", "Kaputz item count: {}", kaputz.size());
-	for (const auto& entry : kaputz) {
-		Log(DEBUG, "Game", "{} = {}", entry.first, entry.second);
 	}
 }
 

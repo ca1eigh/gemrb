@@ -33,8 +33,6 @@
 
 namespace GemRB {
 
-#define YESNO(x) ( (x)?"Yes":"No")
-
 Container::Container(void)
 	: Highlightable( ST_CONTAINER )
 {
@@ -76,13 +74,13 @@ void Container::Draw(bool highlight, const Region& vp, Color tint, BlitFlags fla
 }
 
 // returns the appropriate cursor over a container (or pile)
-int Container::GetCursor(int targetMode, int lastCursor) const
+int Container::GetCursor(TargetMode targetMode, int lastCursor) const
 {
 	if (Flags & CONT_DISABLED) {
 		return lastCursor;
 	}
 
-	if (targetMode == TARGET_MODE_PICK) {
+	if (targetMode == TargetMode::Pick) {
 		if (VisibleTrap(0)) {
 			return IE_CURSOR_TRAP;
 		}
@@ -238,8 +236,8 @@ std::string Container::dump() const
 	AppendFormat(buffer, "Debugdump of Container {}\n", GetScriptName() );
 	AppendFormat(buffer, "Container Global ID: {}\n", GetGlobalID());
 	AppendFormat(buffer, "Position: {}\n", Pos);
-	AppendFormat(buffer, "Type: {}, Locked: {}, LockDifficulty: {}\n", containerType, YESNO(Flags&CONT_LOCKED), LockDifficulty);
-	AppendFormat(buffer, "Flags: {}, Trapped: {}, Detected: {}\n", Flags, YESNO(Trapped), TrapDetected );
+	AppendFormat(buffer, "Type: {}, Locked: {}, LockDifficulty: {}\n", containerType, YesNo(Flags & CONT_LOCKED), LockDifficulty);
+	AppendFormat(buffer, "Flags: {}, Trapped: {}, Detected: {}\n", Flags, YesNo(Trapped), TrapDetected);
 	AppendFormat(buffer, "Trap detection: {}%, Trap removal: {}%\n", TrapDetectionDiff,
 		TrapRemovalDiff );
 	ResRef name = "NONE";

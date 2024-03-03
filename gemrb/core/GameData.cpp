@@ -121,16 +121,17 @@ AutoTable GameData::LoadTable(const ResRef& tableRef, bool silent)
 		return tables.at(tableRef);
 	}
 
+	PluginHolder<TableMgr> tm = MakePluginHolder<TableMgr>(IE_2DA_CLASS_ID);
+	if (!tm) {
+		return nullptr;
+	}
+
 	DataStream* str = GetResourceStream(tableRef, IE_2DA_CLASS_ID, silent);
 	if (!str) {
 		return nullptr;
 	}
-	PluginHolder<TableMgr> tm = MakePluginHolder<TableMgr>(IE_2DA_CLASS_ID);
-	if (!tm) {
-		delete str;
-		return nullptr;
-	}
-	if (!tm->Open(str)) {
+
+	if (!tm->Open(std::unique_ptr<DataStream>{str})) {
 		return nullptr;
 	}
 
@@ -1042,6 +1043,14 @@ int GameData::GetXPBonus(ieDword bonusType, ieDword level)
 	}
 
 	return xpBonus->QueryFieldSigned<int>(bonusType, level - 1);
+}
+
+int GameData::GetVBData(const TableMgr::key_t& rowName)
+{
+	AutoTable vbDetails = LoadTable("vcdetail", true);
+	assert(vbDetails);
+
+	return vbDetails->QueryFieldSigned<int>(rowName, "VALUE");
 }
 
 }

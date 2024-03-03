@@ -107,7 +107,8 @@ CharAnimations::AvatarTableLoader::AvatarTableLoader() noexcept {
 
 		if (resdata) {
 			std::string section = fmt::to_string(i);
-			if (!resdata->GetKeysCount(section)) continue;
+			auto lookup = resdata->find(section);
+			if (lookup == resdata->end() || lookup->size() == 0) continue;
 
 			float walkscale = resdata->GetKeyAsFloat(section, "walkscale", 0.0f);
 			if (walkscale != 0.0f) table[i].WalkScale = (int)(1000.0f / walkscale);
@@ -392,11 +393,7 @@ void CharAnimations::SetArmourLevel(int ArmourLevel)
 //RangedType could be weird, reducing its value to 0,1,2
 void CharAnimations::SetRangedType(int rt)
 {
-	if ((unsigned int) rt<2) {
-		RangedType=(ieByte) rt;
-	} else {
-		RangedType=2;
-	}
+	RangedType = Clamp<ieByte>(rt, 0, 2);
 }
 
 void CharAnimations::SetWeaponType(unsigned char wt)
@@ -561,12 +558,10 @@ void CharAnimations::SetupColors(PaletteType type)
 		if (paletteType != "1") {
 			if (GetAnimType()==IE_ANI_NINE_FRAMES) {
 				PaletteResRef[type].Format("{:.4}_{:.2}{:c}", ResRefBase, paletteType, '1' + type);
+			} else if (ResRefBase == "MFIE") { // hack for magic golems
+				PaletteResRef[type].Format("{:.4}{:.2}B", ResRefBase, paletteType);
 			} else {
-				if (ResRefBase == "MFIE") { // hack for magic golems
-					PaletteResRef[type].Format("{:.4}{:.2}B", ResRefBase, paletteType);
-				} else {
-					PaletteResRef[type].Format("{:.4}_{:.2}", ResRefBase, paletteType);
-				}
+				PaletteResRef[type].Format("{:.4}_{:.2}", ResRefBase, paletteType);
 			}
 			Holder<Palette> tmppal = gamedata->GetPalette(PaletteResRef[type]);
 			if (tmppal) {
@@ -593,10 +588,8 @@ void CharAnimations::SetupColors(PaletteType type)
 		if (GlobalColorMod.type != RGBModifier::NONE) {
 			needmod = true;
 		} else {
-			// TODO: should that -1 really be there??
-			for (size_t i = 0; i < PAL_MAX - 1; ++i) {
-				if (ColorMods[i+8*type].type != RGBModifier::NONE)
-					needmod = true;
+			for (size_t i = 0; i < PAL_MAX; ++i) {
+				if (ColorMods[i + 8 * type].type != RGBModifier::NONE) needmod = true;
 			}
 		}
 
@@ -2079,13 +2072,13 @@ void CharAnimations::AddMHRSuffix(ResRef& dest, unsigned char StanceID,
 		case IE_ANI_CAST://looping
 			dest.Append("ca");
 			EquipData.Suffix = "ca";
-			Cycle = 8 + Orient;
+			Cycle = Orient;
 			break;
 
 		case IE_ANI_CONJURE://ending
 			dest.Append("ca");
 			EquipData.Suffix = "ca";
-			Cycle = Orient;
+			Cycle = 8 + Orient;
 			break;
 
 		case IE_ANI_DAMAGE:
@@ -2797,13 +2790,6 @@ void CharAnimations::PulseRGBModifiers()
 	}
 
 	lastModUpdate += inc*40;
-}
-
-void CharAnimations::DebugDump() const
-{
-	Log (DEBUG, "CharAnimations", "Anim ID   : {:#x}", GetAnimationID());
-	Log (DEBUG, "CharAnimations", "BloodColor: {}", GetBloodColor());
-	Log (DEBUG, "CharAnimations", "Flags     : {:#x}", GetFlags());
 }
 
 static inline void applyMod(const Color& src, Color& dest, const RGBModifier& mod) noexcept

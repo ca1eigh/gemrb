@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "exports.h"
+#include "Strings/StringMap.h"
 #include "System/VFS.h"
 
 // This is changed by both cmake and AppVeyor (CmakeLists.txt and .appveyor.yml)
@@ -48,7 +49,7 @@ public:
 
 #define CIE CoreInitializationException
 
-using variables_t = std::unordered_map<std::string, int32_t>;
+using variables_t = StringMap<int32_t>;
 
 struct CoreSettings {
 	path_t GamePath = ".";
@@ -71,7 +72,7 @@ struct CoreSettings {
 	path_t GemRBUnhardcodedPath;
 	path_t PluginsPath;
 	path_t GUIScriptsPath;
-#ifdef WIN32
+#ifdef WIN32 // TODO: we should make this a build time option
 	bool CaseSensitive = false; // this is just the default value, so CD1/CD2 will be resolved
 #else
 	bool CaseSensitive = true;
@@ -99,6 +100,7 @@ struct CoreSettings {
 	int LogColor = -1; // -1 is to automatically determine
 	bool CheatFlag = false; /** Cheats enabled? */
 	int MaxPartySize = 6;
+	int GUIEnhancements = 0;
 
 	bool KeepCache = false;
 	bool MultipleQuickSaves = false;
@@ -118,7 +120,7 @@ struct CoreSettings {
 	variables_t vars;
 };
 
-using InterfaceConfig = std::unordered_map<std::string, std::string>;
+using InterfaceConfig = StringMap<std::string>;
 
 GEM_EXPORT CoreSettings LoadFromArgs(int argc, char *argv[]);
 GEM_EXPORT CoreSettings LoadFromDictionary(InterfaceConfig);

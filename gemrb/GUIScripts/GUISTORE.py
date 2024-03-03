@@ -508,6 +508,8 @@ def InitStoreIdentifyWindow (Window):
 
 	# 8-11 item slots, 0x1000000c-f labels
 	for i in range (ItemButtonCount):
+		Button = Window.GetControlAlias ("IDBTN" + str(i))
+
 		if GameCheck.IsIWD1() or GameCheck.IsIWD2():
 			Button.SetSprites ("GUISTMSC", 0, 1,2,0,3)
 			color = {'r' : 32, 'g' : 32, 'b' : 192, 'a' : 128}
@@ -518,7 +520,6 @@ def InitStoreIdentifyWindow (Window):
 		else:
 			color = {'r' : 0, 'g' : 0, 'b' : 128, 'a' : 160}
 
-		Button = Window.GetControlAlias ("IDBTN" + str(i))
 		Button.SetBorder (0, color, 0, 1)
 		Button.OnPress (lambda: SelectID (Window))
 		Button.OnRightPress (InfoIdentifyWindow)
@@ -1983,8 +1984,10 @@ def RentConfirm (Window0):
 	price = Store['StoreRoomPrices'][RentIndex]
 	Gold = GemRB.GameGetPartyGold ()
 	GemRB.GameSetPartyGold (Gold-price)
+	RestTable = GemRB.LoadTable ("restheal")
+	healFor = RestTable.GetValue (RentIndex, 0, GTV_INT)
 	# TODO: run GemRB.RunRestScripts ()
-	info = GemRB.RestParty (2, 1, RentIndex+1) # 2 = REST_SCATTER, check that everyone is close by
+	info = GemRB.RestParty (2, 1, healFor) # 2 = REST_SCATTER, check that everyone is close by
 	cutscene = info["Cutscene"]
 
 	if RentConfirmWindow:
@@ -1998,8 +2001,7 @@ def RentConfirm (Window0):
 		CloseStoreWindow ()
 	elif not info["Error"]:
 		TextArea = Window.GetControlAlias('RENTTA')
-		#is there any way to change this???
-		GemRB.SetToken ("HP", "%d"%(RentIndex+1))
+		GemRB.SetToken ("HP", str(healFor))
 		TextArea.SetText (strrefs["restedfor"])
 		GemRB.SetVar ("RentIndex", -1)
 		Button = Window.GetControl (RentIndex+4)

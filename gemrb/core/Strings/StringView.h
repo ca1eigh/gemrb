@@ -19,11 +19,13 @@
 #ifndef STRINGVIEW_H
 #define STRINGVIEW_H
 
+#include <fmt/format.h>
+
 #include <cstring>
 #include <iterator>
 #include <type_traits>
 
-// SFINAE garbage to only enable funtions for strings of known size
+// SFINAE garbage to only enable functions for strings of known size
 // i'm sure its not perfect, but it meets our needs
 #define ENABLE_CHAR_RANGE(PARAM) std::enable_if_t< \
 (!std::is_enum<PARAM>::value && !std::is_fundamental<PARAM>::value && !std::is_pointer<PARAM>::value) \
@@ -44,13 +46,14 @@ public:
 	using iterator = CharT*;
 	using const_iterator = const CharT*;
 	using size_type = size_t;
+	using Traits = std::char_traits<std::remove_const_t<CharT>>;
 	static constexpr size_type npos = size_type(-1);
-	
+
 	StringViewImp() noexcept = default;
 
 	// explicit because strlen is inefficient
 	explicit StringViewImp(CharT* cstr) noexcept
-	: StringViewImp(cstr, std::strlen(cstr)) {}
+	: StringViewImp(cstr, Traits::length(cstr)) {}
 	
 	StringViewImp(CharT* cstr, size_type len) noexcept
 	: data(cstr), len(len) {}
@@ -98,6 +101,14 @@ public:
 		return data + len;
 	}
 
+	void clear() {
+		erase(0);
+	}
+	
+	void erase(size_type index) {
+		this->len = index;
+	}
+
 	std::reverse_iterator<iterator> rbegin() const noexcept {
 		return std::reverse_iterator<iterator>(end());
 	}
@@ -110,14 +121,26 @@ public:
 		return *(data + i);
 	}
 
+	bool operator==(const StringViewImp<CharT>& other) const noexcept {
+		if (other.length() != length()) {
+			return false;
+		}
+
+		return Traits::compare(data, other.data, length()) == 0;
+	}
+
+	bool operator!=(const StringViewImp<CharT>& other) const noexcept {
+		return !operator==(other);
+	}
+
 	explicit operator bool() const noexcept {
 		return data != nullptr;
 	}
-	
-	explicit operator std::string() const noexcept {
-		return std::string(data, len);
+
+	auto MakeString() const noexcept {
+		return std::basic_string<typename Traits::char_type, Traits>(data, len);
 	}
-	
+
 private:
 	CharT* data = nullptr;
 	size_type len = 0;
@@ -125,6 +148,11 @@ private:
 
 using StringView = StringViewImp<const char>;
 using MutableStringView = StringViewImp<char>;
+
+template <typename CHAR>
+auto format_as(const StringViewImp<CHAR>& str) {
+	return fmt::string_view(str.c_str(), str.length());
+}
 
 }
 

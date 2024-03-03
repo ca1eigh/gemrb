@@ -39,6 +39,7 @@
 #include "InterfaceConfig.h"
 #include "Orientation.h"
 #include "SaveGameAREExtractor.h"
+#include "Strings/StringMap.h"
 #include "StringMgr.h"
 #include "TableMgr.h"
 
@@ -235,9 +236,10 @@ enum class AUTOPAUSE : ieDword {
 #define SLOT_EFFECT_HEAD     7 //head slot
 #define SLOT_EFFECT_ALIAS    100 // marker for aliased slots
 
-enum PauseSetting {
-	PAUSE_OFF = 0,
-	PAUSE_ON = 1
+enum class PauseState {
+	Off = 0,
+	On = 1,
+	Toggle = 2
 };
 
 enum RESOURCE_DIRECTORY {
@@ -279,10 +281,10 @@ private:
 class GEM_EXPORT Interface
 {
 public:
-	using tokens_t = std::unordered_map<ieVariable, String, CstrHashCI<ieVariable>>;
+	using tokens_t = std::unordered_map<ieVariable, String, CstrHashCI>;
 
 private:
-	// dirvers must be deallocated last (keep them at the top)
+	// drivers must be deallocated last (keep them at the top)
 	// we hold onto resources (sprites etc) in Interface that must be destroyed prior to the respective driver
 	PluginHolder<Audio> AudioDriver;
 
@@ -294,7 +296,7 @@ private:
 	GameControl* gamectrl = nullptr;
 	SaveGameIterator *sgiterator = nullptr;
 	tokens_t tokens;
-	std::unordered_map<std::string, std::vector<ieDword>> lists;
+	StringMap<std::vector<ieDword>> lists;
 	variables_t vars;
 	PluginHolder<MusicMgr> music;
 	std::vector<Symbol> symbols;
@@ -312,7 +314,7 @@ private:
 	ResRef GroundCircleBam[MAX_CIRCLE_SIZE];
 	int GroundCircleScale[MAX_CIRCLE_SIZE]{};
 
-	ResRefMap<Font*> fonts;
+	ResRefMap<Holder<Font>> fonts;
 	ResRef ButtonFontResRef;
 	ResRef MovieFontResRef;
 	ResRef TextFontResRef;
@@ -366,7 +368,7 @@ public:
 	ResRef WorldMapName[2] = { "WORLDMAP", "" };
 
 	std::vector<Holder<Sprite2D> > Cursors;
-	Holder<Sprite2D> GroundCircles[MAX_CIRCLE_SIZE][6] {};
+	std::array<std::array<Holder<Sprite2D>, 6>, MAX_CIRCLE_SIZE> GroundCircles;
 	std::vector<ieVariable> musiclist;
 	std::multimap<ieDword, DamageInfoStruct> DamageInfoMap;
 	TimeStruct Time{};
@@ -393,10 +395,10 @@ public:
 	const ColorPal<32>& GetPalette32(uint8_t idx) const { return (idx >= palettes32.size()) ? palettes32[0] : palettes32[idx]; }
 	const ColorPal<256>& GetPalette256(uint8_t idx) const { return (idx >= palettes256.size()) ? palettes256[0] : palettes256[idx]; }
 	/** Returns a preloaded Font */
-	Font* GetFont(const ResRef&) const;
-	Font* GetTextFont() const;
+	Holder<Font> GetFont(const ResRef&) const;
+	Holder<Font> GetTextFont() const;
 	/** Returns the button font */
-	Font * GetButtonFont() const;
+	Holder<Font> GetButtonFont() const;
 	/** Get GUI Script Manager */
 	PluginHolder<ScriptEngine> GetGUIScriptEngine() const;
 	/** core for summoning creatures, returns the last created Actor
@@ -421,8 +423,6 @@ public:
 	SaveGameIterator * GetSaveGameIterator() const;
 	/** Get the Variables Dictionary */
 	variables_t& GetDictionary();
-	void DumpVariables() const;
-	variables_t::mapped_type GetVariable(const variables_t::key_type& key, int fallback) const;
 	/** Get the Token Dictionary */
 	tokens_t& GetTokenDictionary();
 	const String& GetToken(const ieVariable& key, const String& fallback) const;
@@ -519,16 +519,10 @@ public:
 	/*returns true if an itemtype is acceptable for a slottype, also checks the usability flags */
 	int CanUseItemType(int slottype, const Item *item, const Actor *actor = nullptr, bool feedback = false, bool equipped = false) const;
 	int CheckItemType(const Item* item, int slotType) const;
-	/*removes single file from cache*/
-	void RemoveFromCache(const ResRef& resref, SClass_ID SClassID) const;
 	/*removes all files from directory*/
 	void DelTree(const path_t& path, bool onlysaved) const;
 	/*returns 0,1,2 based on how the file should be saved */
 	int SavedExtension(const path_t& filename) const;
-	/*returns true if the file should never be deleted accidentally */
-	bool ProtectedExtension(const path_t& filename) const;
-	/*returns true if the directory path isn't good as a Cache */
-	bool StupidityDetector(const path_t& Pt) const;
 
 	/*handles the load screen*/
 	void LoadProgress(int percent);
@@ -553,6 +547,7 @@ public:
 
 	/** plays stock gui sound referenced by index */
 	Holder<SoundHandle> PlaySound(size_t idx, unsigned int channel) const;
+	Holder<SoundHandle> PlaySound(size_t idx, unsigned int channel, const Point& p, unsigned int flags = 0) const;
 	/** returns the first selected PC, if forced is set, then it returns
 	first PC if none was selected */
 	Actor *GetFirstSelectedPC(bool forced);
@@ -563,10 +558,10 @@ public:
 	Holder<Sprite2D> GetCursorSprite() const;
 	/** returns a scroll cursor sprite */
 	Holder<Sprite2D> GetScrollCursorSprite(orient_t orient, int spriteNum) const;
+	void DisableGameControl(bool disable) const;
 	/** returns 0 for unmovable, -1 for movable items, otherwise it
 	returns gold value! */
 	int CanMoveItem(const CREItem *item) const;
-	int GetRareSelectSoundCount() const;
 	int GetMaximumAbility() const;
 	int GetStrengthBonus(int column, int value, int ex) const;
 	int GetIntelligenceBonus(int column, int value) const;
@@ -597,9 +592,9 @@ public:
 	/** saves the .are and .sto files to the destination folder */
 	int CompressSave(const path_t& folder, bool overrideRunning);
 	/** toggles the pause. returns either PAUSE_ON or PAUSE_OFF to reflect the script state after toggling. */
-	PauseSetting TogglePause() const;
+	PauseState TogglePause() const;
 	/** returns true the passed pause setting was applied. false otherwise. */
-	bool SetPause(PauseSetting pause, int flags = 0) const;
+	bool SetPause(PauseState pause, int flags = 0) const;
 	/** receives an autopause reason, returns true if autopause was accepted and successful */
 	bool Autopause(AUTOPAUSE flag, Scriptable *target) const;
 	/** registers engine opcodes */
@@ -610,7 +605,7 @@ public:
 	unwanted return variables could be omitted */
 	void GetResRefFrom2DA(const ResRef& resref, ResRef& resource1, ResRef& resource2, ResRef& resource3) const;
 	/** returns a numeric list read from a 2da. The 0th element is the number of elements in the list */
-	std::vector<ieDword>* GetListFrom2DA(const ResRef& resref);
+	const std::vector<ieDword>* GetListFrom2DA(const ResRef& resref);
 	/** translates a stat symbol to numeric value */
 	ieDword TranslateStat(const std::string& statName);
 	/** resolves a stat bonus based on multiple stats */
@@ -647,7 +642,7 @@ private:
 			palettes.resize(height);
 			Region clip(0, 0, SIZE, height);
 			auto it = image->GetIterator(IPixelIterator::Direction::Forward, IPixelIterator::Direction::Forward, clip);
-			auto end = it.end(it);
+			auto end = Sprite2D::Iterator::end(it);
 			for (; it != end; ++it) {
 				const Point& p = it.Position();
 				palettes[p.y][p.x] = it.ReadRGBA();
@@ -665,6 +660,11 @@ private:
 	bool ReadDamageTypeTable();
 	bool ReadGameTimeTable();
 	bool ReadSoundChannelsTable() const;
+
+	/*returns true if the file should never be deleted accidentally */
+	bool ProtectedExtension(const path_t& filename) const;
+	/*returns true if the directory path isn't good as a Cache */
+	bool StupidityDetector(const path_t& Pt) const;
 
 	/** handles the QuitFlag bits (main loop events) */
 	void HandleFlags() noexcept;
@@ -716,7 +716,7 @@ public:
 	}
 	inline void ResetActionBar()
 	{
-		vars["ActionLevel"] = 0;
+		vars.Set("ActionLevel", 0);
 		SetEventFlag(EF_ACTION);
 	}
 

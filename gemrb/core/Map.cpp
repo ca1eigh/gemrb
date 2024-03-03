@@ -213,8 +213,6 @@ void TileProps::PaintSearchMap(const Point& Pos, uint16_t blocksize, const PathM
 	}
 }
 
-#define YESNO(x) ( (x)?"Yes":"No")
-
 struct Spawns {
 	ResRefMap<SpawnGroup> vars;
 	
@@ -529,7 +527,7 @@ void Map::MoveToNewArea(const ResRef &area, const ieVariable& entrance, unsigned
 	//make a random pick
 
 	Game* game = core->GetGame();
-	const Map* map = game->GetMap(area, false); // add a GUIEnhacement bit for this if anyone ever complains we only show the first loadscreen
+	const Map* map = game->GetMap(area, false); // add a GUIEnhancement bit for this if anyone ever complains we only show the first loadscreen
 	if (EveryOne & CT_GO_CLOSER) {
 		//copy the area name if it exists on the worldmap
 		const WMPAreaEntry* entry = core->GetWorldMap()->FindNearestEntry(area);
@@ -685,7 +683,7 @@ void Map::DrawPortal(const InfoPoint *ip, int enable)
 			sca->Pos = ip->Pos;
 			//this is actually ordered by time, not by height
 			sca->ZOffset = gotPortal;
-			AddVVCell( new VEFObject(sca));
+			AddVVCell(sca);
 		}
 		return;
 	}
@@ -767,12 +765,11 @@ void Map::UpdateScripts()
 		//definitely try to move it up if you experience freezes after timestop
 		actor->fxqueue.Cleanup();
 
-		//if the actor is immobile, don't run the scripts
-		//FIXME: this is not universally true, only some states have this effect
+		// if the actor is immobile (only some states), don't run the scripts
 		// paused targets do something similar, but are handled in the effect
 		if (!game->StateOverrideFlag && !game->StateOverrideTime) {
-			//it looks like STATE_SLEEP allows scripts, probably it is STATE_HELPLESS what disables scripts
-			//if that isn't true either, remove this block completely
+			// STATE_SLEEP allows actions if they are in actsleep.ids, so don't skip it here
+			// most holders and stunners set STATE_HELPLESS (while the original checked IE_HELD)
 			if (actor->GetStat(IE_STATE_ID) & STATE_HELPLESS) {
 				actor->SetInternalFlag(IF_JUSTDIED, BitOp::NAND);
 				continue;
@@ -788,7 +785,7 @@ void Map::UpdateScripts()
 		 * doing this differently (for example by storing the cutscene state at the
 		 * start of this function, or by changing the cutscene state at a later
 		 * point, etc), but i did it this way for now because it seems least painful
-		 * and we should probably be staggering the script executions anyway
+		 * and we should probably be staggering the script executions anyway (we do)
 		 */
 		actor->Update();
 		actor->UpdateActorState();
@@ -1016,7 +1013,6 @@ void Map::DrawHighlightables(const Region& viewport) const
 		if (!d) continue;
 
 		if (d->Highlight) {
-			d->outlineColor = displaymsg->GetColor(GUIColors::HOVERDOOR);
 			d->DrawOutline(viewport.origin);
 		} else if (debugFlags & DEBUG_SHOW_DOORS && !(d->Flags & DOOR_SECRET)) {
 			d->outlineColor = displaymsg->GetColor(GUIColors::ALTDOOR);
@@ -1036,7 +1032,7 @@ void Map::DrawHighlightables(const Region& viewport) const
 			p->DrawOutline(viewport.origin);
 		} else if (debugFlags & DEBUG_SHOW_INFOPOINTS) {
 			if (p->VisibleTrap(true)) {
-				p->outlineColor = ColorRed;
+				p->outlineColor = displaymsg->GetColor(GUIColors::TRAPCOLOR);
 			} else {
 				p->outlineColor = ColorBlue;
 			}
@@ -1079,14 +1075,14 @@ Actor *Map::GetNextActor(int &q, size_t &index) const
 	}
 }
 
-const AreaAnimation *Map::GetNextAreaAnimation(aniIterator &iter, ieDword gametime) const
+AreaAnimation* Map::GetNextAreaAnimation(aniIterator& iter, ieDword gametime) const
 {
 
 	while (true) {
 		if (iter == animations.end()) {
 			return nullptr;
 		}
-		const AreaAnimation &a = *(iter++);
+		AreaAnimation& a = *(iter++);
 		if (!a.Schedule(gametime)) {
 			continue;
 		}
@@ -1224,7 +1220,7 @@ void Map::DrawMap(const Region& viewport, FogRenderer& fogRenderer, uint32_t dFl
 	//draw all background animations first
 	aniIterator aniidx = animations.begin();
 
-	auto DrawAreaAnimation = [&, this](const AreaAnimation *a) {
+	auto DrawAreaAnimation = [&, this](AreaAnimation* a) {
 		BlitFlags flags = SetDrawingStencilForAreaAnimation(a, viewport);
 		flags |= BlitFlags::COLOR_MOD | BlitFlags::BLENDED;
 		
@@ -1240,10 +1236,11 @@ void Map::DrawMap(const Region& viewport, FogRenderer& fogRenderer, uint32_t dFl
 		game->ApplyGlobalTint(tint, flags);
 
 		a->Draw(viewport, tint, flags);
+		a->Update();
 		return GetNextAreaAnimation(aniidx, gametime);
 	};
-	
-	const AreaAnimation *a = GetNextAreaAnimation(aniidx, gametime);
+
+	AreaAnimation* a = GetNextAreaAnimation(aniidx, gametime);
 	while (a && a->GetHeight() == ANI_PRI_BACKGROUND) {
 		a = DrawAreaAnimation(a);
 	}
@@ -1342,8 +1339,7 @@ void Map::DrawMap(const Region& viewport, FogRenderer& fogRenderer, uint32_t dFl
 				Color tint = GetLighting(sca->Pos);
 				tint.a = 255;
 
-				// FIXME: these should actually make use of SetDrawingStencilForObject too
-				BlitFlags flags = core->DitherSprites ? BlitFlags::STENCIL_BLUE : BlitFlags::STENCIL_RED;
+				BlitFlags flags = SetDrawingStencilForScriptedAnimation(sca->GetSingleObject(), viewport, 0);
 				if (timestop) {
 					flags |= BlitFlags::GREY;
 				}
@@ -1361,7 +1357,8 @@ void Map::DrawMap(const Region& viewport, FogRenderer& fogRenderer, uint32_t dFl
 				drawn = 1;
 			}
 			if (drawn) {
-				pro->Draw(viewport);
+				BlitFlags flags = SetDrawingStencilForProjectile(pro, viewport);
+				pro->Draw(viewport, flags);
 				proidx++;
 			} else {
 				delete pro;
@@ -1376,6 +1373,7 @@ void Map::DrawMap(const Region& viewport, FogRenderer& fogRenderer, uint32_t dFl
 				drawn = 1;
 			}
 			if (drawn) {
+				// no wallgroup stenciling needed, in the original these were always drawn
 				spark->Draw(viewport.origin);
 				spaidx++;
 			} else {
@@ -1618,7 +1616,7 @@ BlitFlags Map::SetDrawingStencilForScriptable(const Scriptable* scriptable, cons
 		return BlitFlags::NONE; // not behind a wall, no stencil required
 	}
 
-	ieDword always_dither = core->GetVariable("Always Dither", 0);
+	ieDword always_dither = core->GetDictionary().Get("Always Dither", 0);
 
 	BlitFlags flags = BlitFlags::STENCIL_DITHER; // TODO: make dithering configurable
 	if (always_dither) {
@@ -1666,6 +1664,54 @@ BlitFlags Map::SetDrawingStencilForAreaAnimation(const AreaAnimation* anim, cons
 	}
 
 	return (anim->Flags & A_ANI_NO_WALL) ? BlitFlags::NONE : BlitFlags::STENCIL_GREEN;
+}
+
+// test case: vvc played when summoning a creature (it's not attached to the actor as most spell vfx)
+BlitFlags Map::SetDrawingStencilForScriptedAnimation(const ScriptedAnimation* anim, const Region& viewPort, int height)
+{
+	const Region& bbox = anim->DrawingRegion();
+	if (bbox.IntersectsRegion(viewPort) == false) {
+		return BlitFlags::NONE;
+	}
+
+	Point p(anim->Pos.x + anim->XOffset, anim->Pos.y - anim->ZOffset + anim->YOffset);
+	if (anim->SequenceFlags & IE_VVC_HEIGHT) p.y -= height;
+
+	WallPolygonSet walls = WallsIntersectingRegion(bbox, false, &p);
+
+	SetDrawingStencilForObject(anim, bbox, walls, viewPort.origin);
+
+	// check this after SetDrawingStencilForObject for debug drawing purposes
+	if (walls.first.empty()) {
+		return BlitFlags::NONE; // not behind a wall, no stencil required
+	}
+
+	BlitFlags flags = core->DitherSprites ? BlitFlags::STENCIL_BLUE : BlitFlags::STENCIL_RED;
+	return flags;
+}
+
+// test case: fireball ball and spread animation
+// almost all parts should be occluded, but many are drawn by adding vvcs to the map
+BlitFlags Map::SetDrawingStencilForProjectile(const Projectile* pro, const Region& viewPort)
+{
+	const Region& bbox = pro->DrawingRegion(viewPort);
+	if (bbox.IntersectsRegion(viewPort) == false) {
+		return BlitFlags::NONE;
+	}
+
+	Point p = pro->GetPos();
+	p.y -= pro->GetZPos();
+	WallPolygonSet walls = WallsIntersectingRegion(bbox, false, &p);
+
+	SetDrawingStencilForObject(pro, bbox, walls, viewPort.origin);
+
+	// check this after SetDrawingStencilForObject for debug drawing purposes
+	if (walls.first.empty()) {
+		return BlitFlags::NONE; // not behind a wall, no stencil required
+	}
+
+	BlitFlags flags = core->DitherSprites ? BlitFlags::STENCIL_BLUE : BlitFlags::STENCIL_RED;
+	return flags;
 }
 
 void Map::DrawDebugOverlay(const Region &vp, uint32_t dFlags) const
@@ -1808,10 +1854,10 @@ void Map::Shout(const Actor* actor, int shoutID, bool global) const
 		}
 		if (shoutID) {
 			listener->AddTrigger(TriggerEntry(trigger_heard, actor->GetGlobalID(), shoutID));
-			listener->LastHeard = actor->GetGlobalID();
+			listener->objects.LastHeard = actor->GetGlobalID();
 		} else {
 			listener->AddTrigger(TriggerEntry(trigger_help, actor->GetGlobalID()));
-			listener->LastHelp = actor->GetGlobalID();
+			listener->objects.LastHelp = actor->GetGlobalID();
 		}
 	}
 }
@@ -1838,7 +1884,7 @@ bool Map::AnyEnemyNearPoint(const Point &p) const
 		if (!actor->Schedule(gametime, true) ) {
 			continue;
 		}
-		if (actor->IsDead() ) {
+		if (actor->ShouldStopAttack()) {
 			continue;
 		}
 		if (actor->GetStat(IE_AVATARREMOVAL)) {
@@ -1858,15 +1904,15 @@ bool Map::AnyEnemyNearPoint(const Point &p) const
 
 void Map::ActorSpottedByPlayer(const Actor *actor) const
 {
-	unsigned int animid;
+	size_t animID;
 
 	if(core->HasFeature(GFFlags::HAS_BEASTS_INI)) {
-		animid=actor->BaseStats[IE_ANIMATION_ID];
+		animID = actor->BaseStats[IE_ANIMATION_ID];
 		if(core->HasFeature(GFFlags::ONE_BYTE_ANIMID)) {
-			animid&=0xff;
+			animID &= 0xff;
 		}
-		if (animid < (ieDword)CharAnimations::GetAvatarsCount()) {
-			const AvatarStruct &avatar = CharAnimations::GetAvatarStruct(animid);
+		if (animID < CharAnimations::GetAvatarsCount()) {
+			const AvatarStruct& avatar = CharAnimations::GetAvatarStruct(animID);
 			core->GetGame()->SetBeastKnown(avatar.Bestiary);
 		}
 	}
@@ -2293,7 +2339,7 @@ Actor *Map::GetItemByDialog(const ResRef &resref) const
 		}
 		Map *map = pc->GetCurrentArea();
 		map->AddActor(surrogate, true);
-		surrogate->SetPosition(pc->Pos, 0);
+		surrogate->SetPosition(pc->Pos, false);
 
 		return surrogate;
 	}
@@ -2662,8 +2708,8 @@ void Map::GenerateQueues()
 
 void Map::SortQueues()
 {
-	for (int q = 0; q < QUEUE_COUNT; ++q) {
-		std::sort(queue[q].begin(), queue[q].end(), [](const Actor* a, const Actor* b) {
+	for (auto& subq : queue) {
+		std::sort(subq.begin(), subq.end(), [](const Actor* a, const Actor* b) {
 			return b->Pos.y < a->Pos.y;
 		});
 	}
@@ -2720,6 +2766,11 @@ ieDword Map::HasVVCCell(const ResRef &resource, const Point &p) const
 }
 
 //adding videocell in order, based on its height parameter
+void Map::AddVVCell(ScriptedAnimation* vvc)
+{
+	AddVVCell(new VEFObject(vvc));
+}
+
 void Map::AddVVCell(VEFObject* vvc)
 {
 	scaIterator iter;
@@ -2809,7 +2860,7 @@ bool Map::CanFree()
 		}
 
 		const Action *current = actor->GetCurrentAction();
-		// maybe we should also catch non-interruptible actions (!actor->CurrentActionInterruptable)
+		// maybe we should also catch non-interruptible actions (!actor->CurrentActionInterruptible)
 		// but it has not been needed yet
 		if (current && actionflags[current->actionID] & AF_CHASE) {
 			// limit to situations where pcs are targets, so to not delay area unloading too much
@@ -2845,12 +2896,12 @@ std::string Map::dump(bool show_actors) const
 	}
 	buffer.append("\n");
 	AppendFormat(buffer, "Area Global ID:  {}\n", GetGlobalID());
-	AppendFormat(buffer, "OutDoor: {}\n", YESNO(AreaType & AT_OUTDOOR ) );
-	AppendFormat(buffer, "Day/Night: {}\n", YESNO(AreaType & AT_DAYNIGHT ) );
-	AppendFormat(buffer, "Extended night: {}\n", YESNO(AreaType & AT_EXTENDED_NIGHT ) );
-	AppendFormat(buffer, "Weather: {}\n", YESNO(AreaType & AT_WEATHER ) );
-	AppendFormat(buffer, "Area Type: {}\n", AreaType & fmt::underlying(AT_CITY|AT_FOREST|AT_DUNGEON));
-	AppendFormat(buffer, "Can rest: {}\n", YESNO(core->GetGame()->CanPartyRest(REST_AREA)));
+	AppendFormat(buffer, "OutDoor: {}\n", YesNo(AreaType & AT_OUTDOOR));
+	AppendFormat(buffer, "Day/Night: {}\n", YesNo(AreaType & AT_DAYNIGHT));
+	AppendFormat(buffer, "Extended night: {}\n", YesNo(AreaType & AT_EXTENDED_NIGHT));
+	AppendFormat(buffer, "Weather: {}\n", YesNo(AreaType & AT_WEATHER));
+	AppendFormat(buffer, "Area Type: {}\n", AreaType & (AT_CITY | AT_FOREST | AT_DUNGEON));
+	AppendFormat(buffer, "Can rest: {}\n", YesNo(core->GetGame()->CanPartyRest(REST_AREA)));
 
 	if (show_actors) {
 		buffer.append("\n");
@@ -2864,32 +2915,33 @@ std::string Map::dump(bool show_actors) const
 	return buffer;
 }
 
-bool Map::AdjustPositionX(SearchmapPoint& goal, int radiusx, int radiusy, int size) const
+bool Map::AdjustPositionX(SearchmapPoint& goal, const Size& radius, int size) const
 {
 	int minx = 0;
-	if (goal.x > radiusx)
-		minx = goal.x - radiusx;
-	int maxx = goal.x + radiusx + 1;
-	
+	if (goal.x > radius.w) {
+		minx = goal.x - radius.w;
+	}
+	int maxx = goal.x + radius.w + 1;
+
 	const Size& mapSize = PropsSize();
 	
 	if (maxx > mapSize.w)
 		maxx = mapSize.w;
 
 	for (int scanx = minx; scanx < maxx; scanx++) {
-		if (goal.y >= radiusy) {
-			const SearchmapPoint p(scanx, (goal.y - radiusy));
+		if (goal.y >= radius.h) {
+			const SearchmapPoint p(scanx, goal.y - radius.h);
 			if (bool(GetBlockedTile(p, size) & PathMapFlags::PASSABLE)) {
 				goal.x = scanx;
-				goal.y = goal.y - radiusy;
+				goal.y = goal.y - radius.h;
 				return true;
 			}
 		}
-		if (goal.y + radiusy < mapSize.h) {
-			const SearchmapPoint p(scanx, (goal.y + radiusy));
+		if (goal.y + radius.h < mapSize.h) {
+			const SearchmapPoint p(scanx, goal.y + radius.h);
 			if (bool(GetBlockedTile(p, size) & PathMapFlags::PASSABLE)) {
 				goal.x = scanx;
-				goal.y = goal.y + radiusy;
+				goal.y = goal.y + radius.h;
 				return true;
 			}
 		}
@@ -2897,29 +2949,30 @@ bool Map::AdjustPositionX(SearchmapPoint& goal, int radiusx, int radiusy, int si
 	return false;
 }
 
-bool Map::AdjustPositionY(SearchmapPoint& goal, int radiusx, int radiusy, int size) const
+bool Map::AdjustPositionY(SearchmapPoint& goal, const Size& radius, int size) const
 {
 	int miny = 0;
-	if (goal.y > radiusy)
-		miny = goal.y - radiusy;
-	int maxy = goal.y + radiusy + 1;
-	
+	if (goal.y > radius.h) {
+		miny = goal.y - radius.h;
+	}
+	int maxy = goal.y + radius.h + 1;
+
 	const Size& mapSize = PropsSize();
 	if (maxy > mapSize.h)
 		maxy = mapSize.h;
 	for (int scany = miny; scany < maxy; scany++) {
-		if (goal.x >= radiusx) {
-			const SearchmapPoint p((goal.x - radiusx), scany);
+		if (goal.x >= radius.w) {
+			const SearchmapPoint p(goal.x - radius.w, scany);
 			if (bool(GetBlockedTile(p, size) & PathMapFlags::PASSABLE)) {
-				goal.x = goal.x - radiusx;
+				goal.x = goal.x - radius.w;
 				goal.y = scany;
 				return true;
 			}
 		}
-		if (goal.x + radiusx < mapSize.w) {
-			const SearchmapPoint p((goal.x + radiusx), scany);
+		if (goal.x + radius.w < mapSize.w) {
+			const SearchmapPoint p(goal.x + radius.w, scany);
 			if (bool(GetBlockedTile(p, size) & PathMapFlags::PASSABLE)) {
-				goal.x = goal.x + radiusx;
+				goal.x = goal.x + radius.w;
 				goal.y = scany;
 				return true;
 			}
@@ -2928,17 +2981,18 @@ bool Map::AdjustPositionY(SearchmapPoint& goal, int radiusx, int radiusy, int si
 	return false;
 }
 
-void Map::AdjustPositionNavmap(NavmapPoint &goal, int radiusx, int radiusy) const
+void Map::AdjustPositionNavmap(NavmapPoint& goal, const Size& radius) const
 {
 	SearchmapPoint smptGoal = ConvertCoordToTile(goal);
-	AdjustPosition(smptGoal, radiusx, radiusy);
+	AdjustPosition(smptGoal, radius);
 	goal.x = smptGoal.x * 16 + 8;
 	goal.y = smptGoal.y * 12 + 6;
 }
 
-void Map::AdjustPosition(SearchmapPoint &goal, int radiusx, int radiusy, int size) const
+void Map::AdjustPosition(SearchmapPoint& goal, const Size& startingRadius, int size) const
 {
 	const Size& mapSize = PropsSize();
+	Size radius = startingRadius;
 
 	if (goal.x > mapSize.w) {
 		goal.x = mapSize.w;
@@ -2947,28 +3001,28 @@ void Map::AdjustPosition(SearchmapPoint &goal, int radiusx, int radiusy, int siz
 		goal.y = mapSize.h;
 	}
 
-	while(radiusx < mapSize.w || radiusy < mapSize.h) {
+	while (radius.w < mapSize.w || radius.h < mapSize.h) {
 		//lets make it slightly random where the actor will appear
 		if (RandomFlip()) {
-			if (AdjustPositionX(goal, radiusx, radiusy, size)) {
+			if (AdjustPositionX(goal, radius, size)) {
 				return;
 			}
-			if (AdjustPositionY(goal, radiusx, radiusy, size)) {
+			if (AdjustPositionY(goal, radius, size)) {
 				return;
 			}
 		} else {
-			if (AdjustPositionY(goal, radiusx, radiusy, size)) {
+			if (AdjustPositionY(goal, radius, size)) {
 				return;
 			}
-			if (AdjustPositionX(goal, radiusx, radiusy, size)) {
+			if (AdjustPositionX(goal, radius, size)) {
 				return;
 			}
 		}
-		if (radiusx < mapSize.w) {
-			radiusx++;
+		if (radius.w < mapSize.w) {
+			radius.w++;
 		}
-		if (radiusy < mapSize.h) {
-			radiusy++;
+		if (radius.h < mapSize.h) {
+			radius.h++;
 		}
 	}
 }
@@ -3088,7 +3142,7 @@ void Map::LoadIniSpawn()
 	}
 }
 
-bool Map::SpawnCreature(const Point& pos, const ResRef& creResRef, int radiusx, int radiusy, ieWord rwdist, int* difficulty, unsigned int* creCount)
+bool Map::SpawnCreature(const Point& pos, const ResRef& creResRef, const Size& radius, ieWord rwdist, int* difficulty, unsigned int* creCount)
 {
 	bool spawned = false;
 	const SpawnGroup *sg = nullptr;
@@ -3101,7 +3155,7 @@ bool Map::SpawnCreature(const Point& pos, const ResRef& creResRef, int radiusx, 
 		if (first || (level >= sg->Level())) {
 			count = sg->Count();
 		} else {
-			count = 0;
+			return false;
 		}
 	}
 
@@ -3118,7 +3172,7 @@ bool Map::SpawnCreature(const Point& pos, const ResRef& creResRef, int radiusx, 
 		// at least one creature if this is the first
 		if (level >= cpl || sg || first) {
 			AddActor(creature, true);
-			creature->SetPosition(pos, true, radiusx, radiusy);
+			creature->SetPosition(pos, true, radius);
 			creature->HomeLocation = pos;
 			creature->maxWalkDistance = rwdist;
 			creature->Spawned = true;
@@ -3167,7 +3221,7 @@ void Map::TriggerSpawn(Spawn *spawn)
 	unsigned int spawncount = 0;
 	size_t i = RAND(size_t(0), spawn->Creatures.size() - 1);
 	while (difficulty >= 0 && spawncount < spawn->Maximum) {
-		if (!SpawnCreature(spawn->Pos, spawn->Creatures[i], 0, 0, spawn->rwdist, &difficulty, &spawncount)) {
+		if (!SpawnCreature(spawn->Pos, spawn->Creatures[i], Size(), spawn->rwdist, &difficulty, &spawncount)) {
 			break;
 		}
 		if (++i >= spawn->Creatures.size()) {
@@ -3228,28 +3282,31 @@ int Map::CheckRestInterruptsAndPassTime(const Point &pos, int hours, int day)
 	//based on ingame timer
 	int chance=day?RestHeader.DayChance:RestHeader.NightChance;
 	bool interrupt = RAND(0, 99) < chance;
+	if (!interrupt) {
+		core->GetGame()->AdvanceTime(hours * core->Time.hour_size);
+		return 0;
+	}
+
 	unsigned int spawncount = 0;
 	int spawnamount = core->GetGame()->GetTotalPartyLevel(true) * RestHeader.Difficulty;
 	if (spawnamount < 1) spawnamount = 1;
+	// this loop is a bit odd, since we only check the interrupt chance once
+	// the only way this not to return immediately at hour 0 is from a data error
 	for (int i=0;i<hours;i++) {
-		if (interrupt) {
-			int idx = RAND(0, RestHeader.CreatureNum-1);
-			const Actor *creature = gamedata->GetCreature(RestHeader.CreResRef[idx]);
-			if (!creature) {
-				core->GetGame()->AdvanceTime(core->Time.hour_size);
-				continue;
-			}
-
-			displaymsg->DisplayString(RestHeader.Strref[idx], GUIColors::GOLD, STRING_FLAGS::SOUND);
-			while (spawnamount > 0 && spawncount < RestHeader.Maximum) {
-				if (!SpawnCreature(pos, RestHeader.CreResRef[idx], 20, 20, RestHeader.rwdist, &spawnamount, &spawncount)) {
-					break;
-				}
-			}
-			return hours-i;
+		int idx = RAND(0, RestHeader.CreatureNum - 1);
+		const Actor* creature = gamedata->GetCreature(RestHeader.CreResRef[idx]);
+		if (!creature) {
+			core->GetGame()->AdvanceTime(core->Time.hour_size);
+			continue;
 		}
-		// advance the time in hourly steps, so an interruption is timed properly
-		core->GetGame()->AdvanceTime(core->Time.hour_size);
+
+		displaymsg->DisplayString(RestHeader.Strref[idx], GUIColors::GOLD, STRING_FLAGS::SOUND);
+		while (spawnamount > 0 && spawncount < RestHeader.Maximum) {
+			if (!SpawnCreature(pos, RestHeader.CreResRef[idx], Size(20, 20), RestHeader.rwdist, &spawnamount, &spawncount)) {
+				break;
+			}
+		}
+		return hours - i;
 	}
 	return 0;
 }
@@ -3284,8 +3341,8 @@ void Map::ExploreMapChunk(const Point &Pos, int range, int los)
 	Point Tile;
 	const Explore& explore = Explore::Get();
 
-	if (range > explore.MaxVisibility) {
-		range = explore.MaxVisibility;
+	if (range > Explore::MaxVisibility) {
+		range = Explore::MaxVisibility;
 	}
 	int p = explore.VisibilityPerimeter;
 	while (p--) {
@@ -3324,6 +3381,7 @@ void Map::ExploreMapChunk(const Point &Pos, int range, int los)
 
 void Map::UpdateFog()
 {
+	TRACY(ZoneScoped);
 	VisibleBitmap.fill(0);
 	
 	std::set<Spawn*> potentialSpawns;
@@ -3400,12 +3458,7 @@ static void MergePiles(Container *donorPile, Container *pile)
 		int skipped = count;
 		while (count) {
 			int slot = pile->inventory.FindItem(item->ItemResRef, 0, --count);
-			if (slot == -1) {
-				// probably an inventory bug, shouldn't happen
-				Log(DEBUG, "Map", "MoveVisibleGroundPiles found unaccessible pile item: {}", item->ItemResRef);
-				skipped--;
-				continue;
-			}
+			assert(slot != -1);
 			const CREItem *otheritem = pile->inventory.GetSlotItem(slot);
 			if (otheritem->Usages[0] == otheritem->MaxStackAmount) {
 				// already full (or nonstackable), nothing to do here
@@ -3525,8 +3578,7 @@ bool Map::HasWeather() const
 	if ((AreaType & (AT_WEATHER|AT_OUTDOOR) ) != (AT_WEATHER|AT_OUTDOOR) ) {
 		return false;
 	}
-	ieDword tmp = core->GetVariable("Weather", 1);
-	return !!tmp;
+	return core->GetDictionary().Get("Weather", true);
 }
 
 int Map::GetWeather() const
@@ -3822,10 +3874,15 @@ void AreaAnimation::Draw(const Region &viewport, Color tint, BlitFlags flags) co
 
 	size_t ac = animation.size();
 	while (ac--) {
-		Animation &anim = animation[ac];
-		Holder<Sprite2D> nextFrame = anim.NextFrame();
-		
-		VideoDriver->BlitGameSpriteWithPalette(nextFrame, palette, Pos - viewport.origin, flags, tint);
+		const Animation& anim = animation[ac];
+		VideoDriver->BlitGameSpriteWithPalette(anim.CurrentFrame(), palette, Pos - viewport.origin, flags, tint);
+	}
+}
+
+void AreaAnimation::Update()
+{
+	for (auto& anim : animation) {
+		anim.NextFrame();
 	}
 }
 
@@ -3834,7 +3891,6 @@ void AreaAnimation::Draw(const Region &viewport, Color tint, BlitFlags flags) co
 bool Map::ChangeMap(bool day_or_night)
 {
 	//no need of change if the area is not extended night
-	//if (((AreaType&(AT_DAYNIGHT|AT_EXTENDED_NIGHT))!=(AT_DAYNIGHT|AT_EXTENDED_NIGHT))) return false;
 	if (!(AreaType&AT_EXTENDED_NIGHT)) return false;
 	//no need of change if the area already has the right tilemap
 	if ((DayNight == day_or_night) && GetTileMap()) return false;
@@ -3865,14 +3921,6 @@ void Map::SeeSpellCast(Scriptable *caster, ieDword spell) const
 		triggerType = trigger_spellcastpriest;
 
 	caster->AddTrigger(TriggerEntry(triggerType, caster->GetGlobalID(), spell));
-
-	size_t i = actors.size();
-	while (i--) {
-		const Actor *witness = actors[i];
-		if (CanSee(witness, caster, true, 0)) {
-			caster->AddTrigger(TriggerEntry(triggerType, caster->GetGlobalID(), spell));
-		}
-	}
 }
 
 void Map::SetBackground(const ResRef &bgResRef, ieDword duration)
@@ -3882,5 +3930,30 @@ void Map::SetBackground(const ResRef &bgResRef, ieDword duration)
 	Background = bmp->GetSprite2D();
 	BgDuration = duration;
 }
+
+Actor* Map::GetRandomEnemySeen(const Actor* origin) const
+{
+	int type = GetGroup(origin);
+	if (type == 2) {
+		return nullptr; //no enemies
+	}
+
+	int flags = GA_NO_HIDDEN | GA_NO_DEAD | GA_NO_UNSCHEDULED | GA_NO_SELF;
+	std::vector<Actor*> neighbours = GetAllActorsInRadius(origin->Pos, flags, origin->GetBase(IE_VISUALRANGE), origin);
+	Actor* victim = neighbours[RAND<size_t>(0, neighbours.size() - 1)];
+
+	if (type) { // origin is PC
+		if (victim->GetStat(IE_EA) >= EA_EVILCUTOFF) {
+			return victim;
+		}
+	} else {
+		if (victim->GetStat(IE_EA) <= EA_GOODCUTOFF) {
+			return victim;
+		}
+	}
+
+	return nullptr;
+}
+
 
 }

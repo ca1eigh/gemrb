@@ -24,7 +24,7 @@
 namespace GemRB {
 
 SaveGameAREExtractor::SaveGameAREExtractor(Holder<SaveGame> saveGame)
-: saveGame(saveGame)
+	: saveGame(std::move(saveGame))
 {}
 
 int32_t SaveGameAREExtractor::copyRetainedAREs(DataStream *destStream, bool trackLocations) {
@@ -47,22 +47,24 @@ int32_t SaveGameAREExtractor::copyRetainedAREs(DataStream *destStream, bool trac
 
 	size_t relativeLocation = 0;
 	for (auto it = areLocations.cbegin(); it != areLocations.cend(); ++it, ++i) {
-		relativeLocation += 4 + it->first.length() + 1;
+		size_t nameLength = it->first.length() + 4 + 1; // +4 for the extension, +1 for ending null as per SAV spec
+		relativeLocation += 4 + nameLength; // set initial offset past the stored length and string
 
-		ieDword complen, declen;
+		ieDword declen;
+		ieDword complen;
 		saveGameStream->Seek(it->second, GEM_STREAM_START);
 		saveGameStream->ReadDword(declen);
 		saveGameStream->ReadDword(complen);
 
-		ieDword nameLength = ieDword(it->first.length() + 1);
-		destStream->WriteDword(nameLength);
-		destStream->Write(it->first.c_str(), nameLength);
+		destStream->WriteDword(ieDword(nameLength));
+		destStream->WriteString(it->first);
+		destStream->WriteString(".are");
 		destStream->WriteDword(declen);
 		destStream->WriteDword(complen);
 
 		if (trackLocations) {
 			newAreLocations.emplace(it->first, relativeLocation);
-			relativeLocation += 8 + complen;
+			relativeLocation += 8 + complen; // skip past the two length dwords and compressed data
 		}
 
 		BufferT::size_type remaining = complen;
@@ -146,13 +148,6 @@ bool SaveGameAREExtractor::isRunningSaveGame(const SaveGame& otherGame) const
 
 void SaveGameAREExtractor::registerLocation(const ResRef& resRef, unsigned long pos) {
 	areLocations.emplace(resRef, pos);
-}
-
-void SaveGameAREExtractor::changeSaveGame(Holder<SaveGame> newSave) {
-	saveGame = std::move(newSave);
-
-	areLocations.clear();
-	newAreLocations.clear();
 }
 
 void SaveGameAREExtractor::updateSaveGame(size_t offset) {

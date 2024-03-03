@@ -229,6 +229,36 @@ struct TriggerEntry {
 	unsigned int flags = 0;
 };
 
+// Stored objects.
+struct StoredObjects {
+	ieDword LastAttacker = 0;
+	ieDword LastCommander = 0;
+	ieDword LastProtector = 0;
+	ieDword LastProtectee = 0;
+	// LastTargetedBy we always compute
+	ieDword LastHitter = 0;
+	ieDword LastHelp = 0;
+	ieDword LastTrigger = 0;
+	ieDword LastSeen = 0;
+	ieDword LastTalker = 0;
+	ieDword LastHeard = 0;
+	ieDword LastSummoner = 0;
+	ieDword LastFollowed = 0; // gemrb extension (LeaderOf)
+	ieDword LastMarked = 0; // iwd2
+	ieDword MyTarget = 0; // iwd2, has nothing to do with LastTarget
+	ieDword LastKilled = 0; // ees
+	int LastMarkedSpell = 0; // iwd2
+
+	ieDword LastSpellTarget = 0;
+	Point LastTargetPos;
+	ieDword LastTarget = 0;
+	// gemrb extension, persists across actions; remove if LastTarget ever gets the same persistence
+	ieDword LastTargetPersistent = 0;
+
+	// this is used by GUIScript :(
+	ieDword LastSpellOnMe = 0xffffffff; // last spell cast on this scriptable
+};
+
 class GEM_EXPORT Scriptable {
 public:
 	explicit Scriptable(ScriptableType type);
@@ -237,7 +267,7 @@ public:
 	Scriptable& operator=(const Scriptable&) = delete;
 private:
 	tick_t WaitCounter = 0;
-	std::map<ieDword,ieDword> script_timers;
+	std::map<ieDword, ieDword> scriptTimers;
 	ieDword globalID = 0;
 protected: //let Actor access this
 	std::list<TriggerEntry> triggers;
@@ -248,12 +278,19 @@ protected: //let Actor access this
 	std::list< Action*> actionQueue;
 	Action* CurrentAction = nullptr;
 public:
+	ScriptableType Type = ST_ACTOR;
+	Point Pos;
 	Region BBox;
+	ieStrRef DialogName = ieStrRef::INVALID;
+
 	// State relating to the currently-running action.
 	int CurrentActionState = 0;
 	ieDword CurrentActionTarget = 0;
-	bool CurrentActionInterruptable = true;
+	bool CurrentActionInterruptible = true;
 	ieDword CurrentActionTicks = 0;
+
+	std::array<GameScript*, MAX_SCRIPTS> Scripts {};
+	int scriptLevel = 0; // currently running script slot
 
 	// The number of times this was updated.
 	ieDword Ticks = 0;
@@ -268,49 +305,18 @@ public:
 	// The countdown for forced activation by triggers.
 	ieDword TriggerCountdown = 0;
 
+	// more scripting state
 	ieVarsMap locals;
-	ScriptableType Type = ST_ACTOR;
-	Point Pos;
-
-	ieStrRef DialogName = ieStrRef::INVALID;
 	OverHeadText overHead{this};
-
-	GameScript* Scripts[MAX_SCRIPTS] = {};
-	int scriptlevel = 0;
-
+	StoredObjects objects {};
 	ieDword UnselectableTimer = 0;
+	ieDword UnselectableType = 0;
+	unsigned char weightsAsCases = 0;
 
-	// Stored objects.
-	ieDword LastAttacker = 0;
-	ieDword LastCommander = 0;
-	ieDword LastProtector = 0;
-	ieDword LastProtectee = 0;
-	ieDword LastTargetedBy = 0;
-	ieDword LastHitter = 0;
-	ieDword LastHelp = 0;
-	ieDword LastTrigger = 0;
-	ieDword LastSeen = 0;
-	ieDword LastTalker = 0;
-	ieDword LastHeard = 0;
-	ieDword LastSummoner = 0;
-	ieDword LastFollowed = 0; // gemrb extension (LeaderOf)
-	ieDword LastMarked = 0; // iwd2
-	ieDword MyTarget = 0; // iwd2, has nothing to do with LastTarget
-	ieDword LastKilled = 0; // ees
-
-	int LastMarkedSpell = 0; // iwd2
-
-	// this is used by GUIScript :(
-	ieDword LastSpellOnMe = 0xffffffff;  // Last spell cast on this scriptable
-
-	ieDword LastTarget = 0;
-	ieDword LastSpellTarget = 0;
-	ieDword LastTargetPersistent = 0; // gemrb extension, persists across actions; remove if LastTarget ever gets the same persistence
-	Point LastTargetPos;
+	// spellcasting state
 	int SpellHeader = 0;
 	ResRef SpellResRef;
 	bool InterruptCasting = false;
-	unsigned char weightsAsCases = 0;
 public:
 	
 	template <class RETURN, class PARAM>
@@ -362,6 +368,7 @@ public:
 	virtual void Update();
 	void TickScripting();
 	virtual void ExecuteScript(int scriptCount);
+	void AddAction(std::string actStr);
 	void AddAction(Action* aC);
 	void AddActionInFront(Action* aC);
 	Action* GetCurrentAction() const { return CurrentAction; }
@@ -380,7 +387,7 @@ public:
 	bool MatchTrigger(unsigned short id, ieDword param = 0) const;
 	bool MatchTriggerWithObject(short unsigned int id, const Object *obj, ieDword param = 0) const;
 	const TriggerEntry *GetMatchingTrigger(unsigned short id, unsigned int notflags = 0) const;
-	void SendTriggerToAll(TriggerEntry entry);
+	void SendTriggerToAll(TriggerEntry entry, int extraFlags = 0);
 	/* re/draws overhead text on the map screen */
 	void DrawOverheadText();
 	virtual Region DrawingRegion() const;
@@ -406,7 +413,6 @@ public:
 	String GetName() const;
 	bool AuraPolluted();
 	ieDword GetLocal(const ieVariable& key, ieDword fallback) const;
-	void DumpLocals() const;
 	virtual std::string dump() const = 0;
 private:
 	/* used internally to handle start of spellcasting */
@@ -483,7 +489,7 @@ private: //these seem to be sensitive, so get protection
 	unsigned char StanceID = 0;
 	orient_t Orientation = S;
 	orient_t NewOrientation = S;
-	ieWord AttackMovements[3] = { 100, 0 , 0 };
+	std::array<ieWord, 3> AttackMovements = { 100, 0, 0 };
 
 	PathListNode* path = nullptr; // whole path
 	PathListNode* step = nullptr; // actual step
@@ -555,7 +561,7 @@ public:
 	void SetStance(unsigned int arg);
 	void SetOrientation(orient_t value, bool slow);
 	void SetOrientation(const Point& from, const Point& to, bool slow);
-	void SetAttackMoveChances(const ieWord *amc);
+	void SetAttackMoveChances(const std::array<ieWord, 3>& amc);
 	virtual void DoStep(unsigned int walkScale, ieDword time = 0);
 	void AddWayPoint(const Point &Des);
 	void RunAwayFrom(const Point &Des, int PathLength, bool noBackAway);
@@ -572,29 +578,6 @@ public:
 	Point GetMostLikelyPosition() const;
 	virtual bool BlocksSearchMap() const = 0;
 };
-
-//Tiled objects are not used (and maybe not even implemented correctly in IE)
-//they seem to be most closer to a door and probably obsoleted by it
-//are they scriptable?
-class GEM_EXPORT TileObject {
-public:
-	TileObject() noexcept = default;
-	TileObject(const TileObject&) = delete;
-	~TileObject();
-	TileObject& operator=(const TileObject&) = delete;
-	void SetOpenTiles(unsigned short *indices, int count);
-	void SetClosedTiles(unsigned short *indices, int count);
-
-public:
-	ieVariable Name;
-	ResRef Tileset; //or wed door ID?
-	ieDword Flags = 0;
-	unsigned short* opentiles = nullptr;
-	ieDword opencount = 0;
-	unsigned short* closedtiles = nullptr;
-	ieDword closedcount = 0;
-};
-
 }
 
 #endif

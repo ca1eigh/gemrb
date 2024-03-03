@@ -45,6 +45,7 @@ private:
 	CTlkOverride *OverrideTLK = nullptr;
 	ResRefMap<gt_type> gtmap;
 	int charname = 0;
+	bool hasEndingNewline = false;
 
 public:
 	TLKImporter(void);
@@ -60,6 +61,8 @@ public:
 	String GetString(ieStrRef strref, STRING_FLAGS flags = STRING_FLAGS::NONE) override;
 	StringBlock GetStringBlock(ieStrRef strref, STRING_FLAGS flags = STRING_FLAGS::NONE) override;
 	bool HasAltTLK() const override;
+	ieStrRef GetNextStrRef() const final { return OverrideTLK->GetNextStrRef(); };
+
 private:
 	/** resolves day and monthname tokens */
 	void GetMonthName(int dayandmonth);

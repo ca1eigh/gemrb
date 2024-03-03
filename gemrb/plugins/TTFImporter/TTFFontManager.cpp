@@ -96,7 +96,7 @@ void TTFFontManager::Close()
 	}
 }
 
-Font* TTFFontManager::GetFont(unsigned short pxSize, FontStyle /*style*/, bool /*background*/)
+Holder<Font> TTFFontManager::GetFont(unsigned short pxSize, FontStyle /*style*/, bool /*background*/)
 {
 	Holder<Palette> pal = MakeHolder<Palette>(ColorWhite, ColorBlack);
 	
@@ -159,7 +159,7 @@ Font* TTFFontManager::GetFont(unsigned short pxSize, FontStyle /*style*/, bool /
 		//font->underline_height = FT_FLOOR(face->underline_thickness);
 	}
 	
-	return new TTFFont(pal, face, lineHeight, baseline);
+	return MakeHolder<TTFFont>(pal, face, lineHeight, baseline);
 }
 
 }
@@ -167,7 +167,7 @@ Font* TTFFontManager::GetFont(unsigned short pxSize, FontStyle /*style*/, bool /
 #include "plugindef.h"
 
 GEMRB_PLUGIN(0x3AD6427C, "TTF Font Importer")
-PLUGIN_RESOURCE(TTFFontManager, "ttf")
+PLUGIN_IE_RESOURCE(TTFFontManager, "ttf", (ieWord) IE_TTF_CLASS_ID)
 PLUGIN_INITIALIZER(loadFT)
 PLUGIN_CLEANUP(destroyFT)
 END_PLUGIN()

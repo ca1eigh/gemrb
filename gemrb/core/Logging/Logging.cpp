@@ -64,8 +64,8 @@ static void ConsoleWinLogMsg(const LogMessage& msg)
 		const auto& format = Logger::LevelFormat[level];
 		const auto& FMT = FMT_STRING(u"[color={:X}]{}: [/color][color={:X}]{}[/color]\n");
 		// MessageWindow supports only colors
-		ta->AppendText(fmt::format(FMT, GetRGB(msg.format), StringFromCString(msg.owner.c_str()),
-								   GetRGB(format), StringFromCString(msg.message.c_str())));
+		ta->AppendText(fmt::format(FMT, GetRGB(msg.format), StringFromTLK(msg.owner),
+								   GetRGB(format), StringFromTLK(msg.message)));
 	}
 }
 
@@ -106,7 +106,7 @@ static void addGemRBLog(const CoreSettings& config)
 		AddLogWriter(createStreamLogWriter(file));
 	} else {
 		path = PathJoin(config.CachePath, "GemRB.log");
-		FILE* file = fopen(path.c_str(), "wb");
+		file = fopen(path.c_str(), "wb");
 		if (file) {
 			AddLogWriter(createStreamLogWriter(file));
 		} else {

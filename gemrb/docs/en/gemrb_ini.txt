@@ -373,6 +373,13 @@ HasWeaponSets = <bool>
 Does the game support several weapon sets, shield slots like iwd2?
 
 
+HighlightOutlineOnly = <bool>
+- - - - - - - - - - - - - - -
+Toggles whether the game highlights only the outline of doors and containers
+(HighlightOutlineOnly=1, in BG1), or highlights the complete surface of the
+object (HighlightOutlineOnly=0, all except BG1).
+
+
 IgnoreButtonFrames = <bool>
 - - - - - - - - - - - - - -
 If set to 1, buttons will ignore frame numbers as set in button CHU
@@ -459,11 +466,6 @@ NoNewVariables = <bool>
 Toggles whether the engine can create new variables in the Game structure.
 
 
-NumRareSelectSounds = <number>
-- - - - - - - - - - - -
-Data derived setting describing how many rare select sounds a game uses.
-
-
 OneByteAnimationID = <bool>
 - - - - - - - - - - - - - -
 If set to 1, then only the lower byte of the animation ID will be used 
@@ -507,12 +509,6 @@ RandomBanterDialogs = <bool>
 - - - - - - - - - - - - - - -
 Toggles whether banter dialogs are randomly activated (as in BG1)
 rather than explicitly scripted (as in BG2).
-
-RareActionSounds = <bool>
-- - - - - - - - - - - - -
-Toggles the count of available verbal constants for commands. Most games
-had 3, but bg2 increased it to 7 by decreasing the amount of rare select
-sounds.
 
 
 ReverseDoor = <bool>

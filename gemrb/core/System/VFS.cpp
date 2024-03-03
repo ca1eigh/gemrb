@@ -21,6 +21,7 @@
 // VFS.cpp : functions to access filesystem in os-independent way
 // and POSIX-like compatibility layer for win
 
+#include "Strings/UTF8Comparison.h"
 #include "System/VFS.h"
 
 #include "globals.h"
@@ -28,19 +29,25 @@
 #include "Interface.h"
 #include "Logging/Logging.h"
 
+#include <cctype>
+#include <locale>
 #include <cstdarg>
 #include <cstring>
 #include <cerrno>
 
-#ifndef WIN32
+#ifdef WIN32
+	// that's a workaround to live with `NOUSER` in `win32def.h`
+	#define LPMSG void*
+	#include <Shlwapi.h>
+	// there is a macro in shlwapi.h that turns `PathAppendW` into `PathAppend`
+	#undef PathAppend
+#else
 #include <dirent.h>
 #endif
 
 #ifdef HAVE_MMAP
 #include <sys/mman.h>
 #endif
-
-#include <sys/stat.h>
 
 #ifdef __APPLE__
 // for getting resources inside the bundle
@@ -62,36 +69,46 @@
 using namespace GemRB;
 
 struct dirent {
-	dirent() : buffer(_MAX_PATH, L'\0'), d_name(const_cast<char*>(buffer.data())) {}
+	dirent() : buffer(_MAX_PATH, '\0'), d_name(const_cast<char*>(buffer.data())) {}
 
 	std::string buffer;
-	const char *d_name;
+	char *d_name;
+
+	dirent& operator=(std::string&& entryName) {
+		auto cutOff = entryName.length();
+		buffer = std::move(entryName);
+		buffer.resize(_MAX_PATH);
+		buffer[cutOff] = 0;
+		d_name = const_cast<char*>(buffer.data());
+
+		return *this;
+	}
 };
 
 struct DIR {
-	DIR() : path(), is_first(true), hFile(0) {}
+	DIR() = default;
 	~DIR() {
 		_findclose(hFile);
 	}
 
 	std::wstring path;
-	bool is_first;
+	bool is_first = true;
 	struct _wfinddata_t c_file;
-	intptr_t hFile;
+	intptr_t hFile = 0;
 	dirent entry;
 };
 
 static DIR* opendir(const char* filename) {
 	auto dir = new DIR{};
 
-	// consider $PATH\*.*\0 for _wfindfirst
+	// consider $PATH\\*.*\0 for _wfindfirst
 	if (strlen(filename) > _MAX_PATH - 5) {
 		return nullptr;
 	}
 
-	std::wstring buffer(_MAX_PATH, L'\0');
-	mbstowcs(const_cast<wchar_t*>(buffer.data()), filename, buffer.length() - 1);
-	dir->path = fmt::format(L"{}\\*.*", buffer.c_str());
+	auto buffer = StringFromUtf8(filename);
+	buffer.resize(_MAX_PATH);
+	dir->path = fmt::format(L"{}\\*.*", reinterpret_cast<const wchar_t*>(buffer.c_str()));
 
 	return dir;
 }
@@ -110,11 +127,13 @@ static dirent* readdir(DIR *dir) {
 		}
 	}
 
-	auto& de = dir->entry;
-	auto n = wcstombs(const_cast<char*>(de.d_name), c_file.name, de.buffer.length() - 1);
-	de.buffer[n] = 0;
+	char16_t *c = reinterpret_cast<char16_t*>(c_file.name);
+	size_t n = 0;
+	for (; n < _MAX_PATH && *c != u'\0'; ++c, ++n) {}
 
-	return &de;
+	dir->entry = RecodedStringFromWideStringBytes(reinterpret_cast<char16_t*>(c_file.name), n * 2, "UTF-8");
+
+	return &dir->entry;
 }
 
 static void closedir(DIR *dir) {
@@ -167,10 +186,23 @@ static bool DirExists(StringView path)
 	char* end = const_cast<char*>(path.end());
 	std::swap(*end, term); // use swap because end may be a delimiter or a terminator
 
+#ifdef WIN32
+	auto buffer = StringFromUtf8(path.c_str());
+	auto wideChars = reinterpret_cast<const wchar_t*>(buffer.c_str());
+
+	// `stat` does not work reliably with non-ASCII names
+	if (!PathFileExists(wideChars)) {
+		return false;
+	}
+
+	bool ret = (GetFileAttributes(wideChars) & FILE_ATTRIBUTE_DIRECTORY) > 0;
+#else
 	struct stat buf;
 	buf.st_mode = 0;
 	bool ret = stat(path.c_str(), &buf) == 0 && S_ISDIR(buf.st_mode);
 	std::swap(*end, term);
+#endif
+
 	return ret;
 }
 
@@ -182,6 +214,19 @@ bool DirExists(const path_t& path)
 /** Returns true if path is an existing file */
 bool FileExists(const path_t& path)
 {
+#ifdef WIN32
+	auto buffer = StringFromUtf8(path.c_str());
+	auto wideChars = reinterpret_cast<const wchar_t*>(buffer.c_str());
+
+	// `stat` does not work reliably with non-ASCII names
+	if (!PathFileExists(wideChars)) {
+		return false;
+	}
+
+	if (GetFileAttributes(wideChars) & FILE_ATTRIBUTE_DIRECTORY) {
+		return false;
+	}
+#else
 	struct stat buf;
 	buf.st_mode = 0;
 
@@ -191,6 +236,7 @@ bool FileExists(const path_t& path)
 	if (!S_ISREG(buf.st_mode)) {
 		return false;
 	}
+#endif
 
 	return true;
 }
@@ -201,26 +247,28 @@ void PathAppend(path_t& target, const path_t& name)
 		return;
 	}
 
-	if (!target.empty() && target.back() != PathDelimiter && name.front() != PathDelimiter) {
+	if (!target.empty() && target.back() != PathDelimiter && *name.begin() != PathDelimiter) {
 		target.push_back(PathDelimiter);
 	}
 
-	// strip possible leading backslash, since it is not ignored on all platforms
-	// totl has '\data\zcMHar.bif' in the key file, and also the CaseSensitive
-	// code breaks with that extra slash, so simple fix: remove it
-	if (name[0] == '\\') {
-		target.append(name, 1, path_t::npos);
-	} else {
-		target += name;
-	}
+	target.append(name.begin(), name.end());
 }
 
-static bool FindMatchInDir(const char* dir, char* item)
+static bool FindMatchInDir(const char* dir, MutableStringView item)
 {
+	// this is specifically designed over a UTF-8 default, so most things except Win
+	bool multibyteCheck =
+		std::any_of(item.begin(), item.end(), [](char c) { return c < 0; });
+
 	for (DirectoryIterator dirit(dir); dirit; ++dirit) {
 		const path_t& name = dirit.GetName();
-		if (stricmp(name.c_str(), item) == 0) {
-			std::copy(name.begin(), name.end(), item);
+		bool equal =
+			multibyteCheck
+				? UTF8_stricmp(name.c_str(), item.c_str())
+				: stricmp(name.c_str(), item.c_str()) == 0;
+
+		if (equal) {
+			std::copy(name.begin(), name.end(), item.begin());
 			return true;
 		}
 	}
@@ -249,8 +297,7 @@ static void ResolveCase(MutableStringView path, size_t itempos)
 		char* curDelim = &path[itempos - 1];
 		*curDelim = '\0';
 
-		char* item = &path[itempos];
-		found = FindMatchInDir(path.c_str(), item);
+		found = FindMatchInDir(path.c_str(), MutableStringView{path.c_str(), itempos, path.length()});
 		*curDelim = PathDelimiter;
 	}
 
@@ -262,7 +309,12 @@ static void ResolveCase(MutableStringView path, size_t itempos)
 
 path_t& ResolveCase(path_t& filePath)
 {
+	// TODO: we should make this a build time option, it applies to mac and numerous other platforms too
+#ifdef WIN32 // windows is case insensitive by default
+	if (!core || !core->config.CaseSensitive) {
+#else
 	if (core && !core->config.CaseSensitive) {
+#endif
 		return filePath;
 	}
 
@@ -277,7 +329,7 @@ path_t& ResolveCase(path_t& filePath)
 		MutableStringView msv(filePath);
 		ResolveCase(msv, nextItem);
 	} else if (!DirExists(filePath)) { // filePath is a single component
-		FindMatchInDir(".", &filePath[0]);
+		FindMatchInDir(".", MutableStringView{filePath});
 	}
 
 	return filePath;
@@ -394,7 +446,7 @@ GEM_EXPORT path_t HomePath()
 #ifdef WIN32
 	else {
 		// if home is null check HOMEDRIVE + HOMEPATH
-		char* homedrive = getenv("HOMEDRIVE");
+		const char* homedrive = getenv("HOMEDRIVE");
 		home = getenv("HOMEPATH");
 
 		if (home) {

@@ -78,12 +78,17 @@ enum CREVersion {
 #define LR_DAMAGELUCK  2
 #define LR_NEGATIVE    4
 
-//modal states
-#define MS_NONE        0
-#define MS_BATTLESONG  1
-#define MS_DETECTTRAPS 2
-#define MS_STEALTH     3
-#define MS_TURNUNDEAD  4
+// modal states
+enum class Modal : ieWord {
+	None,
+	BattleSong,
+	DetectTraps,
+	Stealth,
+	TurnUndead,
+	ShamanDance,
+
+	count
+};
 
 //stat modifier type
 #define MOD_ADDITIVE  0
@@ -175,8 +180,6 @@ enum CREVersion {
 #define GA_ONLY_BUMPABLE 32768
 #define GA_CAN_BUMP 65536
 #define GA_BIGBAD 131072
-
-#define VCONST_COUNT 100
 
 //interact types
 #define I_NONE       0
@@ -311,7 +314,7 @@ struct ModalStatesStruct {
 };
 
 struct ModalState {
-	ieDword State = MS_NONE;
+	Modal State = Modal::None;
 	ResRef Spell; // apply this (modal) spell once per round
 	ResRef LingeringSpell; // apply this spell once per round if the effects are lingering
 	char LingeringCount = 0; // the count of rounds for which the modal spell will be reapplied after the state ends
@@ -340,6 +343,66 @@ enum DamageFlags {
 	NoAwake = 0x200
 };
 
+// verbal constant (bg2 soundoff.ids / sndslot.ids), we have a lookup table (vcremap) for other games
+// an index into VCMap
+enum class Verbal : unsigned int {
+	InitialMeet = 0,
+	Panic = 1,
+	Happy = 2,
+	Unhappy = 3, // UNHAPPY_ANNOYED
+	UnhappySerious = 4,
+	BreakingPoint = 5,
+	Leader = 6,
+	Tired = 7,
+	Bored = 8,
+	BattleCry = 9, // 5 battle cries
+	Attack1 = 14,
+	Attack2 = 15,
+	Attack3 = 16,
+	Attack4 = 17,
+	Damage = 18,
+	Die = 19,
+	Hurt = 20,
+	AreaForest = 21, // these 5 are handled through comment.2da / Actor::GetAreaComment
+	AreaCity = 22,
+	AreaDungeon = 23,
+	AreaDay = 24,
+	AreaNight = 25,
+	Select = 26,
+	Select2 = 27,
+	Select3 = 28,
+	Select4 = 29,
+	Select5 = 30,
+	Select6 = 31,
+	Command = 32, // -34 selected action; -38 rare action, -43 interaction
+	Insult = 44, // -46
+	Compliment = 47, // -49
+	Special = 50, // -52
+	React = 53, // REACT_TO_DIE_GENERAL
+	ReactSpecific = 54, // REACT_TO_DIE_SPECIFIC
+	Resp2Compliment = 55, // -57; 55 also double labeled as MISCELLANEOUS in iwd/bg2ee sndslot.ids
+	Resp2Insult = 58, // -60
+	Hostile = 61,
+	Dialog = 62, // DIALOG_DEFAULT
+	SelectRare = 63, // -64
+	CritHit = 65,
+	CritMiss = 66,
+	WeaponIneffective = 67, // TARGET_IMMUNE
+	InventoryFull = 68,
+	PickedPocket = 69, // same as Existence1, but only used by joinables
+	Existence1 = 69, // same as PickedPocket
+	Hide = 70, // ees have this as Existence1 in sndslot.ids??
+	SpellDisrupted = 71,
+	TrapSet = 72,
+	Existence4 = 73, // unused in bg2, NI appears to have a gap of 1 — this should be Existence5 already
+	Bio = 74, // Existence5, biography for npcs
+
+	Noop = 97, // to disable a VB
+	Select7 = 98, // iwd-only, gets remapped in vcremap.2da
+	Attack0 = 99, // for our internal use only
+	count = 100
+};
+
 GEM_EXPORT void UpdateActorConfig(); //call this from guiscripts when some variable has changed
 
 bool VVCSort(const ScriptedAnimation* lhs, const ScriptedAnimation* rhs);
@@ -359,7 +422,7 @@ public:
 	ResRef BardSong;               //custom bard song (updated by fx)
 	ResRef BackstabResRef = "*";         //apply on successful backstab
 
-	PCStatsStruct* PCStats = nullptr;
+	std::unique_ptr<PCStatsStruct> PCStats;
 	PCStatsStruct::StateArray previousStates;
 	ResRef SmallPortrait;
 	ResRef LargePortrait;
@@ -368,7 +431,7 @@ public:
 	
 	ieStrRef ShortStrRef = ieStrRef(-1);
 	ieStrRef LongStrRef = ieStrRef(-1);
-	ieStrRef StrRefs[VCONST_COUNT]{};
+	EnumArray<Verbal, ieStrRef> StrRefs;
 
 	ieDword AppearanceFlags = 0;
 
@@ -423,8 +486,7 @@ public:
 	Holder<SoundHandle> casting_sound;
 	ieDword roundTime = 0;           // these are timers for attack rounds
 	ieDword panicMode = PANIC_NONE;  // runaway, berserk or randomwalk
-	ieDword nextComment = 0;         // do something random (area comment, interaction)
-	ieDword nextBored = 0;           // do something when bored
+	ieDword nextComment = 0; // do something random (area comment, interaction)
 	int FatigueComplaintDelay = 0;   // stagger tired messages
 	ieDword lastInit = 0;
 	//how many attacks left in this round, must be public for cleave opcode
@@ -551,7 +613,7 @@ public:
 	/** places the actor on the map */
 	void SetMap(Map *map);
 	/** sets the actor's position, calculating with the nojump flag*/
-	void SetPosition(const Point &nmptTarget, int jump, int radiusx = 0, int radiusy = 0, int size = -1);
+	void SetPosition(const Point& nmptTarget, bool jump, const Size& radius = Size(), int size = -1);
 	/** you better use SetStat, this stuff is only for special cases*/
 	void SetAnimationID(unsigned int AnimID);
 	/** returns the animations */
@@ -594,9 +656,9 @@ public:
 	/** Sets the Icon ResRef */
 	//Which - 0 both, 1 Large, 2 Small
 	void SetPortrait(const ResRef&, int Which=0);
-	void SetSoundFolder(const ieVariable& soundset) const;
+	void SetSoundFolder(const String& soundset) const;
 	/* Use overrideSet to replace PCStats->SoundSet */
-	std::string GetSoundFolder(int flag, const ResRef& overrideSet) const;
+	String GetSoundFolder(int flag, const ResRef& overrideSet) const;
 	
 	/** Gets the Character Long Name/Short Name */
 	const String& GetShortName() const
@@ -652,7 +714,7 @@ public:
 	/* call this on gui selects */
 	void PlaySelectionSound(bool force = false);
 	/* play a roar if the setting isn't disabled */
-	bool PlayWarCry(int range) const;
+	void PlayWarCry(int range) const;
 	/* call this when adding actions via gui */
 	void CommandActor(Action* action, bool clearPath=true);
 	/** handle panic and other involuntary actions that mess with scripting */
@@ -666,18 +728,16 @@ public:
 	/* inlined dialogue start */
 	void Interact(int type) const;
 	/* returns a remapped verbal constant strref */
-	ieStrRef GetVerbalConstant(size_t index) const;
+	ieStrRef GetVerbalConstant(Verbal index) const;
 	/* returns a random remapped verbal constant strref */
-	ieStrRef GetVerbalConstant(int start, int count) const;
+	ieStrRef GetVerbalConstant(Verbal start, int count) const;
 	/* displaying a random verbal constant */
-	bool VerbalConstant(int start, int count=1, int flags=0) const;
+	bool VerbalConstant(Verbal start, int count = 1, int flags = 0) const;
 	/* display string or verbal constant depending on what is available */
-	void DisplayStringOrVerbalConstant(HCStrings str, int vcstat, int vccount = 1) const;
+	void DisplayStringOrVerbalConstant(HCStrings str, Verbal vcStat, int vcCount = 1) const;
 	/* inlined dialogue response */
 	void Response(int type) const;
-	/* called when someone died in the party */
-	bool HasSpecialDeathReaction(const ieVariable& deadname) const;
-	void ReactToDeath(const ieVariable& deadname);
+	tick_t ReactToDeath(const ieVariable& deadname) const;
 	/* sends trigger_died to everyone in visual range */
 	void SendDiedTrigger() const;
 	/* called when someone talks to Actor */
@@ -750,9 +810,9 @@ public:
 	/* Receive experience (handle dual/multi class) */
 	void AddExperience(int exp, int combat);
 	/* Sets the modal state after checks */
-	void SetModal(ieDword newstate, bool force = true);
+	void SetModal(enum Modal newstate, bool force = true);
 	/* Sets the modal spell after checks */
-	void SetModalSpell(ieDword state, const ResRef& spell);
+	void SetModalSpell(enum Modal state, const ResRef& spell);
 	/* casts the modal spell if any */
 	void ApplyModal(const ResRef& modalSpell);
 	/* adds the combatants to the attackers list */
@@ -802,18 +862,14 @@ public:
 	/* overridden method, won't walk if dead */
 	void WalkTo(const Point &Des, ieDword flags, int MinDistance = 0);
 	/* resolve string constant (sound will be altered) */
-	void GetVerbalConstantSound(ResRef& sound, size_t index) const;
-	bool GetSoundFromFile(ResRef& Sound, TableMgr::index_t index) const;
-	bool GetSoundFromINI(ResRef& Sound, TableMgr::index_t index) const;
-	bool GetSoundFrom2DA(ResRef &Sound, TableMgr::index_t index) const;
-	/* generate area specific oneliner */
-	void GetAreaComment(int areaflag) const;
-	/* handle oneliner interaction, -1: unsuccessful (may comment area), 0: dialog banter, 1: oneliner */
-	int HandleInteract(const Actor *target) const;
+	void GetVerbalConstantSound(ResRef& sound, Verbal index, bool resolved = false) const;
+	bool GetSoundFromFile(ResRef& sound, Verbal index) const;
+	bool GetSoundFromINI(ResRef& sound, Verbal index) const;
+	bool GetSoundFrom2DA(ResRef& sound, Verbal index) const;
 	/* start bg1-style banter dialog */
 	void HandleInteractV1(const Actor *target);
 	/* generate party banter, return true if successful */
-	bool GetPartyComment();
+	bool GetPartyComment(const Actor* target);
 	/* sets the quick slots */
 	void SetActionButtonRow(const ActionButtonRow &ar) const;
 	/* updates the quick slots */
@@ -893,7 +949,7 @@ public:
 	int GetFeat(unsigned int feat) const;
 	void SetFeat(unsigned int feat, BitOp mode);
 	void SetFeatValue(unsigned int feat, int value, bool init = true);
-	void SetUsedWeapon(AnimRef, const ieWord *MeleeAnimation,
+	void SetUsedWeapon(AnimRef, const std::array<ieWord, 3>& meleeAnimation,
 		unsigned char WeaponType = IE_ANI_WEAPON_INVALID);
 	void SetUsedShield(AnimRef, unsigned char WeaponType = IE_ANI_WEAPON_INVALID);
 	void SetUsedHelmet(AnimRef);
@@ -1005,7 +1061,7 @@ public:
 	int GetArmorWeightClass(ieWord armorType) const;
 	int GetTotalArmorFailure() const;
 	int GetArmorFailure(int &armor, int &shield) const;
-	bool IsDead() const;
+	bool ShouldStopAttack() const;
 	bool IsInvisibleTo(const Scriptable *checker) const;
 	int UpdateAnimationID(bool derived);
 	void MovementCommand(std::string command);
@@ -1038,6 +1094,7 @@ public:
 	bool ShouldModifyMorale() const;
 	bool HibernateIfAble();
 	bool ForceScriptCheck();
+	bool TouchAttack(const Projectile* pro) const;
 };
 }
 

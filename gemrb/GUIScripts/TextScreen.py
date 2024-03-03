@@ -19,7 +19,7 @@
 
 import GemRB
 from ie_restype import RES_2DA
-from ie_sounds import CHAN_GUI
+from ie_sounds import CHAN_GUI, SND_SPEECH
 from GUIDefines import *
 import GameCheck
 
@@ -68,6 +68,7 @@ def StartTextScreen ():
 	elif GameCheck.IsGemRBDemo ():
 		#TODO: set MusicName
 		TableName = "chapters"
+		Message = "*"
 
 	if TableName == "":
 		EndTextScreen ()
@@ -98,10 +99,12 @@ def StartTextScreen ():
 		ID = GemRB.GetGameVar("CHAPTER") & 0x7fffffff
 		Chapter = ID + 1
 
+	# Textscreen should always stop currently playing music before starting
+	# to play any chapter music.
+	GemRB.HardEndPL ()
+
 	if MusicName != "*":
 		GemRB.LoadMusicPL (MusicName + ".mus")
-	else:
-		GemRB.HardEndPL ()
 
 	TextScreen = GemRB.LoadWindow (ID, "GUICHAP")
 	TextArea = TextScreen.GetControl (2)
@@ -179,7 +182,7 @@ def EndTextScreen ():
 	if TextScreen:
 		TextScreen.Close ()
 		GemRB.HardEndPL ()
-		GemRB.PlaySound(None, CHAN_GUI, 0, 0, 4)
+		GemRB.PlaySound(None, CHAN_GUI, 0, 0, SND_SPEECH)
 
 	GameWin = GemRB.GetView("GAMEWIN")
 	GameWin.SetDisabled(False)
@@ -193,8 +196,7 @@ def EndTextScreen ():
 def ReplayTextScreen ():
 	global TextArea, TableName, Row
 
-	# stop any current speech, flag of 5 = GEM_SND_RELATIVE|GEM_SND_SPEECH
-	GemRB.PlaySound(None, CHAN_GUI, 0, 0, 5)
+	GemRB.PlaySound(None, CHAN_GUI, 0, 0, SND_SPEECH)
 
 	Table = GemRB.LoadTable (TableName)
 	Count = Table.GetColumnCount (Row)

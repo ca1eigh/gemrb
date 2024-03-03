@@ -59,7 +59,7 @@ bool SDLAudioSoundHandle::Playing()
 
 void SDLAudioSoundHandle::Stop()
 {
-	// Mix_FadeOutChannel is not as agressive sounding (especially when stopping spellcasting) as Mix_HaltChannel
+	// Mix_FadeOutChannel is not as aggressive sounding (especially when stopping spellcasting) as Mix_HaltChannel
 	Mix_FadeOutChannel(chunkChannel, 500);
 }
 
@@ -128,7 +128,7 @@ void SDLAudio::SetAudioStreamVolume(uint8_t *stream, int len, int volume)
 
 void SDLAudio::music_callback(void *udata, uint8_t *stream, int len)
 {
-	ieDword volume = core->GetVariable("Volume Music", 100);
+	ieDword volume = core->GetDictionary().Get("Volume Music", 100);
 
 	// No point of bothering if it's off anyway
 	if (volume == 0) {
@@ -241,9 +241,9 @@ Holder<SoundHandle> SDLAudio::Play(StringView ResRef, unsigned int channel,
 	if (flags & GEM_SND_SPEECH) {
 		chan = 0;
 		loop = 0; // Speech ignores GEM_SND_LOOPING
-		volume = core->GetVariable("Volume Voices", 100);
+		volume = core->GetDictionary().Get("Volume Voices", 100);
 	} else {
-		volume = core->GetVariable("Volume SFX", 100);
+		volume = core->GetDictionary().Get("Volume SFX", 100);
 	}
 
 	if (volume == 0) {
@@ -269,12 +269,12 @@ Holder<SoundHandle> SDLAudio::Play(StringView ResRef, unsigned int channel,
 	}
 	Mix_Volume(chan, MIX_MAX_VOLUME * volume / 100);
 
-	if (!(flags & GEM_SND_RELATIVE)) {
+	if (flags & GEM_SND_SPATIAL) {
 		SetChannelPosition(listenerPos, p, chan, AUDIO_DISTANCE_ROLLOFF_MOD);
 	}
 
 	// TODO: we need something like static_ptr_cast
-	return Holder<SoundHandle>(new SDLAudioSoundHandle(chunk, chan, flags & GEM_SND_RELATIVE));
+	return Holder<SoundHandle>(new SDLAudioSoundHandle(chunk, chan, flags));
 }
 
 bool SDLAudio::Pause()
@@ -329,7 +329,7 @@ void SDLAudio::UpdateVolume(unsigned int flags)
 	ieDword volume = 0;
 
 	if (flags & GEM_SND_VOL_AMBIENTS) {
-		volume = core->GetVariable("Volume Ambients", 0);
+		volume = core->GetDictionary().Get("Volume Ambients", 0);
 		((AmbientMgr*) ambim)->UpdateVolume(volume);
 	}
 }
@@ -359,7 +359,7 @@ Point SDLAudio::GetListenerPos()
 void SDLAudio::buffer_callback(void *udata, uint8_t *stream, int len)
 {
 	// Check only movie volume, since ambiens aren't supported right now
-	ieDword volume = core->GetVariable("Volume Movie", 100);
+	ieDword volume = core->GetDictionary().Get("Volume Movie", 100);
 
 	// No point of bothering if it's off anyway
 	if (volume == 0) {
@@ -481,10 +481,7 @@ bool SDLAudio::ReleaseStream(int stream, bool HardStop)
 	Log(MESSAGE, "SDLAudio", "Releasing stream...");
 
 	(void)HardStop;
-
-	assert(!MusicPlaying);
-
-	Mix_HookMusic(NULL, NULL);
+	Stop();
 	FreeBuffers();
 
 	return true;
@@ -493,8 +490,8 @@ bool SDLAudio::ReleaseStream(int stream, bool HardStop)
 void SDLAudio::FreeBuffers()
 {
 	std::lock_guard<std::recursive_mutex> l(MusicMutex);
-	for (unsigned int i = 0; i < buffers.size(); i++) {
-		free(buffers[i].buf);
+	for (const auto& buffer : buffers) {
+		free(buffer.buf);
 	}
 	buffers.clear();
 }

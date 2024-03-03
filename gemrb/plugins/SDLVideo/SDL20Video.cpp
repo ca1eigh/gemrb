@@ -23,6 +23,10 @@
 #include "Audio.h"
 #include "Interface.h"
 
+#ifdef USE_TRACY
+#include <tracy/TracyOpenGL.hpp>
+#endif
+
 using namespace GemRB;
 
 #ifdef BAKE_ICON
@@ -181,7 +185,7 @@ int SDL20VideoDriver::CreateSDLDisplay(const char* title, bool vsync)
 
 	// Moved this here to fix a weird rendering issue
 
-	// we set logical size so that platforms where the window can be a diffrent size then requested
+	// we set logical size so that platforms where the window can be a different size then requested
 	// function properly. eg iPhone and Android the requested size may be 640x480,
 	// but the window will always be the size of the screen
 	SDL_RenderSetLogicalSize(renderer, screenSize.w, screenSize.h);
@@ -215,6 +219,8 @@ int SDL20VideoDriver::CreateSDLDisplay(const char* title, bool vsync)
 #if defined(_WIN32) && defined(USE_OPENGL_API)
 	glewInit();
 #endif
+
+	TRACY(TracyGpuContext);
 
 	scratchBuffer = CreateBuffer(Region(Point(), screenSize), BufferFormat::DISPLAY_ALPHA);
 	scratchBuffer->Clear();
@@ -279,6 +285,8 @@ void SDL20VideoDriver::SwapBuffers(VideoBuffers& buffers)
 	blitRGBAShader->SetUniformValue("u_stencil", 1, 0);
 	blitRGBAShader->SetUniformValue("u_dither", 1, 0);
 	blitRGBAShader->SetUniformValue("u_rgba", 1, 1);
+	blitRGBAShader->SetUniformValue("u_brightness", 1, 1);
+	blitRGBAShader->SetUniformValue("u_contrast", 1, 1);
 #endif
 
 	SDL_SetRenderTarget(renderer, NULL);
@@ -291,6 +299,9 @@ void SDL20VideoDriver::SwapBuffers(VideoBuffers& buffers)
 		(*it)->RenderOnDisplay(renderer);
 	}
 
+#if USE_OPENGL_BACKEND
+	TRACY(TracyGpuCollect);
+#endif
 	SDL_RenderPresent( renderer );
 }
 
@@ -370,6 +381,7 @@ void SDL20VideoDriver::BlitSpriteNativeClipped(const SDLTextureSprite2D* spr, co
 
 void SDL20VideoDriver::BlitSpriteNativeClipped(SDL_Texture* texSprite, const Region& srgn, const Region& drgn, BlitFlags flags, const SDL_Color* tint)
 {
+	TRACY(ZoneScoped);
 	SDL_Rect srect = RectFromRegion(srgn);
 	SDL_Rect drect = RectFromRegion(drgn);
 	
@@ -461,6 +473,9 @@ int SDL20VideoDriver::RenderCopyShaded(SDL_Texture* texture, const SDL_Rect* src
 
 	blitRGBAShader->SetUniformValue("u_greyMode", 1, greyMode);
 
+	blitRGBAShader->SetUniformValue("u_brightness", 1, brightness);
+	blitRGBAShader->SetUniformValue("u_contrast", 1, contrast);
+
 	GLint channel = 3;
 	if (flags & BlitFlags::STENCIL_RED) {
 		channel = 0;
@@ -481,13 +496,17 @@ int SDL20VideoDriver::RenderCopyShaded(SDL_Texture* texture, const SDL_Rect* src
 		bool doDither = flags & BlitFlags::STENCIL_DITHER;
 		blitRGBAShader->SetUniformValue("u_dither", 1, doDither ? 1 : 0);
 
-		int texW = 0, texH = 0;
+		int texW = 0;
+		int texH = 0;
 		SDL_QueryTexture(CurrentStencilBuffer(), nullptr, nullptr, &texW, &texH);
 
-		GLfloat stencilTexW = 1.0f, stencilTexH = 1.0f,
-			stencilTexX = 0.0f, stencilTexY = 0.0f;
+		GLfloat stencilTexW = 1.0f;
+		GLfloat stencilTexH = 1.0f;
+		GLfloat stencilTexX = 0.0f;
+		GLfloat stencilTexY = 0.0f;
 
-		float scaleX = 0.0f, scaleY = 0.0f;
+		float scaleX = 0.0f;
+		float scaleY = 0.0f;
 		SDL_RenderGetScale(renderer, &scaleX, &scaleY);
 		
 		SDL_Rect stencilRect = *dstrect;
@@ -500,7 +519,7 @@ int SDL20VideoDriver::RenderCopyShaded(SDL_Texture* texture, const SDL_Rect* src
 		}
 
 #if !SDL_VERSION_ATLEAST(2, 0, 18)
-		// In versions earler, SDL uses a different vertex setup in case
+		// In versions earlier, SDL uses a different vertex setup in case
 		// of flipping: (-w/2, -h/2) to (w/2, h/2) that are transformed by
 		// the OpenGL backend via matrices.
 		if (flags & BlitFlags::MIRRORX) {
@@ -585,12 +604,20 @@ void SDL20VideoDriver::DrawRawGeometry(
 		SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	}
 
+	#if !SDL_VERSION_ATLEAST(2, 0, 20)
+	static_assert(sizeof(int) == sizeof(SDL_Color), "Incompatible types to cast");
+	#endif
+
 	SDL_RenderGeometryRaw(
 		renderer,
 		nullptr,
 		vertices.data(),
 		2 * sizeof(float),
+		#if SDL_VERSION_ATLEAST(2, 0, 20)
 		reinterpret_cast<const SDL_Color*>(colors.data()),
+		#else
+		reinterpret_cast<const int*>(colors.data()),
+		#endif
 		sizeof(Color),
 		nullptr,
 		0,
@@ -723,7 +750,7 @@ int SDL20VideoDriver::GetTouchFingers(TouchEvent::Finger(&fingers)[FINGER_MAX], 
 		fingers[i].x = finger->x * screenSize.w;
 		fingers[i].y = finger->y * screenSize.h;
 
-		const TouchEvent::Finger* current = EvntManager->FingerState(finger->id);
+		const TouchEvent::Finger* current = EventMgr::FingerState(finger->id);
 		if (current) {
 			fingers[i].deltaX = fingers[i].x - current->x;
 			fingers[i].deltaY = fingers[i].y - current->y;
@@ -762,7 +789,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 				// FIXME: I'm sure this delta needs to be scaled
 				int delta = xaxis ? pct * screenSize.w : pct * screenSize.h;
 				InputAxis axis = InputAxis(event.caxis.axis);
-				e = EvntManager->CreateControllerAxisEvent(axis, delta, pct);
+				e = EventMgr::CreateControllerAxisEvent(axis, delta, pct);
 				EvntManager->DispatchEvent(std::move(e));
 			}
 			break;
@@ -771,12 +798,12 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 			{
 				bool down = (event.type == SDL_JOYBUTTONDOWN) ? true : false;
 				EventButton btn = EventButton(event.cbutton.button);
-				e = EvntManager->CreateControllerButtonEvent(btn, down);
+				e = EventMgr::CreateControllerButtonEvent(btn, down);
 				EvntManager->DispatchEvent(std::move(e));
 			}
 			break;
 #endif
-		case SDL_FINGERDOWN: // fallthough
+		case SDL_FINGERDOWN: // fallthrough
 		case SDL_FINGERUP:
 			{
 				TouchEvent::Finger fingers[1] = { };
@@ -786,20 +813,20 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 				fingers[0].deltaY = event.tfinger.dy * screenSize.h;
 				fingers[0].id = event.tfinger.fingerId;
 
-				e = EvntManager->CreateTouchEvent(fingers, 1, event.type == SDL_FINGERDOWN, event.tfinger.pressure);
+				e = EventMgr::CreateTouchEvent(fingers, 1, event.type == SDL_FINGERDOWN, event.tfinger.pressure);
 				e.mod = modstate;
 				EvntManager->DispatchEvent(std::move(e));
 			}
 			break;
-		// For swipes only. gestures requireing pinch or rotate need to use SDL_MULTIGESTURE or SDL_DOLLARGESTURE
+		// For swipes only. Gestures requiring pinch or rotate need to use SDL_MULTIGESTURE or SDL_DOLLARGESTURE
 		case SDL_FINGERMOTION:
 			{
 				TouchEvent::Finger fingers[FINGER_MAX] = { }; // 0 init
 				int numf = GetTouchFingers(fingers, event.mgesture.touchId);
 
-				Event touch = EvntManager->CreateTouchEvent(fingers, numf, true, event.tfinger.pressure);
+				Event touch = EventMgr::CreateTouchEvent(fingers, numf, true, event.tfinger.pressure);
 				// TODO: it may make more sense to calculate a pinch/rotation from screen center?
-				e = EvntManager->CreateTouchGesture(touch.touch, 0.0, 0.0);
+				e = EventMgr::CreateTouchGesture(touch.touch, 0.0, 0.0);
 				e.mod = modstate;
 				EvntManager->DispatchEvent(std::move(e));
 			}
@@ -814,8 +841,8 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 				int numf = GetTouchFingers(fingers, event.mgesture.touchId);
 
 				// TODO: it may make more sense to calculate the pressure as an avg?
-				Event touch = EvntManager->CreateTouchEvent(fingers, numf, true, 0.0);
-				e = EvntManager->CreateTouchGesture(touch.touch, event.mgesture.dTheta, event.mgesture.dDist);
+				Event touch = EventMgr::CreateTouchEvent(fingers, numf, true, 0.0);
+				e = EventMgr::CreateTouchGesture(touch.touch, event.mgesture.dTheta, event.mgesture.dDist);
 				if (e.gesture.deltaX != 0 || e.gesture.deltaY != 0)
 				{
 					e.mod = modstate;
@@ -831,7 +858,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 				
 				// HACK: some mouse devices report the delta in pixels, but others (like regular mouse wheels) are going to be in "clicks"
 				// there is no good way to find which is the case so heuristically we will just switch if we see a delta larger than one
-				// hopefully no devices will be merging several repeated whell clicks together
+				// hopefully no devices will be merging several repeated wheel clicks together
 				static bool unitIsPixels = false;
 				if (event.wheel.y > 1 || event.wheel.x > 1) {
 					unitIsPixels = true;
@@ -839,9 +866,9 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 				
 				int speed = unitIsPixels ? 1 : core->GetMouseScrollSpeed();
 				if (SDL_GetModState() & KMOD_SHIFT) {
-					e = EvntManager->CreateMouseWheelEvent(Point(event.wheel.y * speed, event.wheel.x * speed));
+					e = EventMgr::CreateMouseWheelEvent(Point(event.wheel.y * speed, event.wheel.x * speed));
 				} else {
-					e = EvntManager->CreateMouseWheelEvent(Point(event.wheel.x * speed, event.wheel.y * speed));
+					e = EventMgr::CreateMouseWheelEvent(Point(event.wheel.x * speed, event.wheel.y * speed));
 				}
 				
 				EvntManager->DispatchEvent(std::move(e));
@@ -849,7 +876,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 			break;
 		/* not user input events */
 		case SDL_TEXTINPUT:
-			e = EvntManager->CreateTextEvent(event.text.text);
+			e = EventMgr::CreateTextEvent(event.text.text);
 			EvntManager->DispatchEvent(std::move(e));
 			break;
 		/* not user input events */
@@ -858,7 +885,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 		case SDL_RENDER_DEVICE_RESET:
 			// TODO: must destroy all SDLTextureSprite2D textures
 
-			// fallthough
+			// fallthrough
 		case SDL_APP_DIDENTERFOREGROUND:
 		case SDL_RENDER_TARGETS_RESET:
 			e = EventMgr::CreateRedrawRequestEvent();
@@ -866,24 +893,27 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 			break;
 		case SDL_WINDOWEVENT://SDL 1.2
 			switch (event.window.event) {
+				case SDL_WINDOWEVENT_LEAVE:
+					if (core->config.GUIEnhancements & 8) core->DisableGameControl(true);
+					break;
+				case SDL_WINDOWEVENT_ENTER:
+					if (core->config.GUIEnhancements & 8) core->DisableGameControl(false);
+					break;
 				case SDL_WINDOWEVENT_MINIMIZED://SDL 1.3
 					// We pause the game and audio when the window is minimized.
 					// on iOS/Android this happens when leaving the application or when play is interrupted (ex phone call)
 					// but it's annoying on desktops, so we try to detect them
 					if (TouchInputEnabled()) {
 						core->GetAudioDrv()->Pause();//this is for ANDROID mostly
-						core->SetPause(PAUSE_ON);
+						core->SetPause(PauseState::On);
 					}
 					break;
 				case SDL_WINDOWEVENT_RESTORED: //SDL 1.3
 					core->GetAudioDrv()->Resume();//this is for ANDROID mostly
 					break;
-					/*
-				case SDL_WINDOWEVENT_RESIZED: //SDL 1.2
-					// this event exists in SDL 1.2, but this handler is only getting compiled under 1.3+
-					Log(WARNING, "SDL 2 Driver",  "Window resized so your window surface is now invalid.");
+				// SDL_WINDOWEVENT_RESIZED and SDL_WINDOWEVENT_SIZE_CHANGED are handled automatically
+				default:
 					break;
-					 */
 			}
 			break;
 
@@ -910,7 +940,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 					char *pasteValue = SDL_GetClipboardText();
 
 					if (pasteValue != NULL) {
-						e = EvntManager->CreateTextEvent(pasteValue);
+						e = EventMgr::CreateTextEvent(pasteValue);
 						EvntManager->DispatchEvent(std::move(e));
 						SDL_free(pasteValue);
 					}
@@ -924,7 +954,7 @@ int SDL20VideoDriver::ProcessEvent(const SDL_Event & event)
 					case SDLK_v:
 						if (SDL_HasClipboardText()) {
 							char* text = SDL_GetClipboardText();
-							e = EvntManager->CreateTextEvent(text);
+							e = EventMgr::CreateTextEvent(text);
 							SDL_free(text);
 							EvntManager->DispatchEvent(std::move(e));
 							return GEM_OK;
@@ -982,11 +1012,11 @@ bool SDL20VideoDriver::CanDrawRawGeometry() const {
 #endif
 }
 
-void SDL20VideoDriver::SetGamma(int brightness, int /*contrast*/)
+void SDL20VideoDriver::SetGamma(int newBrightness, int newContrast)
 {
-	// FIXME: hardcoded hack. in in Interface our default brigtness value is 10
-	// so we assume that to be "normal" (1.0) value.
-	SDL_SetWindowBrightness(window, (float)brightness/10.0);
+	// Steps chosen empirically to give ranges close to originals.
+	brightness = 1.0 + (float)newBrightness * 0.0015;
+	contrast = 1.0 + (float)newContrast * 0.05;
 }
 
 bool SDL20VideoDriver::SetFullscreenMode(bool set)

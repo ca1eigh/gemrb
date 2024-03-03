@@ -187,7 +187,6 @@ static std::unique_ptr<AbilityTables> abilityTables;
 
 static const char* const IWD2DeathVarFormat = "_DEAD{}";
 static const char* DeathVarFormat = "SPRITE_IS_DEAD{}";
-static int NumRareSelectSounds = 2;
 
 static const ieWord IDT_FAILURE = 0;
 static const ieWord IDT_CRITRANGE = 1;
@@ -210,7 +209,7 @@ ItemDragOp::ItemDragOp(CREItem* item)
 
 	cursor = pic;
 
-	// FIXME: this VarName is not consistant
+	// FIXME: this VarName is not consistent
 	dragDummy.BindDictVariable("itembutton", Control::INVALID_VALUE);
 }
 
@@ -248,7 +247,7 @@ Interface::Interface(CoreSettings&& cfg)
 	if (!config.KeepCache) DelTree(config.CachePath, false);
 	
 	vars = std::move(config.vars);
-	vars["MaxPartySize"] = config.MaxPartySize; // for simple GUIScript access
+	vars.Set("MaxPartySize", config.MaxPartySize); // for simple GUIScript access
 
 	LoadPlugins();
 	InitVideo();
@@ -258,9 +257,6 @@ Interface::Interface(CoreSettings&& cfg)
 	EventMgr::DCDelay = config.DoubleClickDelay;
 	Control::ActionRepeatDelay = config.ActionRepeatDelay;
 	GameControl::DebugFlags = config.DebugFlags;
-
-	ieDword brightness = GetVariable("Brightness Correction", 10);
-	ieDword contrast = GetVariable("Gamma Correction", 5);
 
 	Log(MESSAGE, "Core", "Initializing search path...");
 	if (!IsAvailable(PLUGIN_RESOURCE_DIRECTORY)) {
@@ -306,16 +302,20 @@ Interface::Interface(CoreSettings&& cfg)
 	path = PathJoin(config.GamePath, config.GameDataPath);
 	gamedata->AddSource(path, "Data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
 
-	// accomodating silly installers that create a data/Data/.* structure
+	// accommodating silly installers that create a data/Data/.* structure
 	path = PathJoin(config.GamePath, config.GameDataPath, "Data");
-	gamedata->AddSource(path, "Data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
+	if (DirExists(path)) {
+		gamedata->AddSource(path, "Data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
+	}
 
 	// IWD2 movies are on the CD but not in the BIF
 	for (size_t i = 0; i < MAX_CD; i++) {
 		const std::string description = fmt::format("CD{}/data", i);
 		for (size_t j = 0; j < config.CD[i].size(); j++) {
 			path = PathJoin(config.CD[i][j], config.GameDataPath);
-			gamedata->AddSource(path, description, PLUGIN_RESOURCE_CACHEDDIRECTORY);
+			if (DirExists(path)) {
+				gamedata->AddSource(path, description, PLUGIN_RESOURCE_CACHEDDIRECTORY);
+			}
 		}
 	}
 
@@ -365,24 +365,6 @@ Interface::Interface(CoreSettings&& cfg)
 	Log(MESSAGE, "Core", "Reading Game Options...");
 	LoadGemRBINI();
 
-	// SDL2 driver requires the display to be created prior to sprite creation (opengl context)
-	// we also need the display to exist to create sprites using the display format
-	ieDword fullscreen = GetVariable("Full Screen", 0);
-
-	int createDisplayResult =
-	VideoDriver->CreateDisplay(
-				Size(config.Width, config.Height),
-				config.Bpp,
-				fullscreen,
-				config.GameName.c_str(),
-				config.CapFPS == 0
-		);
-
-	if (createDisplayResult == GEM_ERROR) {
-		throw CIE("Cannot initialize shaders.");
-	}
-	VideoDriver->SetGamma(brightness, contrast);
-
 	// load the game ini (baldur.ini, torment.ini, icewind.ini ...)
 	// read from our version of the config if it is present
 	path_t gemrbINI = "gem-" + INIConfig;
@@ -402,13 +384,34 @@ Interface::Interface(CoreSettings&& cfg)
 		Log(WARNING, "Core", "Unable to set dictionary default values!");
 	}
 
+	// SDL2 driver requires the display to be created prior to sprite creation (opengl context)
+	// we also need the display to exist to create sprites using the display format
+	ieDword fullscreen = vars.Get("Full Screen", 0);
+	// Brightness and contrast are specified in gem-INICONFIG, so display must be initialized after reading it.
+	ieDword brightness = vars.Get("Brightness Correction", 0);
+	ieDword contrast = vars.Get("Gamma Correction", 0);
+
+	int createDisplayResult =
+	VideoDriver->CreateDisplay(
+				Size(config.Width, config.Height),
+				config.Bpp,
+				fullscreen,
+				config.GameName.c_str(),
+				config.CapFPS == 0
+		);
+
+	if (createDisplayResult == GEM_ERROR) {
+		throw CIE("Cannot initialize shaders.");
+	}
+	VideoDriver->SetGamma(brightness, contrast);
+
 	// We use this for the game's state exclusively
-	ieDword maxRefreshRate = GetVariable("Maximum Frame Rate", 30);
+	ieDword maxRefreshRate = vars.Get("Maximum Frame Rate", 30);
 	// the originals used double ticks for haste handling
 	Time.ticksPerSec = maxRefreshRate / 2;
 
 	// set up the tooltip delay which we store in milliseconds
-	ieDword tooltipDelay = GetVariable("Tooltips", 0);
+	ieDword tooltipDelay = vars.Get("Tooltips", 0);
 	WindowManager::SetTooltipDelay(tooltipDelay * Tooltip::DELAY_FACTOR / 10);
 
 	// restore the game config name if we read it from our version
@@ -422,8 +425,8 @@ Interface::Interface(CoreSettings&& cfg)
 	GameNameResRef = tmp;
 
 	Log(MESSAGE, "Core", "Reading Encoding Table...");
-	if (!LoadEncoding()) {
-		Log(ERROR, "Core", "Cannot Load Encoding.");
+	if (!LoadEncoding() && config.Encoding != "default") {
+		Log(ERROR, "Core", "Cannot load encoding from {}.", config.Encoding);
 	}
 
 	Log(MESSAGE, "Core", "Creating Projectile Server...");
@@ -503,7 +506,8 @@ Interface::Interface(CoreSettings&& cfg)
 		INIparty = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
 		path_t tINIparty = PathJoin(config.GamePath, "Party.ini");
 		fs = FileStream::OpenFile(tINIparty);
-		if (!INIparty->Open(fs)) {
+
+		if (!INIparty->Open(std::unique_ptr<DataStream>{fs})) {
 			Log(WARNING, "Core", "Failed to load precreated teams.");
 		}
 	}
@@ -517,7 +521,8 @@ Interface::Interface(CoreSettings&& cfg)
 		INIbeasts = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
 		path_t tINIbeasts = PathJoin(config.GamePath, "beast.ini");
 		fs = FileStream::OpenFile(tINIbeasts);
-		if (!INIbeasts->Open(fs)) {
+
+		if (!INIbeasts->Open(std::unique_ptr<DataStream>{fs})) {
 			Log(WARNING, "Core", "Failed to load beast definitions.");
 		}
 
@@ -525,7 +530,8 @@ Interface::Interface(CoreSettings&& cfg)
 		INIquests = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
 		path_t tINIquests = PathJoin(config.GamePath, "quests.ini");
 		FileStream* fs2 = FileStream::OpenFile(tINIquests);
-		if (!INIquests->Open(fs2)) {
+
+		if (!INIquests->Open(std::unique_ptr<DataStream>{fs2})) {
 			Log(WARNING, "Core", "Failed to load quest definitions.");
 		}
 	}
@@ -609,9 +615,6 @@ Interface::~Interface() noexcept
 	delete worldmap;
 	delete keymap;
 
-	ResRefMap<Font*>::iterator fit = fonts.begin();
-	for (; fit != fonts.end(); ++fit)
-		delete (*fit).second;
 	// fonts need to be destroyed before TTF plugin
 	PluginMgr::Get()->RunCleanup();
 
@@ -632,8 +635,6 @@ Interface::~Interface() noexcept
 
 	// Removing all stuff from Cache, except bifs
 	if (!config.KeepCache) DelTree(config.CachePath, true);
-	
-	VideoDriver.reset();
 }
 
 GameControl* Interface::StartGameControl()
@@ -870,7 +871,7 @@ bool Interface::ReadMusicTable(const ResRef& tablename, int col) {
 }
 
 bool Interface::ReadDamageTypeTable() {
-	AutoTable tm = gamedata->LoadTable("dmgtypes");
+	AutoTable tm = gamedata->LoadTable("dmginfo");
 	if (!tm)
 		return false;
 
@@ -925,8 +926,8 @@ void Interface::DisableMusicPlaylist(size_t SongType)
 /** this is the main loop */
 void Interface::Main()
 {
-	int speed = GetVariable("Mouse Scroll Speed", 10);
-	SetMouseScrollSpeed(speed);
+	int speed = vars.Get("Mouse Scroll Speed", 10);
+	SetMouseScrollSpeed(speed + 1);
 
 	// We had 36 at 30fps originally, so more fps
 	// should not speed this up unless adjusted
@@ -943,7 +944,7 @@ void Interface::Main()
 		SetMouseScrollSpeed(scrollSpeed(config.CapFPS));
 	}
 
-	const Font* fps = GetTextFont();
+	auto fps = GetTextFont();
 	// TODO: if we ever want to support dynamic resolution changes this will break
 	Region fpsRgn(0, config.Height - 30, 80, 30);
 	String fpsstring = u"???.??? fps";
@@ -1006,6 +1007,8 @@ void Interface::Main()
 			VideoDriver->DrawRect( fpsRgn, ColorBlack );
 			fps->Print(fpsRgn, String(fpsstring), IE_FONT_ALIGN_MIDDLE | IE_FONT_SINGLE_LINE, {ColorWhite, ColorBlack});
 		}
+
+		TRACY(FrameMark);
 	} while (VideoDriver->SwapBuffers(config.CapFPS) == GEM_OK && !(QuitFlag&QF_KILL));
 	QuitGame(0);
 }
@@ -1059,7 +1062,8 @@ void Interface::InitAudio()
 		INIresdata = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
 		StringView sv(resdata ? "resdata" : "sounds");
 		DataStream* ds = gamedata->GetResourceStream(sv, IE_INI_CLASS_ID);
-		if (!INIresdata->Open(ds)) {
+
+		if (!INIresdata->Open(std::unique_ptr<DataStream>{ds})) {
 			Log(WARNING, "Core", "Failed to load resource data.");
 		}
 	}
@@ -1075,11 +1079,11 @@ void Interface::LoadPlugins() const
 {
 	plugin_flags_t pluginFlags;
 	if (!config.SkipPlugin.empty()) {
-		pluginFlags[config.SkipPlugin] = PluginFlagsType::SKIP;
+		pluginFlags.Set(config.SkipPlugin, PluginFlagsType::SKIP);
 	}
 
 	if (!config.DelayPlugin.empty()) {
-		pluginFlags[config.DelayPlugin] = PluginFlagsType::DELAY;
+		pluginFlags.Set(config.DelayPlugin, PluginFlagsType::DELAY);
 	}
 
 	Log(MESSAGE, "Core", "Starting Plugin Manager...");
@@ -1114,7 +1118,7 @@ void Interface::LoadPlugins() const
 void Interface::LoadSprites()
 {
 	Log(MESSAGE, "Core", "Loading Cursors...");
-	auto anim = gamedata->GetFactoryResourceAs<const AnimationFactory>(MainCursorsImage, IE_BAM_CLASS_ID);
+	auto anim = gamedata->GetFactoryResourceAs<const AnimationFactory>(MainCursorsImage, IE_BAM_CLASS_ID, true);
 	size_t CursorCount = 0;
 	if (anim) {
 		CursorCount = anim->GetCycleCount();
@@ -1187,7 +1191,7 @@ void Interface::LoadFonts()
 		FontStyle font_style = (FontStyle)tab->QueryFieldSigned<int>(rowName, "STYLE"); // not available in BAM fonts.
 		bool background = tab->QueryFieldSigned<int>(rowName, "BACKGRND") != 0;
 
-		Font* fnt = NULL;
+		Holder<Font> fnt;
 		ResourceHolder<FontManager> fntMgr = gamedata->GetResourceHolder<FontManager>(font_name);
 		if (fntMgr) fnt = fntMgr->GetFont(font_size, font_style, background);
 
@@ -1195,6 +1199,7 @@ void Interface::LoadFonts()
 			error("Core", "Unable to load font resource: {} for ResRef {} (check fonts.2da)", font_name, resref);
 		} else {
 			fonts[resref] = fnt;
+
 			Log(MESSAGE, "Core", "Loaded Font: {} for ResRef {}", font_name, resref);
 		}
 	}
@@ -1251,7 +1256,7 @@ String Interface::GetString(ieStrRef strref, STRING_FLAGS options) const
 	if (!(options & STRING_FLAGS::STRREFOFF)) {
 		flags =
 			static_cast<STRING_FLAGS>(
-				GetVariable("Strref On", static_cast<std::underlying_type_t<STRING_FLAGS>>(STRING_FLAGS::NONE))
+				vars.Get("Strref On", UnderType(STRING_FLAGS::NONE))
 			);
 	}
 	
@@ -1289,91 +1294,90 @@ bool Interface::HasFeature(GFFlags flag) const
 }
 
 static const EnumArray<GFFlags, StringView> game_flags {
-		"HasKaputz",          //0 GF_HAS_KAPUTZ
-		"AllStringsTagged",   //1 GF_ALL_STRINGS_TAGGED
-		"HasSongList",        //2 GF_HAS_SONGLIST
-		"TeamMovement",       //3 GF_TEAM_MOVEMENT
-		"UpperButtonText",    //4 GF_UPPER_BUTTON_TEXT
-		"LowerLabelText",     //5 GF_LOWER_LABEL_TEXT
-		"HasPartyIni",        //6 GF_HAS_PARTY_INI
-		"SoundFolders",       //7 GF_SOUNDFOLDERS
-		"IgnoreButtonFrames", //8 GF_IGNORE_BUTTON_FRAMES
-		"OneByteAnimationID", //9 GF_ONE_BYTE_ANIMID
-		"HasDPLAYER",         //10GF_HAS_DPLAYER
-		"HasEXPTABLE",        //11GF_HAS_EXPTABLE
-		"HasBeastsIni",       //12GF_HAS_BEASTS_INI
-		"HasEEEffects",       //13GF_HAS_EE_EFFECTS
-		"HasPickSound",       //14GF_HAS_PICK_SOUND
-		"IWDMapDimensions",   //15GF_IWD_MAP_DIMENSIONS
-		"AutomapINI",         //16GF_AUTOMAP_INI
-		"SmallFog",           //17GF_SMALL_FOG
-		"ReverseDoor",        //18GF_REVERSE_DOOR
-		"ProtagonistTalks",   //19GF_PROTAGONIST_TALKS
-		"HasSpellList",       //20GF_HAS_SPELLLIST
-		"IWD2ScriptName",     //21GF_IWD2_SCRIPTNAME
-		"DialogueScrolls",    //22GF_DIALOGUE_SCROLLS
-		"KnowWorld",          //23GF_KNOW_WORLD
-		"ReverseToHit",       //24GF_REVERSE_TOHIT
-		"SaveForHalfDamage",  //25GF_SAVE_FOR_HALF
-		"CharNameIsGabber",   //26GF_CHARNAMEISGABBER
-		"MagicBit",           //27GF_MAGICBIT
-		"CheckAbilities",     //28GF_CHECK_ABILITIES
-		"ChallengeRating",    //29GF_CHALLENGERATING
-		"SpellBookIconHack",  //30GF_SPELLBOOKICONHACK
-		"EnhancedEffects",    //31GF_ENHANCED_EFFECTS
-		"DeathOnZeroStat",    //32GF_DEATH_ON_ZERO_STAT
-		"SpawnIni",           //33GF_SPAWN_INI
-		"IWD2DeathVarFormat", //34GF_IWD2_DEATHVARFORMAT
-		"HasResDataIni",      //35GF_RESDATA_INI
-		"OverrideCursorPos",  //36GF_OVERRIDE_CURSORPOS
-		"BreakableWeapons",   //37GF_BREAKABLE_WEAPONS
-		"3EdRules",           //38GF_3ED_RULES
-		"LevelslotPerClass",  //39GF_LEVELSLOT_PER_CLASS
-		"SelectiveMagicRes",  //40GF_SELECTIVE_MAGIC_RES
-		"HasHideInShadows",   //41GF_HAS_HIDE_IN_SHADOWS
-		"AreaVisitedVar",     //42GF_AREA_VISITED_VAR
-		"ProperBackstab",     //43GF_PROPER_BACKSTAB
-		"OnScreenText",       //44GF_ONSCREEN_TEXT
-		"HasSpecificDamageBonus", //45GF_SPECIFIC_DMG_BONUS
-		"StrrefSaveGame",     //46GF_STRREF_SAVEGAME
-		"SimplifiedDisruption",//47GF_SIMPLE_DISRUPTION
-		"BiographyIsRes",     //48GF_BIOGRAPHY_RES
-		"NoBiography",        //49GF_NO_BIOGRAPHY
-		"StealIsAttack",      //50GF_STEAL_IS_ATTACK
-		"CutsceneAreascripts",//51GF_CUTSCENE_AREASCRIPTS
-		"FlexibleWorldmap",   //52GF_FLEXIBLE_WMAP
-		"AutoSearchHidden",   //53GF_AUTOSEARCH_HIDDEN
-		"PSTStateFlags",      //54GF_PST_STATE_FLAGS
-		"NoDropCanMove",      //55GF_NO_DROP_CAN_MOVE
-		"JournalHasSections", //56GF_JOURNAL_HAS_SECTIONS
-		"CastingSounds",      //57GF_CASTING_SOUNDS
-		"EnhancedCastingSounds", //58GF_CASTING_SOUNDS2
-		"ForceAreaScript",    //59GF_FORCE_AREA_SCRIPT
-		"AreaOverride",       //60GF_AREA_OVERRIDE
-		"NoNewVariables",     //61GF_NO_NEW_VARIABLES
-		"HasSoundsIni",       //62GF_SOUNDS_INI
-		"HasNoNPCFlag",       //63GF_USEPOINT_400
-		"HasUsePointFlag",    //64GF_USEPOINT_200
-		"HasFloatMenu",       //65GF_HAS_FLOAT_MENU
-		"RareActionSounds",   //66GF_RARE_ACTION_VB
-		"NoUndroppable",      //67GF_NO_UNDROPPABLE
-		"StartActive",        //68GF_START_ACTIVE
-		"HasInfopointDialogs", //69GF_INFOPOINT_DIALOGS
-		"ImplicitAreaAnimBackground", //70GF_IMPLICIT_AREAANIM_BACKGROUND
-		"HealOn100Plus",      //71GF_HEAL_ON_100PLUS
-		"InPartyAllowsDead",  //72GF_IN_PARTY_ALLOWS_DEAD
-		"ZeroTimerIsValid",   //73GF_ZERO_TIMER_IS_VALID
-		"ShopsRechargeItems", //74GF_SHOP_RECHARGE
-		"MeleeHeaderUsesProjectile", //75GF_MELEEHEADER_USESPROJECTILE
-		"ForceDialogPause",   //76GF_FORCE_DIALOGPAUSE
-		"RandomBanterDialogs",//77GF_RANDOM_BANTER_DIALOGS
-		"FixedMoraleOpcode",  //79GF_FIXED_MORALE_OPCODE
-		"Happiness",          //80GF_HAPPINESS
-		"EfficientORTrigger", //81GF_EFFICIENT_OR
-		"LayeredWaterTiles",  //82GF_LAYERED_WATER_TILES
-		"ClearingActionOverride", //83GF_CLEARING_ACTIONOVERRIDE
-		"DamageInnocentRep",  //84GF_DAMAGE_INNOCENT_REP
-		"HasWeaponSets" // GF_HAS_WEAPON_SETS
+	"HasKaputz", // GFFlags::HAS_KAPUTZ
+	"AllStringsTagged", // GFFlags::ALL_STRINGS_TAGGED
+	"HasSongList", // GFFlags::HAS_SONGLIST
+	"TeamMovement", // GFFlags::TEAM_MOVEMENT
+	"UpperButtonText", // GFFlags::UPPER_BUTTON_TEXT
+	"LowerLabelText", // GFFlags::LOWER_LABEL_TEXT
+	"HasPartyIni", // GFFlags::HAS_PARTY_INI
+	"SoundFolders", // GFFlags::SOUNDFOLDERS
+	"IgnoreButtonFrames", // GFFlags::IGNORE_BUTTON_FRAMES
+	"OneByteAnimationID", // GFFlags::ONE_BYTE_ANIMID
+	"HasDPLAYER", // GFFlags::HAS_DPLAYER
+	"HasEXPTABLE", // GFFlags::HAS_EXPTABLE
+	"HasBeastsIni", // GFFlags::HAS_BEASTS_INI
+	"HasEEEffects", // GFFlags::HAS_EE_EFFECTS
+	"HasPickSound", // GFFlags::HAS_PICK_SOUND
+	"IWDMapDimensions", // GFFlags::IWD_MAP_DIMENSIONS
+	"AutomapINI", // GFFlags::AUTOMAP_INI
+	"SmallFog", // GFFlags::SMALL_FOG
+	"ReverseDoor", // GFFlags::REVERSE_DOOR
+	"ProtagonistTalks", // GFFlags::PROTAGONIST_TALKS
+	"HasSpellList", // GFFlags::HAS_SPELLLIST
+	"IWD2ScriptName", // GFFlags::IWD2_SCRIPTNAME
+	"DialogueScrolls", // GFFlags::DIALOGUE_SCROLLS
+	"KnowWorld", // GFFlags::KNOW_WORLD
+	"ReverseToHit", // GFFlags::REVERSE_TOHIT
+	"SaveForHalfDamage", // GFFlags::SAVE_FOR_HALF
+	"CharNameIsGabber", // GFFlags::CHARNAMEISGABBER
+	"MagicBit", // GFFlags::MAGICBIT
+	"CheckAbilities", // GFFlags::CHECK_ABILITIES
+	"ChallengeRating", // GFFlags::CHALLENGERATING
+	"SpellBookIconHack", // GFFlags::SPELLBOOKICONHACK
+	"EnhancedEffects", // GFFlags::ENHANCED_EFFECTS
+	"DeathOnZeroStat", // GFFlags::DEATH_ON_ZERO_STAT
+	"SpawnIni", // GFFlags::SPAWN_INI
+	"IWD2DeathVarFormat", // GFFlags::IWD2_DEATHVARFORMAT
+	"HasResDataIni", // GFFlags::RESDATA_INI
+	"BreakableWeapons", // GFFlags::BREAKABLE_WEAPONS
+	"3EdRules", // GFFlags::3ED_RULES
+	"LevelslotPerClass", // GFFlags::LEVELSLOT_PER_CLASS
+	"SelectiveMagicRes", // GFFlags::SELECTIVE_MAGIC_RES
+	"HasHideInShadows", // GFFlags::HAS_HIDE_IN_SHADOWS
+	"AreaVisitedVar", // GFFlags::AREA_VISITED_VAR
+	"ProperBackstab", // GFFlags::PROPER_BACKSTAB
+	"OnScreenText", // GFFlags::ONSCREEN_TEXT
+	"HasSpecificDamageBonus", // GFFlags::SPECIFIC_DMG_BONUS
+	"StrrefSaveGame", // GFFlags::STRREF_SAVEGAME
+	"SimplifiedDisruption", // GFFlags::SIMPLE_DISRUPTION
+	"BiographyIsRes", // GFFlags::BIOGRAPHY_RES
+	"NoBiography", // GFFlags::NO_BIOGRAPHY
+	"StealIsAttack", // GFFlags::STEAL_IS_ATTACK
+	"CutsceneAreascripts", // GFFlags::CUTSCENE_AREASCRIPTS
+	"FlexibleWorldmap", // GFFlags::FLEXIBLE_WMAP
+	"AutoSearchHidden", // GFFlags::AUTOSEARCH_HIDDEN
+	"PSTStateFlags", // GFFlags::PST_STATE_FLAGS
+	"NoDropCanMove", // GFFlags::NO_DROP_CAN_MOVE
+	"JournalHasSections", // GFFlags::JOURNAL_HAS_SECTIONS
+	"CastingSounds", // GFFlags::CASTING_SOUNDS
+	"EnhancedCastingSounds", // GFFlags::CASTING_SOUNDS2
+	"ForceAreaScript", // GFFlags::FORCE_AREA_SCRIPT
+	"AreaOverride", // GFFlags::AREA_OVERRIDE
+	"NoNewVariables", // GFFlags::NO_NEW_VARIABLES
+	"HasSoundsIni", // GFFlags::SOUNDS_INI
+	"HasNoNPCFlag", // GFFlags::USEPOINT_400
+	"HasUsePointFlag", // GFFlags::USEPOINT_200
+	"HasFloatMenu", // GFFlags::HAS_FLOAT_MENU
+	"NoUndroppable", // GFFlags::NO_UNDROPPABLE
+	"StartActive", // GFFlags::START_ACTIVE
+	"HasInfopointDialogs", // GFFlags::INFOPOINT_DIALOGS
+	"ImplicitAreaAnimBackground", // GFFlags::IMPLICIT_AREAANIM_BACKGROUND
+	"HealOn100Plus", // GFFlags::HEAL_ON_100PLUS
+	"InPartyAllowsDead", // GFFlags::IN_PARTY_ALLOWS_DEAD
+	"ZeroTimerIsValid", // GFFlags::ZERO_TIMER_IS_VALID
+	"ShopsRechargeItems", // GFFlags::SHOP_RECHARGE
+	"MeleeHeaderUsesProjectile", // GFFlags::MELEEHEADER_USESPROJECTILE
+	"ForceDialogPause", // GFFlags::FORCE_DIALOGPAUSE
+	"RandomBanterDialogs", // GFFlags::RANDOM_BANTER_DIALOGS
+	"FixedMoraleOpcode", // GFFlags::FIXED_MORALE_OPCODE
+	"Happiness", // GFFlags::HAPPINESS
+	"EfficientORTrigger", // GFFlags::EFFICIENT_OR
+	"LayeredWaterTiles", // GFFlags::LAYERED_WATER_TILES
+	"ClearingActionOverride", // GFFlags::CLEARING_ACTIONOVERRIDE
+	"DamageInnocentRep", // GFFlags::DAMAGE_INNOCENT_REP
+	"HasWeaponSets", // GFFlags::GF_HAS_WEAPON_SETS
+	"HighlightOutlineOnly", // GFFlags::HIGHLIGHT_OUTLINE_ONLY
 };
 
 /** Loads gemrb.ini */
@@ -1388,7 +1392,7 @@ void Interface::LoadGemRBINI()
 		inifile->originalfile);
 
 	PluginHolder<DataFileMgr> ini = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
-	ini->Open(inifile);
+	ini->Open(std::unique_ptr<DataStream>{inifile});
 
 	ResRef tooltipBG;
 	// Resrefs are already initialized in Interface::Interface()
@@ -1462,7 +1466,6 @@ void Interface::LoadGemRBINI()
 		INIConfig = StringFromView<std::string>(sv);
 
 	MaximumAbility = ini->GetKeyAsInt ("resources", "MaximumAbility", 25 );
-	NumRareSelectSounds = ini->GetKeyAsInt("resources", "NumRareSelectSounds", 2);
 	gamedata->SetTextSpeed(ini->GetKeyAsInt("resources", "TextScreenSpeed", 100));
 
 	for (const GFFlags flag : EnumIterator<GFFlags>()) {
@@ -1482,7 +1485,7 @@ void Interface::LoadGemRBINI()
 /** Load the encoding table selected in gemrb.cfg */
 bool Interface::LoadEncoding()
 {
-	DataStream* inifile = gamedata->GetResourceStream(config.Encoding, IE_INI_CLASS_ID);
+	DataStream* inifile = gamedata->GetResourceStream(config.Encoding, IE_INI_CLASS_ID, true);
 	if (! inifile) {
 		return false;
 	}
@@ -1491,7 +1494,7 @@ bool Interface::LoadEncoding()
 		inifile->originalfile);
 
 	PluginHolder<DataFileMgr> ini = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
-	ini->Open(inifile);
+	ini->Open(std::unique_ptr<DataStream>{inifile});
 
 	TLKEncoding.encoding = StringFromView<std::string>(ini->GetKeyAsString("encoding", "TLKEncoding", TLKEncoding.encoding));
 	TLKEncoding.zerospace = ini->GetKeyAsBool("encoding", "NoSpaces", false);
@@ -1530,21 +1533,21 @@ bool Interface::LoadEncoding()
 }
 
 /** Returns a preloaded Font */
-Font* Interface::GetFont(const ResRef& ResRef) const
+Holder<Font> Interface::GetFont(const ResRef& ResRef) const
 {
 	auto i = fonts.find(ResRef);
 	if (i != fonts.end()) {
 		return i->second;
 	}
-	return NULL;
+	return nullptr;
 }
 
-Font* Interface::GetTextFont() const
+Holder<Font> Interface::GetTextFont() const
 {
 	return GetFont( TextFontResRef );
 }
 
-Font* Interface::GetButtonFont() const
+Holder<Font> Interface::GetButtonFont() const
 {
 	return GetFont( ButtonFontResRef );
 }
@@ -1592,7 +1595,7 @@ Actor *Interface::SummonCreature(const ResRef& resource, const ResRef& animRes, 
 		ieDword flag = GA_NO_DEAD|GA_NO_ALLY|GA_NO_ENEMY;
 
 		if (summoner) {
-			tmp->LastSummoner = Owner->GetGlobalID();
+			tmp->objects.LastSummoner = Owner->GetGlobalID();
 			ieDword ea = summoner->GetStat(IE_EA);
 			if (ea<=EA_GOODCUTOFF) {
 				flag &= ~GA_NO_ALLY;
@@ -1653,7 +1656,7 @@ Actor *Interface::SummonCreature(const ResRef& resource, const ResRef& animRes, 
 		}
 
 		map->AddActor(ab, true);
-		ab->SetPosition(position, true, 0, 0, ab->circleSize);
+		ab->SetPosition(position, true, Size(), ab->circleSize);
 		ab->RefreshEffects();
 
 		// guessing, since this trigger was unused in the originals — likely duplicating LastSummoner
@@ -1669,7 +1672,7 @@ Actor *Interface::SummonCreature(const ResRef& resource, const ResRef& animRes, 
 				vvc->Pos = ab->Pos;
 				//force vvc to play only once
 				vvc->PlayOnce();
-				map->AddVVCell( new VEFObject(vvc) );
+				map->AddVVCell(vvc);
 
 				//set up the summon disable effect
 				Effect *newfx = EffectQueue::CreateEffect(fx_summon_disable_ref, 0, 1, FX_DURATION_ABSOLUTE);
@@ -1689,6 +1692,7 @@ Actor *Interface::SummonCreature(const ResRef& resource, const ResRef& animRes, 
 		}
 
 		//this check should happen after the fact
+		// FIXME: shouldn't this be IE_XPVALUE, the CR? IE_XP holds the actual xp gained, only useful for pcs
 		level -= ab->GetBase(IE_XP);
 		if(level<0 || ab->GetBase(IE_XP) == 0) {
 			break;
@@ -1764,6 +1768,7 @@ bool Interface::IsFreezed() const
 
 void Interface::GameLoop(void)
 {
+	TRACY(ZoneScoped);
 	update_scripts = false;
 	GameControl *gc = GetGameControl();
 	if (gc) {
@@ -1798,7 +1803,7 @@ void Interface::HandleGUIBehaviour(GameControl* gc)
 		// -2 close
 		// -1 open
 		// choose option
-		ieDword var = GetVariable("DialogChoose", -3);
+		ieDword var = vars.Get("DialogChoose", -3);
 
 		if ((int) var == -2) {
 			// TODO: this seems to never be called? (EndDialog is called from elsewhere instead)
@@ -1812,10 +1817,10 @@ void Interface::HandleGUIBehaviour(GameControl* gc)
 				guiscript->RunFunction( "GUIWORLD", "NextDialogState" );
 
 			// the last node of a dialog can have a new-dialog action! don't interfere in that case
-			ieDword newvar = GetVariable("DialogChoose", 0);
+			ieDword newvar = vars.Get("DialogChoose", 0);
 
 			if (var == (ieDword) -1 || newvar != (ieDword) -1) {
-				vars["DialogChoose"] = -3;
+				vars.Set("DialogChoose", -3);
 			}
 		}
 		if (flg & DF_OPENCONTINUEWINDOW) {
@@ -1864,11 +1869,11 @@ SaveGameIterator* Interface::GetSaveGameIterator() const
 void Interface::AskAndExit()
 {
 	// if askExit is 1 then we are trying to quit a second time and should instantly do so
-	ieDword askExit = GetVariable("AskAndExit", 0);
+	ieDword askExit = vars.Get("AskAndExit", 0);
 
 	if (game && !askExit) {
-		SetPause(PAUSE_ON);
-		vars["AskAndExit"] = 1;
+		SetPause(PauseState::On);
+		vars.Set("AskAndExit", 1);
 
 		guiscript->RunFunction("GUIOPT", "OpenQuitMsgWindow");
 		Log(MESSAGE, "Info", "Press ctrl-c (or close the window) again to quit GemRB.\n");
@@ -1880,22 +1885,6 @@ void Interface::AskAndExit()
 /** Returns the variables dictionary */
 variables_t& Interface::GetDictionary() {
 	return vars;
-}
-
-void Interface::DumpVariables() const {
-	Log(DEBUG, "Variables", "Item count: {}", vars.size());
-	for (const auto& entry : vars) {
-		Log(DEBUG, "Variables", "{} = {}", entry.first, entry.second);
-	}
-}
-
-variables_t::mapped_type Interface::GetVariable(const variables_t::key_type& key, int fallback) const {
-	auto lookup = vars.find(key);
-	if (lookup != vars.cend()) {
-		return lookup->second;
-	}
-
-	return fallback;
 }
 
 /** Returns the token dictionary */
@@ -1924,7 +1913,7 @@ int Interface::LoadSymbol(const ResRef& ref)
 	if (ind != -1) {
 		return ind;
 	}
-	DataStream* str = gamedata->GetResourceStream(ref, IE_IDS_CLASS_ID);
+	DataStream* str = gamedata->GetResourceStream(ref, IE_IDS_CLASS_ID, true);
 	if (!str) {
 		return -1;
 	}
@@ -1933,9 +1922,11 @@ int Interface::LoadSymbol(const ResRef& ref)
 		delete str;
 		return -1;
 	}
-	if (!sm->Open(str)) {
+
+	if (!sm->Open(std::unique_ptr<DataStream>{str})) {
 		return -1;
 	}
+
 	Symbol s = { sm, ref };
 	ind = -1;
 	for (size_t i = 0; i < symbols.size(); i++) {
@@ -1988,6 +1979,7 @@ bool Interface::DelSymbol(unsigned int index)
 /** Plays a Movie */
 int Interface::PlayMovie(const ResRef& movieRef)
 {
+	if (IsStar(movieRef)) return -1;
 	ResRef actualMovieRef = movieRef;
 
 	//check whether there is an override for this movie
@@ -2019,9 +2011,9 @@ int Interface::PlayMovie(const ResRef& movieRef)
 	}
 
 	//one of these two should exist (they both mean the same thing)
-	ieDword subtitles = GetVariable("Dialog Movie Subtitles", 1);
+	ieDword subtitles = vars.Get("Dialog Movie Subtitles", 1);
 	if (!subtitles) {
-		subtitles = GetVariable("Dialog Subtitles", 0);
+		subtitles = vars.Get("Dialog Subtitles", 0);
 	}
 
 	mp->EnableSubtitles(subtitles);
@@ -2034,8 +2026,8 @@ int Interface::PlayMovie(const ResRef& movieRef)
 
 	public:
 		// default color taken from BGEE.lua
-		IESubtitles(class Font* fnt, const AutoTable& sttable, const Color& col = Color(0xe9, 0xe2, 0xca, 0xff))
-		: MoviePlayer::SubtitleSet(fnt, col)
+		IESubtitles(Holder<Font> fnt, const AutoTable& sttable, const Color& col = Color(0xe9, 0xe2, 0xca, 0xff))
+			: MoviePlayer::SubtitleSet(std::move(fnt), col)
 		{
 			for (TableMgr::index_t i = 0; i < sttable->GetRowCount(); ++i) {
 				const auto& rowName = sttable->GetRowName(i);
@@ -2068,7 +2060,7 @@ int Interface::PlayMovie(const ResRef& movieRef)
 	};
 
 	AutoTable sttable = gamedata->LoadTable(movieRef);
-	Font* font = GetFont(MovieFontResRef);
+	auto font = GetFont(MovieFontResRef);
 	if (sttable && font) {
 		int r = sttable->QueryFieldSigned<int>("red", "frame");
 		int g = sttable->QueryFieldSigned<int>("green", "frame");
@@ -2083,7 +2075,7 @@ int Interface::PlayMovie(const ResRef& movieRef)
 
 	Holder<SoundHandle> sound_override;
 	if (!sound_resref.empty()) {
-		sound_override = AudioDriver->PlayRelative(sound_resref, SFX_CHAN_NARRATOR);
+		sound_override = AudioDriver->Play(sound_resref, SFX_CHAN_NARRATOR);
 	}
 
 	// clear whatever is currently on screen
@@ -2110,7 +2102,7 @@ int Interface::PlayMovie(const ResRef& movieRef)
 	if (ambim) ambim->Activate();
 
 	//Setting the movie name to 1
-	vars[movieRef.c_str()] = 1;
+	vars.Set(movieRef, 1);
 	return 0;
 }
 
@@ -2159,7 +2151,7 @@ DirectoryIterator Interface::GetResourceDirectory(RESOURCE_DIRECTORY dir) const
 			filter = std::make_shared<OrPredicate<path_t>>(filter, std::make_shared<ExtFilter>("BCS"));
 			break;
 		default:
-			error("Interface", "Unknown resource directory type: {}!", fmt::underlying(dir));
+			error("Interface", "Unknown resource directory type: {}!", dir);
 	}
 
 	DirectoryIterator dirIt(PathJoin(config.GamePath, resourcePath));
@@ -2178,20 +2170,17 @@ bool Interface::InitializeVarsWithINI(const path_t& iniFileName)
 	PluginHolder<DataFileMgr> ini = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
 	FileStream* iniStream = FileStream::OpenFile(iniFileName);
 	// if filename is not set we assume we are creating defaults without an INI
-	bool opened = ini->Open(iniStream);
+	bool opened = iniStream != nullptr && ini->Open(std::unique_ptr<DataStream>{iniStream});
 	if (iniFileName[0] && !opened) {
 		Log(WARNING, "Core", "Unable to read defaults from '{}'. Using GemRB default values.", iniFileName);
 	} else {
 		overrides = ini;
 	}
-	if (!opened || iniFileName[0] == 0) {
-		delete iniStream; // Open deletes it itself on success
-	}
 
 	PluginHolder<DataFileMgr> gemINI = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
 	DataStream* gemINIStream = gamedata->GetResourceStream("defaults", IE_INI_CLASS_ID);
 
-	if (!gemINIStream || !gemINI->Open(gemINIStream)) {
+	if (!gemINIStream || !gemINI->Open(std::unique_ptr<DataStream>{gemINIStream})) {
 		Log(WARNING, "Core", "Unable to load GemRB default values.");
 		defaults = ini;
 	} else {
@@ -2201,15 +2190,14 @@ bool Interface::InitializeVarsWithINI(const path_t& iniFileName)
 		overrides = defaults;
 	}
 
-	for (int i = 0; i < defaults->GetTagsCount(); i++) {
-		const StringView tag = defaults->GetTagNameByIndex(i);
-		for (int j = 0; j < defaults->GetKeysCount(tag); j++) {
-			auto key = std::string{defaults->GetKeyNameByIndex(tag, j).c_str()};
-			//skip any existing entries. GemRB.cfg has priority
-			auto lookup = vars.find(key);
-			if (lookup == vars.cend()) {
-				ieDword defaultVal = defaults->GetKeyAsInt(tag, key, 0);
-				vars.emplace(key, overrides->GetKeyAsInt(tag, key, defaultVal));
+	for (auto& group : *defaults) {
+		for (auto& pair : group) {
+			// skip any existing entries. GemRB.cfg has priority
+			const auto& key = pair.first;
+			auto lookup = vars.Get(key);
+			if (lookup == nullptr) {
+				auto value = group.GetAs<int>(pair.first, 0);
+				vars.Set(key, overrides->GetKeyAsInt(group.GetName(), key, value));
 			}
 		}
 	}
@@ -2224,7 +2212,7 @@ bool Interface::InitializeVarsWithINI(const path_t& iniFileName)
 
 	// copies
 	if (!overrides->GetKeyAsInt("Game Options", "Darkvision", 1)) {
-		vars["Infravision"] = 0;
+		vars.Set("Infravision", 0);
 	}
 
 	if (!config.Width || !config.Height) {
@@ -2261,18 +2249,18 @@ bool Interface::SaveConfig()
 	PluginHolder<DataFileMgr> defaultsINI = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
 	DataStream* INIStream = gamedata->GetResourceStream("defaults", IE_INI_CLASS_ID);
 
-	if (INIStream && defaultsINI->Open(INIStream)) {
+	if (INIStream && defaultsINI->Open(std::unique_ptr<DataStream>{INIStream})) {
 		// dump the formatted default config options to the file
 		std::string contents;
-		for (int i = 0; i < defaultsINI->GetTagsCount(); i++) {
-			const StringView tag = defaultsINI->GetTagNameByIndex(i);
-			// write section header
-			AppendFormat(contents, "[{}]\n", tag);
-			for (int j = 0; j < defaultsINI->GetKeysCount(tag); j++) {
-				auto key = std::string{defaultsINI->GetKeyNameByIndex(tag, j).c_str()};
-				auto lookup = vars.find(key);
-				assert(lookup != vars.cend());
-				AppendFormat(contents, "{} = {}\n", key, lookup->second);
+
+		for (auto& group : *defaultsINI) {
+			AppendFormat(contents, "[{}]\n", group.GetName());
+
+			for (auto& pair : group) {
+				const auto& key = pair.first;
+				auto lookup = vars.Get(key);
+				assert(lookup != nullptr);
+				AppendFormat(contents, "{} = {}\n", key, *lookup);
 			}
 		}
 
@@ -2312,7 +2300,7 @@ void Interface::SetCutSceneMode(bool active)
 bool Interface::InCutSceneMode() const
 {
 	const GameControl *gc = GetGameControl();
-	if (!gc || gc->InDialog() || (gc->GetScreenFlags() & SF_CUTSCENE)) {
+	if (!gc || gc->InDialog() || gc->GetScreenFlags().Test(ScreenFlags::Cutscene)) {
 		return true;
 	}
 	return false;
@@ -2393,7 +2381,7 @@ void Interface::LoadGame(Holder<SaveGame> sg, int ver_override)
 	if (!config.KeepCache) DelTree(config.CachePath, true);
 	LoadProgress(15);
 
-	saveGameAREExtractor.changeSaveGame(sg);
+	saveGameAREExtractor = SaveGameAREExtractor(sg);
 
 	// These are here because of the goto
 	PluginHolder<SaveGameMgr> gamMgr;
@@ -2585,7 +2573,7 @@ void Interface::InitItemTypes()
 			itemtypedata[i][IDT_SKILLPENALTY] = 0; // skill check malus
 		}
 	}
-	AutoTable af = gamedata->LoadTable("itemdata");
+	AutoTable af = gamedata->LoadTable("itemdata", true);
 	if (af) {
 		TableMgr::index_t armcount = af->GetRowCount();
 		TableMgr::index_t colcount = af->GetColumnCount();
@@ -2938,12 +2926,6 @@ bool Interface::ProtectedExtension(const path_t& filename) const
 	return false;
 }
 
-void Interface::RemoveFromCache(const ResRef& resref, SClass_ID ClassID) const
-{
-	path_t filename = PathJoinExt(config.CachePath, resref, TypeExt(ClassID));
-	unlink(filename.c_str());
-}
-
 //this function checks if the path is eligible as a cache
 //if it contains a directory, or suspicious file extensions
 //we bail out, because the cache will be purged regularly.
@@ -3068,7 +3050,7 @@ bool Interface::ReadItemTable(const ResRef& TableName, const path_t& Prefix)
 bool Interface::ReadRandomItems()
 {
 	//rt norm or rt fury
-	ieDword difflev = GetVariable("Nightmare Mode", 0);
+	ieDword difflev = vars.Get("Nightmare Mode", 0);
 	RtRows.clear();
 
 	AutoTable tab = gamedata->LoadTable("randitem");
@@ -3146,6 +3128,10 @@ void Interface::SanitizeItem(CREItem *item) const
 	const Item *itm = gamedata->GetItem(item->ItemResRef, true);
 	if (!itm) return;
 
+	if (itm->Flags & IE_ITEM_NO_DISPEL) item->Flags |= IE_INV_ITEM_NO_DISPEL;
+	if (itm->Flags & IE_ITEM_NOT_OFFHAND) item->Flags |= IE_INV_ITEM_NOT_OFFHAND;
+	if (itm->Flags & IE_ITEM_ADAMANTINE) item->Flags |= IE_INV_ITEM_ADAMANTINE;
+
 	item->MaxStackAmount = itm->MaxStackAmount;
 	//if item is stacked mark it as so
 	if (itm->MaxStackAmount) {
@@ -3156,7 +3142,7 @@ void Interface::SanitizeItem(CREItem *item) const
 	} else {
 		//set charge counters for non-rechargeable items if their charge is zero
 		//set charge counters for items not using charges to one
-		for (int i = 0; i < CHARGE_COUNTERS; i++) {
+		for (size_t i = 0; i < item->Usages.size(); i++) {
 			const ITMExtHeader *h = itm->GetExtHeader(i);
 			if (!h) {
 				item->Usages[i] = 0;
@@ -3308,7 +3294,7 @@ bool Interface::ResolveRandomItem(CREItem *itm) const
 			if (itm->ItemResRef == "no_drop") {
 				return false;
 			}
-			itm->Usages[0] = static_cast<ieWord>(Roll(1, diceSides, 0));
+			itm->Usages[0] = RAND<ieWord>(1, diceSides);
 		}
 	}
 	Log(ERROR, "Interface", "Loop detected while generating random item: {}", itm->ItemResRef);
@@ -3376,7 +3362,7 @@ Store *Interface::SetCurrentStore(const ResRef &resName, ieDword owner)
 }
 
 void Interface::SetMouseScrollSpeed(int speed) {
-	mousescrollspd = (speed+1)*2;
+	mousescrollspd = speed * 2;
 }
 
 int Interface::GetMouseScrollSpeed() const {
@@ -3409,8 +3395,13 @@ ieStrRef Interface::GetRumour(const ResRef& dlgref)
 //plays stock sound listed in defsound.2da
 Holder<SoundHandle> Interface::PlaySound(size_t index, unsigned int channel) const
 {
+	return PlaySound(index, channel, Point(), 0);
+}
+
+Holder<SoundHandle> Interface::PlaySound(size_t index, unsigned int channel, const Point& p, unsigned int flags) const
+{
 	if (index <= gamedata->defaultSounds.size()) {
-		return AudioDriver->PlayRelative(gamedata->defaultSounds[index], channel);
+		return AudioDriver->Play(gamedata->defaultSounds[index], channel, p, flags);
 	}
 	return NULL;
 }
@@ -3452,15 +3443,10 @@ bool Interface::HasCurrentArea() const
 	return game->GetCurrentArea() != nullptr;
 }
 
-//this is used only for the console
+// this is used by our console and editable textareas (textedits provide their own cursor)
 Holder<Sprite2D> Interface::GetCursorSprite() const
 {
-	Holder<Sprite2D> spr = gamedata->GetBAMSprite(TextCursorBam, 0, 0);
-	if (spr && HasFeature(GFFlags::OVERRIDE_CURSORPOS)) {
-		spr->Frame.x = 1;
-		spr->Frame.y = spr->Frame.h - 1;
-	}
-	return spr;
+	return gamedata->GetBAMSprite(TextCursorBam, 0, 0);
 }
 
 Holder<Sprite2D> Interface::GetScrollCursorSprite(orient_t orient, int spriteNum) const
@@ -3470,6 +3456,12 @@ Holder<Sprite2D> Interface::GetScrollCursorSprite(orient_t orient, int spriteNum
 	uint8_t frame = 6 - (orient / 2);
 	frame = Clamp<uint8_t>(frame, 0, 7);
 	return gamedata->GetBAMSprite(ScrollCursorBam, frame, spriteNum, true);
+}
+
+void Interface::DisableGameControl(bool disable) const
+{
+	if (!gamectrl) return;
+	gamectrl->SetFlags(View::IgnoreEvents, disable ? BitOp::OR : BitOp::NAND);
 }
 
 /* we should return -1 if it isn't gold, otherwise return the gold value */
@@ -3577,6 +3569,11 @@ Effect *Interface::GetEffect(const ResRef& resname, int level, const Point &p)
 // dealing with saved games
 int Interface::SwapoutArea(Map *map) const
 {
+	auto RemoveFromCache = [&](const ResRef& resref, SClass_ID classID) {
+		path_t filename = PathJoinExt(config.CachePath, resref, TypeExt(classID));
+		unlink(filename.c_str());
+	};
+
 	//refuse to save ambush areas, for example
 	if (map->AreaFlags & AF_NOSAVE) {
 		Log(DEBUG, "Core", "Not saving area {}",
@@ -3633,7 +3630,7 @@ int Interface::WriteCharacter(StringView name, const Actor* actor) const
 	if (!HasFeature(GFFlags::NO_BIOGRAPHY)) {
 		str.Create(Path, name.c_str(), IE_BIO_CLASS_ID);
 		//never write the string reference into this string
-		std::string mbstr = GetMBString(actor->GetVerbalConstant(VB_BIO), STRING_FLAGS::STRREFOFF);
+		std::string mbstr = GetMBString(actor->GetVerbalConstant(Verbal::Bio), STRING_FLAGS::STRREFOFF);
 		str.Write(mbstr.data(), mbstr.length());
 	}
 	return 0;
@@ -3767,8 +3764,6 @@ int Interface::CompressSave(const path_t& folder, bool overrideRunning)
 	return GEM_OK;
 }
 
-int Interface::GetRareSelectSoundCount() const { return NumRareSelectSounds; }
-
 int Interface::GetMaximumAbility() const { return MaximumAbility; }
 
 int Interface::GetStrengthBonus(int column, int value, int ex) const
@@ -3860,16 +3855,16 @@ int Interface::GetWisdomBonus(int column, int value) const
 	return abilityTables->wisbon[value];
 }
 
-PauseSetting Interface::TogglePause() const
+PauseState Interface::TogglePause() const
 {
 	const GameControl *gc = GetGameControl();
-	if (!gc) return PAUSE_OFF;
-	PauseSetting pause = (PauseSetting)(~gc->GetDialogueFlags()&DF_FREEZE_SCRIPTS);
+	if (!gc) return PauseState::Off;
+	PauseState pause = (PauseState) ((gc->GetDialogueFlags() & DF_FREEZE_SCRIPTS) == 0);
 	if (SetPause(pause)) return pause;
-	return (PauseSetting)(gc->GetDialogueFlags()&DF_FREEZE_SCRIPTS);
+	return (PauseState) ((gc->GetDialogueFlags() & DF_FREEZE_SCRIPTS) > 0);
 }
 
-bool Interface::SetPause(PauseSetting pause, int flags) const
+bool Interface::SetPause(PauseState pause, int flags) const
 {
 	GameControl *gc = GetGameControl();
 
@@ -3878,7 +3873,7 @@ bool Interface::SetPause(PauseSetting pause, int flags) const
 
 	if (gc && ((bool)(gc->GetDialogueFlags()&DF_FREEZE_SCRIPTS) != (bool)pause)) { // already paused
 		HCStrings strref;
-		if (pause) {
+		if (pause == PauseState::On) {
 			strref = HCStrings::Paused;
 			gc->SetDialogueFlags(DF_FREEZE_SCRIPTS, BitOp::OR);
 		} else {
@@ -3886,7 +3881,7 @@ bool Interface::SetPause(PauseSetting pause, int flags) const
 			gc->SetDialogueFlags(DF_FREEZE_SCRIPTS, BitOp::NAND);
 		}
 		if (!(flags&PF_QUIET) ) {
-			if (pause) gc->SetDisplayText(strref, 0); // time 0 = removed instantly on unpause (for pst)
+			if (pause == PauseState::On) gc->SetDisplayText(strref, 0); // time 0 = removed instantly on unpause (for pst)
 			displaymsg->DisplayConstantString(strref, GUIColors::RED);
 		}
 		return true;
@@ -3896,22 +3891,19 @@ bool Interface::SetPause(PauseSetting pause, int flags) const
 
 bool Interface::Autopause(AUTOPAUSE flag, Scriptable* target) const
 {
-	AUTOPAUSE autopause_flags =
-		static_cast<AUTOPAUSE>(
-			GetVariable("Auto Pause State", static_cast<std::underlying_type_t<AUTOPAUSE>>(AUTOPAUSE::UNUSABLE))
-		);
+	AUTOPAUSE autopause_flags = vars.GetAs<AUTOPAUSE>("Auto Pause State", AUTOPAUSE::UNUSABLE);
 
 	if (!(autopause_flags & AUTOPAUSE(1 << ieDword(flag)))) {
 		return false;
 	}
 
-	if (!SetPause(PAUSE_ON, PF_QUIET)) {
+	if (!SetPause(PauseState::On, PF_QUIET)) {
 		return false;
 	}
 
 	displaymsg->DisplayConstantStringName(HCStrings(ieDword(HCStrings::ApUnusable) + ieDword(flag)), GUIColors::RED, target);
 
-	ieDword centerOnAutoPause = GetVariable("Auto Pause Center", 0);
+	ieDword centerOnAutoPause = vars.Get("Auto Pause Center", 0);
 
 	if (centerOnAutoPause && target) {
 		GameControl* gc = GetGameControl();
@@ -3929,7 +3921,6 @@ void Interface::RegisterOpcodes(int count, const EffectDesc *opcodes) const
 	EffectQueue_RegisterOpcodes(count, opcodes);
 }
 
-//todo row?
 void Interface::GetResRefFrom2DA(const ResRef& resref, ResRef& resource1, ResRef& resource2, ResRef& resource3) const
 {
 	resource1.Reset();
@@ -3965,19 +3956,14 @@ std::vector<ieDword> Interface::GetListFrom2DAInternal(const ResRef& resref) con
 	return ret;
 }
 
-std::vector<ieDword>* Interface::GetListFrom2DA(const ResRef& tablename)
+const std::vector<ieDword>* Interface::GetListFrom2DA(const ResRef& tablename)
 {
-	auto key = std::string{tablename.c_str()};
-	auto lookup = lists.find(key);
-
-	if (lookup != lists.cend()) {
-		return &lookup->second;
+	auto listptr = lists.Get(tablename);
+	if (listptr == nullptr) {
+		listptr = &lists.Set(tablename, GetListFrom2DAInternal(tablename));
 	}
 
-	auto list = GetListFrom2DAInternal(tablename);
-	auto insertion = lists.emplace(key, std::move(list));
-
-	return &insertion.first->second;
+	return listptr;
 }
 
 //returns a numeric value associated with a stat name (symbol) from stats.ids
@@ -4046,7 +4032,7 @@ int Interface::ResolveStatBonus(const Actor* actor, const ResRef& tableName, ieD
 // see 8cff52b3c8 if this needs to be resurrected at some point
 void Interface::WaitForDisc(int disc_number, const path_t& path)
 {
-	GetDictionary()["WaitForDisc"] = (ieDword) disc_number;
+	vars.Set("WaitForDisc", disc_number);
 
 	GetGUIScriptEngine()->RunFunction( "GUICommonWindows", "OpenWaitForDiscWindow" );
 	do {

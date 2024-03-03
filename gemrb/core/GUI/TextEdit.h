@@ -27,8 +27,18 @@
 #ifndef TEXTEDIT_H
 #define TEXTEDIT_H
 
+#include "EnumIndex.h"
+
 #include "GUI/Control.h"
 #include "GUI/TextSystem/TextContainer.h"
+
+enum class TextEditBG : uint8_t {
+	Normal,
+	Editing,
+	Over,
+
+	count
+};
 
 namespace GemRB {
 
@@ -43,6 +53,7 @@ private:
 
 	/** Max Edit Text Length */
 	size_t max;
+	EnumArray<TextEditBG, ResRef> bgMos; // the second two are rarely used alternative backgrounds
 
 private:
 	void TextChanged(const TextContainer& tc);
@@ -61,7 +72,6 @@ public:
 		// !!! Keep these synchronized with GUIDefines.py !!!
 		static const Control::Action Change = Control::ValueChange; // text change event (keyboard, etc)
 		static const Control::Action Done = ACTION_CUSTOM(0);
-		static const Control::Action Cancel = ACTION_CUSTOM(1); // FIXME: unused, how do we cancel?
 	};
 
 	enum TextEditFlags {
@@ -76,7 +86,7 @@ public:
 	TextEdit& operator=(const TextEdit&) = delete;
 
 	// these all forward to the underlying TextContainer
-	void SetFont(Font* f);
+	void SetFont(Holder<Font> f);
 
 	/** Sets the Text of the current control */
 	void SetText(String string) override;
@@ -86,6 +96,9 @@ public:
 	void SetBufferLength(size_t buflen);
 	/** Sets the alignment */
 	void SetAlignment(unsigned char Alignment);
+	/** Sets one of the background images */
+	void SetBackground(const ResRef& bg, TextEditBG type);
+	void SetBackground(TextEditBG type);
 
 	void DidFocus() override { textContainer.DidFocus(); }
 	void DidUnFocus() override { textContainer.DidUnFocus(); }

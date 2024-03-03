@@ -73,32 +73,7 @@ void DialogHandler::UpdateJournalForTransition(const DialogTransition* tr) const
 		Section |= 2; // completed
 	}
 
-	if (core->GetGame()->AddJournalEntry(tr->journalStrRef, sectionMap[Section], ieByte(tr->Flags >> 16))) {
-		String msg(u"\n[color=bcefbc]");
-		ieStrRef strJournalChange = DisplayMessage::GetStringReference(HCStrings::JournalChange);
-		msg += core->GetString(strJournalChange);
-		String str = core->GetString(tr->journalStrRef);
-		if (!str.empty()) {
-			//cutting off the strings at the first crlf
-			size_t newlinePos = str.find_first_of(L'\n');
-			if (newlinePos != String::npos) {
-				str.resize( newlinePos );
-			}
-			msg += u" - [/color][p][color=ffd4a9]" + str + u"[/color][/p]";
-		} else {
-			msg += u"[/color]\n";
-		}
-		if (core->HasFeedback(FT_MISC)) {
-			if (core->HasFeature(GFFlags::ONSCREEN_TEXT)) {
-				core->GetGameControl()->SetDisplayText(HCStrings::JournalChange, 30);
-			} else {
-				displaymsg->DisplayMarkupString(msg);
-			}
-		}
-		// pst also has a sound attached to the base string, so play it manually
-		// NOTE: this doesn't display the string anywhere
-		DisplayStringCore(core->GetGame(), strJournalChange, 0);
-	}
+	core->GetGame()->AddJournalEntry(tr->journalStrRef, sectionMap[Section], ieByte(tr->Flags >> 16));
 }
 
 //Try to start dialogue between two actors (one of them could be inanimate)
@@ -133,8 +108,8 @@ bool DialogHandler::InitDialog(Scriptable* spk, Scriptable* tgt, const ResRef& d
 	if (tgt->Type==ST_ACTOR) {
 		Actor *tar = (Actor *) tgt;
 		// TODO: verify
-		spk->LastTalker=targetID;
-		tar->LastTalker=speakerID;
+		spk->objects.LastTalker = targetID;
+		tar->objects.LastTalker = speakerID;
 		tar->SetCircleSize();
 	}
 	if (oldTarget) oldTarget->SetCircleSize();
@@ -263,7 +238,7 @@ static int GetDialogOptions(const DialogState *ds, std::vector<SelectOption>& op
 		if (ds->transitions[x]->textStrRef == ieStrRef::INVALID) {
 			// dialogchoose should be set to x
 			// it isn't important which END option was chosen, as it ends
-			core->GetDictionary()["DialogOption"] = x;
+			core->GetDictionary().Set("DialogOption", x);
 			if (ds->transitions[x]->Flags & IE_DLG_TR_FINAL) {
 				core->GetGameControl()->SetDialogueFlags(DF_OPENENDWINDOW, BitOp::OR);
 				break;
@@ -360,19 +335,19 @@ bool DialogHandler::DialogChoose(unsigned int choose)
 			}
 
 			// do not interrupt during dialog actions (needed for aerie.d polymorph block)
-			target->AddAction( GenerateAction( "SetInterrupt(FALSE)" ) );
+			target->AddAction("SetInterrupt(FALSE)");
 			// delay all other actions until the next cycle (needed for the machine of Lum the Mad (gorlum2.dlg))
 			// FIXME: figure out if pst needs something similar (action missing)
 			//        (not conditional on GenerateAction to prevent console spam)
 			// iwd2 41nate.d breaks if this is included, since the original delayed execution in a different manner
 			if (!core->HasFeature(GFFlags::AREA_OVERRIDE) && !core->HasFeature(GFFlags::RULES_3ED) && !(tr->Flags & IE_DLG_IMMEDIATE)) {
-				target->AddAction(GenerateAction("BreakInstants()"));
+				target->AddAction("BreakInstants()");
 			}
 			for (unsigned int i = 0; i < tr->actions.size(); i++) {
 				if (i == tr->actions.size() - 1) tr->actions[i]->flags |= ACF_REALLOW_SCRIPTS;
 				target->AddAction(tr->actions[i]);
 			}
-			target->AddAction( GenerateAction( "SetInterrupt(TRUE)" ) );
+			target->AddAction("SetInterrupt(TRUE)");
 		}
 
 		if (tr->Flags & IE_DLG_TR_FINAL) {

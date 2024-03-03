@@ -28,7 +28,6 @@
 #include <string>
 #include <vector>
 
-#include "Format.h"
 #include <fmt/xchar.h>
 
 #define WHITESPACE_STRING_W u"\n\t\r "
@@ -74,12 +73,10 @@ IT FindNotOf(IT first, IT last, StringViewT<STR> s) noexcept
 template <typename STR>
 typename STR::size_type FindFirstNotOf(const STR& s, StringViewT<STR> sv, typename STR::size_type pos = 0) noexcept
 {
-	if (pos >= s.length()) {
+	if (pos >= s.length() || s.length() == 0) {
 		return STR::npos;
 	}
-	if (s.length() == 0) {
-		return pos;
-	}
+
 	auto iter = FindNotOf<STR>(s.begin() + pos, s.end(), sv);
 	return iter == s.end() ? STR::npos : static_cast<typename STR::size_type>(std::distance(s.begin(), iter));
 }
@@ -94,8 +91,10 @@ typename STR::size_type FindLastNotOf(const STR& s, StringViewT<STR> sv, typenam
 		return pos;
 	}
 	if (!reverse) pos = s.length() - (pos + 1);
-	auto iter = FindNotOf<STR>(s.rbegin() + (reverse ? 0 : pos), s.rend() - (reverse ? pos : 0), sv);
-	return iter == s.rend() ? STR::npos : s.length() - 1 - static_cast<typename STR::size_type>(std::distance(s.rbegin(), iter));
+
+	auto iterEnd = s.rend() - (reverse ? pos : 0);
+	auto iter = FindNotOf<STR>(s.rbegin() + (reverse ? 0 : pos), iterEnd, sv);
+	return iter == iterEnd ? STR::npos : s.length() - 1 - static_cast<typename STR::size_type>(std::distance(s.rbegin(), iter));
 }
 
 template <typename STR>
@@ -108,6 +107,13 @@ void RTrim(STR& string, StringViewT<STR> chars = WHITESPACE_STRING_VIEW(STR))
 	} else {
 		string.erase(pos + 1);
 	}
+}
+
+template <typename STR>
+STR RTrimCopy(STR string, StringViewT<STR> chars = WHITESPACE_STRING_VIEW(STR))
+{
+	RTrim(string, chars);
+	return string;
 }
 
 template <typename STR>
@@ -133,10 +139,20 @@ std::vector<RET> Explode(const STR& str, typename STR::value_type delim = ',', s
 	for (; cur < str.length(); ++cur)
 	{
 		if (str[cur] == delim) {
-			elements.emplace_back(&str[beg], cur - beg);
+			if (str[beg] == delim) {
+				elements.emplace_back();
+			} else {
+				elements.emplace_back(&str[beg], cur - beg);
+			}
 			beg = FindFirstNotOf(str, WHITESPACE_STRING_VIEW(STR), static_cast<typename STR::size_type>(cur + 1));
-			if (beg == STR::npos || (lim && elements.size() == lim)) {
+			if (lim && elements.size() == lim) {
 				break;
+			} else if (beg == STR::npos) {
+				elements.emplace_back();
+				break;
+			} else if (str[beg] == delim) {
+				cur = beg - 1;
+				continue;
 			}
 			cur = beg;
 		}

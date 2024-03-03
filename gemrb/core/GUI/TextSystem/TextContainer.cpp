@@ -35,12 +35,12 @@ LayoutRegions Content::LayoutForPointInRegion(Point p, const Region& rgn) const
 	return { std::make_shared<LayoutRegion>(Region(rgn.origin + p, frame.size)) };
 }
 
-TextSpan::TextSpan(String string, const Font* fnt, const Size* frame)
+TextSpan::TextSpan(String string, const Holder<Font> fnt, const Size* frame)
 	: Content(frame ? *frame : Size()), text(std::move(string)), font(fnt)
 {
 }
 
-TextSpan::TextSpan(String string, const Font* fnt, Font::PrintColors cols, const Size* frame)
+TextSpan::TextSpan(String string, const Holder<Font> fnt, Font::PrintColors cols, const Size* frame)
 	: Content(frame ? *frame : Size()), text(std::move(string)), font(fnt), colors(new Font::PrintColors(cols))
 {
 }
@@ -61,7 +61,7 @@ void TextSpan::SetColors(const Color& fg, const Color& bg)
 	colors = new Font::PrintColors {fg, bg};
 }
 
-inline const Font* TextSpan::LayoutFont() const
+inline Holder<const Font> TextSpan::LayoutFont() const
 {
 	if (font) return font;
 
@@ -74,7 +74,7 @@ inline const Font* TextSpan::LayoutFont() const
 
 inline Region TextSpan::LayoutInFrameAtPoint(const Point& p, const Region& rgn) const
 {
-	const Font* layoutFont = LayoutFont();
+	auto layoutFont = LayoutFont();
 	Size maxSize = frame.size;
 	Region drawRegion = Region(p + rgn.origin, maxSize);
 	if (maxSize.w <= 0) {
@@ -107,7 +107,7 @@ LayoutRegions TextSpan::LayoutForPointInRegion(Point layoutPoint, const Region& 
 {
 	LayoutRegions layoutRegions;
 	const Point& drawOrigin = rgn.origin;
-	const Font* layoutFont = LayoutFont();
+	auto layoutFont = LayoutFont();
 	assert(layoutFont);
 
 	if (frame.size.IsZero()) {
@@ -138,7 +138,7 @@ LayoutRegions TextSpan::LayoutForPointInRegion(Point layoutPoint, const Region& 
 			size_t begin = 0;
 			size_t end = 0;
 			do {
-				// process all overlaping exclusion zones until we trim down to the leftmost non conflicting region.
+				// process all overlapping exclusion zones until we trim down to the leftmost non conflicting region.
 				// check for intersections with other content
 				excluded = parent->ContentRegionForRect(lineSegment);
 				if (!excluded) {
@@ -250,7 +250,7 @@ void TextSpan::DrawContentsInRegions(const LayoutRegions& rgns, const Point& off
 		Region drawRect = lrgn->region;
 		drawRect.x += offset.x;
 		drawRect.y += offset.y;
-		const Font* printFont = LayoutFont();
+		auto printFont = LayoutFont();
 		const Font::PrintColors* pc = colors;
 		const TextContainer* container = static_cast<const TextContainer*>(parent);
 		if (!pc && container) {
@@ -333,7 +333,7 @@ void ContentContainer::WillDraw(const Region& drawFrame, const Region& clip)
 		sc.w += margin.right - diff;
 	}
 	
-	// TODO: if we ever support horzontal scrollbars these will need to be fixed
+	// TODO: if we ever support horizontal scrollbars these will need to be fixed
 	sc.y += margin.top;
 	sc.h -= margin.top + margin.bottom;
 
@@ -413,7 +413,7 @@ void ContentContainer::SizeChanged(const Size& /*oldSize*/)
 void ContentContainer::SubviewAdded(View* view, View* parent)
 {
 	if (parent == this) {
-		// ContentContainer should grow to the size of its (immidiate) subviews automatically
+		// ContentContainer should grow to the size of its (immediate) subviews automatically
 		const Region& subViewFrame = view->Frame();
 		Size s;
 		s.h = std::max(subViewFrame.y + subViewFrame.h, frame.h);
@@ -577,7 +577,7 @@ void ContentContainer::LayoutContentsFrom(ContentList::const_iterator it)
 		ContentLayout::iterator i = std::find(layout.begin(), layout.end(), *clearit);
 		if (i != layout.end()) {
 			layoutPoint.reset(); // reset cached layoutPoint
-			// since 'layout' is sorted alongsize 'contents' we should be able clear everyting following 'i' and bail
+			// since 'layout' is sorted alongsize 'contents' we should be able clear everything following 'i' and bail
 			layout.erase(i, layout.end());
 			break;
 		}
@@ -671,8 +671,8 @@ void ContentContainer::DeleteContentsInRect(const Region& exclusion)
 }
 
 
-TextContainer::TextContainer(const Region& frame, Font* fnt)
-	: ContentContainer(frame), font(fnt)
+TextContainer::TextContainer(const Region& frame, Holder<Font> fnt)
+	: ContentContainer(frame), font(std::move(fnt))
 {
 }
 
@@ -686,7 +686,7 @@ void TextContainer::AppendText(String text)
 	AppendText(std::move(text), nullptr, colors);
 }
 
-void TextContainer::AppendText(String text, const Font* fnt, const Font::PrintColors* cols)
+void TextContainer::AppendText(String text, const Holder<Font> fnt, const Font::PrintColors* cols)
 {
 	size_t len = text.length();
 	if (len) {
@@ -736,7 +736,7 @@ String TextContainer::TextFrom(ContentList::const_iterator it) const
 		return u""; // must bail or things will get screwed up!
 	}
 
-	// iterate all the content and pick out the TextSpans and concatonate them into a single string
+	// iterate all the content and pick out the TextSpans and concatenate them into a single string
 	String text;
 	for (; it != contents.end(); ++it) {
 		if (const TextSpan* textSpan = static_cast<TextSpan*>(*it)) {
@@ -781,7 +781,7 @@ void TextContainer::DrawContents(const Layout& layout, Point dp)
 	size_t textLength = ts->Text().length();
 
 	if (Editable() && printPos <= cursorPos && printPos + textLength >= cursorPos) {
-		const Font* printFont = ts->LayoutFont();
+		auto printFont = ts->LayoutFont();
 		
 		auto it = FindCursorRegion(layout);
 		if (it != layout.regions.end()) {
@@ -819,7 +819,7 @@ void TextContainer::MoveCursorToPoint(const Point& p)
 	if (layout) {
 		const TextSpan* ts = (const TextSpan*) layout->content;
 		const String& text = ts->Text();
-		const Font* printFont = ts->LayoutFont();
+		auto printFont = ts->LayoutFont();
 		Font::StringSizeMetrics metrics = {Size(0,0), 0, 0, true};
 		size_t numChars = 0;
 

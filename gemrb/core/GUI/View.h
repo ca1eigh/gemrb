@@ -58,7 +58,7 @@ public:
 		ResizeVertical = ResizeTop|ResizeBottom, // top+bottom effectively resizes me vertically
 		ResizeLeft = 1 << 3, // keep my left relative to my super
 		ResizeRight = 1 << 4, // keep my right relative to my super
-		ResizeHorizontal = ResizeLeft|ResizeRight, // top+bottom effectively resizes me horizontaly
+		ResizeHorizontal = ResizeLeft | ResizeRight, // left + right effectively resizes me horizontally
 		ResizeAll = ResizeVertical|ResizeHorizontal, // resize me relative to my super
 		
 		// TODO: move these to TextContainer
@@ -99,9 +99,10 @@ private:
 	Regions DirtySuperViewRegions() const;
 	void DrawBackground(const Region*) const;
 	bool HasBackground() const;
-	void DrawSubviews(bool drawBG) const;
+	void DrawSubviews() const;
 	void MarkDirty(const Region*);
-	void InvalidateSubviews() const;
+	void InvalidateSubviews(const Region& rgn) const;
+	void InvalidateDirtySubviewRegions();
 
 	// TODO: to support partial redraws, we should change the clip parameter to a list of dirty rects
 	// that have all been clipped to the video ScreenClip

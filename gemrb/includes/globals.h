@@ -88,7 +88,6 @@ enum class GFFlags : uint32_t {
 	SPAWN_INI,           			//pst, iwd, iwd2
 	IWD2_DEATHVARFORMAT,  			//iwd branch (maybe pst)
 	RESDATA_INI,         			//pst
-	OVERRIDE_CURSORPOS,  			//pst, iwd2
 	BREAKABLE_WEAPONS,     			//only bg1
 	RULES_3ED,              			//iwd2
 	LEVELSLOT_PER_CLASS,    			//iwd2
@@ -118,7 +117,6 @@ enum class GFFlags : uint32_t {
 	USEPOINT_400,                	//all except pst and iwd2
 	USEPOINT_200,                	//iwd2
 	HAS_FLOAT_MENU,              	//pst
-	RARE_ACTION_VB,              	//pst
 	NO_UNDROPPABLE,              	//iwd,how
 	START_ACTIVE,                	//bg1
 	INFOPOINT_DIALOGS,           	//pst, but only bg1 has garbage there
@@ -137,6 +135,7 @@ enum class GFFlags : uint32_t {
 	CLEARING_ACTIONOVERRIDE,         // bg2, not iwd2
 	DAMAGE_INNOCENT_REP,             // not bg1
 	HAS_WEAPON_SETS,             	// iwd2
+	HIGHLIGHT_OUTLINE_ONLY,         // all
 
 	count // must be last
 };
@@ -313,6 +312,11 @@ inline T CeilDiv(T dividend, T divisor)
 	} else {
 		return CeilDivSlow(dividend, divisor);
 	}
+}
+
+inline std::string YesNo(bool test)
+{
+	return test ? "Yes" : "No";
 }
 
 }

@@ -131,7 +131,7 @@ void SDLSurfaceSprite2D::UpdateColorKey() noexcept
 #if SDL_VERSION_ATLEAST(1,3,0)
 	SDL_SetColorKey(surface, SDL_bool(format.HasColorKey), format.ColorKey);
 	// don't RLE with SDL 2
-	// this only benifits SDL_BlitSurface which we don't use. its a slowdown for us.
+	// this only benefits SDL_BlitSurface which we don't use. its a slowdown for us.
 #else
 	Uint32 flag = format.HasColorKey ? SDL_SRCCOLORKEY : 0;
 	SDL_SetColorKey(surface, flag | SDL_RLEACCEL, format.ColorKey);
@@ -208,7 +208,7 @@ void* SDLSurfaceSprite2D::NewVersion(version_t newversion) const noexcept
 	}
 
 	if (format.Bpp == 1) {
-		// we just allow overwritting the palette
+		// we just allow overwriting the palette
 		return surface->format->palette;
 	}
 
@@ -296,7 +296,7 @@ SDLTextureSprite2D::~SDLTextureSprite2D() noexcept
 }
 
 SDLTextureSprite2D::SDLTextureSprite2D(const SDLTextureSprite2D& other) noexcept
-	: SDLSurfaceSprite2D(other), texFormat(other.texFormat), texture(nullptr)
+	: SDLSurfaceSprite2D(other), texFormat(other.texFormat)
 {}
 
 Holder<Sprite2D> SDLTextureSprite2D::copy() const

@@ -21,7 +21,7 @@
 /**
  * @file Label.h
  * Declares Label widget for displaying static texts
- * @author GemRB Developement Team
+ * @author GemRB Development Team
  */
 
 #ifndef LABEL_H
@@ -52,14 +52,14 @@ public:
 		UseColor = 1 // when set the label is prented with the PrintColors
 	};
 
-	Label(const Region& frame, Font* font, const String& string);
+	Label(const Region& frame, Holder<Font> font, const String& string);
 
 	/** This function sets the actual Label Text */
 	void SetText(String string) override;
 	/** Sets the Foreground Font Color */
 	void SetColors(const Color& col, const Color& bg);
 	/** Set the font being used */
-	void SetFont(Font* newFont) { font = newFont; }
+	void SetFont(Holder<Font> newFont) { font = std::move(newFont); }
 	/** Sets the Alignment of Text */
 	void SetAlignment(unsigned char newAlignment);
 	/** Simply returns the pointer to the text, don't modify it! */
@@ -69,7 +69,7 @@ private: // Private attributes
 	/** Text String Buffer */
 	String Text;
 	/** Font for Text Writing */
-	Font* font;
+	Holder<Font> font;
 	Font::PrintColors colors;
 
 	/** Alignment Variable */

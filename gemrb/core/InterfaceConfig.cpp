@@ -61,7 +61,7 @@ static InterfaceConfig LoadFromStream(DataStream& cfgStream)
 		auto& val = parts[1];
 		TrimString(val);
 
-		settings[key] = std::move(val);
+		settings.Set(key, std::move(val));
 	}
 	return settings;
 }
@@ -95,15 +95,28 @@ static InterfaceConfig LoadDefaultCFG(const char* appName)
 #endif
 
 #ifndef ANDROID
-	// Now try ~/.gemrb folder
+#ifndef WIN32
+	// Now try XDG_CONFIG_HOME, with the standard fallback of ~/.config/gemrb
 	datadir = HomePath();
-	path_t confpath = "." + name;
-	path_t tmp = PathJoin(datadir, confpath);
+	path_t confpath;
+	const char* home = getenv("XDG_CONFIG_HOME");
+	if (home) {
+		confpath = PathJoin(home, "gemrb");
+	} else {
+		confpath = PathJoin(datadir, ".config", "gemrb");
+	}
+	path = PathJoinExt(confpath, name, "cfg");
+	if (cfgStream.Open(path)) {
+		return LoadFromStream(cfgStream);
+	}
+#endif
 
-	path = PathJoinExt(datadir, name, "cfg");
-	
+	// Now try ~/.gemrb folder
+	path_t tmp = PathJoin(datadir, ".gemrb");
+	path = PathJoinExt(tmp, name, "cfg");
 	if (cfgStream.Open(path))
 	{
+		Log(WARNING, "Interface", "~/.gemrb as a config location is deprecated, please use ~/.config/gemrb!");
 		return LoadFromStream(cfgStream);
 	}
 #endif
@@ -126,7 +139,7 @@ static InterfaceConfig LoadDefaultCFG(const char* appName)
 #endif
 	}
 	// if all else has failed try current directory
-	path = PathJoinExt("./", PACKAGE, "cfg");
+	path = PathJoinExt(".", PACKAGE, "cfg");
 	
 	if (cfgStream.Open(path))
 	{
@@ -143,9 +156,9 @@ CoreSettings LoadFromDictionary(InterfaceConfig cfg)
 	auto CONFIG_INT = [&cfg](const std::string& key, auto& field) {
 		using INT = std::remove_reference_t<decltype(field)>;
 
-		if (cfg.count(key)) {
-			field = INT(atoi(cfg[key].c_str()));
-			cfg.erase(key);
+		if (cfg.Contains(key)) {
+			field = INT(atoi(cfg.Get(key)->c_str()));
+			cfg.Erase(key);
 		}
 	};
 
@@ -156,6 +169,7 @@ CoreSettings LoadFromDictionary(InterfaceConfig cfg)
 	CONFIG_INT("CapFPS", config.CapFPS);
 	CONFIG_INT("EnableCheatKeys", config.CheatFlag);
 	CONFIG_INT("GCDebug", config.DebugFlags);
+	CONFIG_INT("GUIEnhancements", config.GUIEnhancements);
 	CONFIG_INT("Height", config.Height);
 	CONFIG_INT("KeepCache", config.KeepCache);
 	CONFIG_INT("MaxPartySize", config.MaxPartySize);
@@ -177,9 +191,9 @@ CoreSettings LoadFromDictionary(InterfaceConfig cfg)
 	CONFIG_INT("LogColor", config.LogColor);
 
 	auto CONFIG_STRING = [&cfg](const std::string& key, auto& field) {
-		if (cfg.count(key)) {
-			field = cfg[key];
-			cfg.erase(key);
+		if (cfg.Contains(key)) {
+			field = *cfg.Get(key);
+			cfg.Erase(key);
 		}
 	};
 	
@@ -277,8 +291,8 @@ CoreSettings LoadFromDictionary(InterfaceConfig cfg)
 	CONFIG_STRING("AudioDriver", config.AudioDriverName);
 	CONFIG_STRING("VideoDriver", config.VideoDriverName);
 	CONFIG_STRING("Encoding", config.Encoding);
-	
-	auto value = cfg["ModPath"];
+
+	auto value = cfg.Get("ModPath", "");
 	if (value.length()) {
 		config.ModPath = Explode<std::string, std::string>(value, PathListSeparator);
 		for (path_t& path : config.ModPath) {
@@ -288,7 +302,7 @@ CoreSettings LoadFromDictionary(InterfaceConfig cfg)
 
 	for (int i = 0; i < MAX_CD; i++) {
 		char keyname[] = { 'C', 'D', char('1'+i), '\0' };
-		value = cfg[keyname];
+		value = cfg.Get(keyname, "");
 		if (value.length()) {
 			config.CD[i] = Explode<std::string, std::string>(value, PathListSeparator);
 			for (path_t& path : config.CD[i]) {
@@ -305,7 +319,7 @@ CoreSettings LoadFromDictionary(InterfaceConfig cfg)
 	
 	// everything else still remaining in cfg is populated into the variables
 	for (const auto& pair : cfg) {
-		config.vars[pair.first] = atoi(pair.second.c_str());
+		config.vars.Set(pair.first, atoi(pair.second.c_str()));
 	}
 	
 	return config;
@@ -318,18 +332,17 @@ CoreSettings LoadFromArgs(int argc, char *argv[])
 	// skip arg0 (it is just gemrb)
 	for (int i=1; i < argc; i++) {
 		if (stricmp(argv[i], "-c") == 0) {
-			auto CFGsettings = LoadFromCFG(argv[++i]);
 			// settings passed on the CLI override anything in the file
-			settings.insert(CFGsettings.begin(), CFGsettings.end());
+			settings.Merge(LoadFromCFG(argv[++i]));
 			loadedCFG = true;
 		} else if (stricmp(argv[i], "-q") == 0) {
 			// quiet mode
-			settings["AudioDriver"] = "none";
+			settings.Set("AudioDriver", "none");
 		} else if (stricmp(argv[i], "--color") == 0) {
-			if (i < argc - 1) settings["LogColor"] = argv[++i];
+			if (i < argc - 1) settings.Set("LogColor", argv[++i]);
 		} else {
 			// assume a path was passed, soft force configless startup
-			settings["GamePath"] = argv[i];
+			settings.Set("GamePath", argv[i]);
 		}
 	}
 
@@ -343,9 +356,8 @@ CoreSettings LoadFromArgs(int argc, char *argv[])
 		} else {
 			appName = argv[0];
 		}
-		auto CFGsettings = LoadDefaultCFG(appName);
 		// settings passed on the CLI override anything in the file
-		settings.insert(CFGsettings.begin(), CFGsettings.end());
+		settings.Merge(LoadDefaultCFG(appName));
 	}
 	return LoadFromDictionary(std::move(settings));
 }

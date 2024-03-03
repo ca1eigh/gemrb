@@ -214,7 +214,7 @@ int fx_play_bam_blended (Scriptable* Owner, Actor* target, Effect* fx)
 
 	if (fx->Parameter2&2) {
 		sca->Pos = fx->Pos;
-		area->AddVVCell( new VEFObject(sca));
+		area->AddVVCell(sca);
 	} else {
 		assert(target);
 		ScriptedAnimation *twin = sca->DetachTwin();
@@ -329,9 +329,9 @@ int fx_play_bam_not_blended (Scriptable* Owner, Actor* target, Effect* fx)
 			twin->Pos = fx->Pos;
 			twin->XOffset -= x;
 			twin->YOffset -= y;
-			area->AddVVCell( new VEFObject(twin) );
+			area->AddVVCell(twin);
 		}
-		area->AddVVCell( new VEFObject(sca) );
+		area->AddVVCell(sca);
 	}
 	return FX_NOT_APPLIED;
 }
@@ -506,7 +506,7 @@ int fx_tint_screen (Scriptable* /*Owner*/, Actor* /*target*/, Effect* fx)
 		core->GetWindowManager()->FadeColor += step;
 		fx->Parameter3--;
 	}
-	if (fx->FirstApply) core->GetAudioDrv()->PlayRelative(fx->Resource, SFX_CHAN_HITS);
+	if (fx->FirstApply) core->GetAudioDrv()->Play(fx->Resource, SFX_CHAN_HITS);
 
 	// only some types actually use duration, the rest are permanent
 	tick_t fromTime = core->Time.defaultTicksPerSec;
@@ -721,7 +721,7 @@ static inline int DamageLastHitter(Effect *fx, Actor *target, int param1, int pa
 	}
 
 	const Map *map = target->GetCurrentArea();
-	Actor *actor = map->GetActorByGlobalID(target->LastHitter);
+	Actor* actor = map->GetActorByGlobalID(target->objects.LastHitter);
 	if (actor && PersonalDistance(target, actor) < 30) {
 		const TriggerEntry *entry = target->GetMatchingTrigger(trigger_hitby, TEF_PROCESSED_EFFECTS);
 		if (entry) {
@@ -807,7 +807,7 @@ int fx_overlay (Scriptable* Owner, Actor* target, Effect* fx)
 			// unhardcoded in our sshadow.spl with 10s as the flat bonus instead of rolling
 			break;
 		case 6: //duplication
-			core->GetAudioDrv()->Play("magic02", SFX_CHAN_HITS, target->Pos);
+			core->GetAudioDrv()->Play("magic02", SFX_CHAN_HITS, target->Pos, GEM_SND_SPATIAL);
 			break;
 		case 7: //armor
 			target->ApplyEffectCopy(fx, fx_colorchange_ref, Owner, 0x825A2800, -1);
@@ -898,7 +898,7 @@ int fx_overlay (Scriptable* Owner, Actor* target, Effect* fx)
 			}
 
 			// don't stack strength spells
-			// potentially too agressive, since the durations vary a lot — did old ones just get suppressed?
+			// potentially too aggressive, since the durations vary a lot — did old ones just get suppressed?
 			int duration = core->Time.hour_sec * fx->CasterLevel;
 			if (fx->SavingThrowBonus == 1) { // power of one - 286
 				duration /= 2;
@@ -969,12 +969,12 @@ int fx_overlay (Scriptable* Owner, Actor* target, Effect* fx)
 		target->Modified[IE_STONESKINS]=1;
 		break;
 	case 2: //black barbed shield (damage opponents)
-		if (target->LastHitter) {
+		if (target->objects.LastHitter) {
 			terminate = DamageLastHitter(fx, target, core->Roll(2, 6, 0), 16);
 		}
 		break;
 	case 3: case 16: //pain mirror or balance in all things
-		if (target->LastHitter) {
+		if (target->objects.LastHitter) {
 			terminate = DamageLastHitter(fx, target, target->LastDamage, target->LastDamageType);
 		}
 		break;

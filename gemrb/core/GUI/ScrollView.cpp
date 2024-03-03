@@ -141,22 +141,21 @@ void ScrollView::SetVScroll(ScrollBar* sbar)
 			
 			sbar->SetFrame(sbFrame);
 			sbar->SetAutoResizeFlags(ResizeRight|ResizeTop|ResizeBottom, BitOp::SET);
+			savedSBSize.w = sbFrame.w;
 		}
 	}
-	
+
 	// this update must be done before binding an action
 	vscroll = sbar;
 	UpdateScrollbars();
-	
+
 	if (sbar) {
 		// ensure scrollbars are on top
 		View::AddSubviewInFrontOfView(sbar, &contentView);
-
-		ControlEventHandler handler = [this](Control* sb) {
-			ScrollbarValueChange(static_cast<ScrollBar*>(sb));
-		};
 		
-		sbar->SetAction(std::move(handler), Control::ValueChange);
+		sbar->SetAction([this](Control* sb) {
+			ScrollbarValueChange(static_cast<ScrollBar*>(sb));
+		}, Control::ValueChange);
 	}
 }
 
@@ -164,6 +163,30 @@ void ScrollView::SetHScroll(ScrollBar*)
 {
 	// TODO: add horizontal scrollbars
 	// this is currently a limitation in the Scrollbar class
+}
+
+void ScrollView::ToggleScrollbar(ScrollBar* sb, bool visible)
+{
+	assert(sb);
+	if (sb->IsVisible() == visible) return;
+
+	sb->SetVisible(visible);
+	Size dims = sb->Dimensions();
+	// We have to change the frame size because we dont support overlapping views
+	if (visible) {
+		if (sb == vscroll) {
+			dims.w = savedSBSize.w;
+		} else { // hscroll visible
+			dims.h = savedSBSize.h;
+		}
+	} else if (sb == vscroll) {
+		savedSBSize.w = dims.w;
+		dims.w = 0;
+	} else { // hscroll hidden
+		savedSBSize.h = dims.h;
+		dims.h = 0;
+	}
+	sb->SetFrameSize(dims);
 }
 
 void ScrollView::UpdateScrollbars()
@@ -179,15 +202,15 @@ void ScrollView::UpdateScrollbars()
 		hscroll->SetValue(-contentFrame.origin.x);
 	}
 	if (vscroll) {
+		bool show = false;
 		if (contentFrame.h > mySize.h) {
-			vscroll->SetVisible((Flags()&View::IgnoreEvents) ? false : true);
+			show = !(Flags() & View::IgnoreEvents);
 
 			int maxVal = contentFrame.h - mySize.h;
 			Control::ValueRange range(0, maxVal);
 			vscroll->SetValueRange(range);
-		} else {
-			vscroll->SetVisible(false);
 		}
+		ToggleScrollbar(vscroll, show);
 		vscroll->SetValue(-contentFrame.origin.y);
 	}
 }
@@ -252,11 +275,11 @@ void ScrollView::FlagsChanged(unsigned int /*oldflags*/)
 {
 	if (Flags()&IgnoreEvents) {
 		if (hscroll) {
-			hscroll->SetVisible(false);
+			ToggleScrollbar(hscroll, false);
 		}
 		
 		if (vscroll) {
-			vscroll->SetVisible(false);
+			ToggleScrollbar(vscroll, false);
 		}
 	}
 }

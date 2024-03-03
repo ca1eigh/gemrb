@@ -43,6 +43,7 @@
 #include "Scriptable/Container.h"
 #include "Scriptable/Door.h"
 #include "Scriptable/InfoPoint.h"
+#include "Scriptable/TileObject.h"
 #include "Streams/FileStream.h"
 #include "Streams/SlicedStream.h"
 
@@ -73,7 +74,7 @@ static void ReadAutonoteINI()
 	INInote = MakePluginHolder<DataFileMgr>(IE_INI_CLASS_ID);
 	path_t tINInote = PathJoin(core->config.GamePath, "autonote.ini");
 	FileStream* fs = FileStream::OpenFile(tINInote);
-	INInote->Open(fs);
+	INInote->Open(std::unique_ptr<DataStream>{fs});
 }
 
 struct PathFinderCosts {
@@ -243,8 +244,8 @@ static TileProps MakeTileProps(const TileMap* tm, const ResRef& wedref, bool day
 	auto propImg = VideoDriver->CreateSprite(Region(Point(), propsize), nullptr, fmt);
 
 	auto propit = propImg->GetIterator();
-	auto end = propit.end(propit);
-	
+	auto end = Sprite2D::Iterator::end(propit);
+
 	auto hmpal = heightmap->GetPalette();
 	auto smit = searchmap->GetIterator();
 	auto hmit = heightmap->GetIterator();
@@ -421,7 +422,7 @@ bool AREImporter::ChangeMap(Map *map, bool day_or_night)
 
 		if (sm) {
 			// night small map is *optional*!
-			// keep the exising map if this one is null
+			// keep the existing map if this one is null
 			map->SmallMap = sm->GetSprite2D();
 		}
 		
@@ -432,7 +433,7 @@ bool AREImporter::ChangeMap(Map *map, bool day_or_night)
 		
 		map->SetTileMapProps(std::move(props));
 	} catch (const std::exception& e) {
-		Log(ERROR, "AREImporter", "{}", e.what());
+		Log(ERROR, "AREImporter", "{}", e);
 		return false;
 	}
 
@@ -704,8 +705,14 @@ void AREImporter::GetInfoPoint(DataStream* str, int idx, Map* map) const
 	}
 	ip->TalkPos = talkPos;
 	ip->DialogName= dialogName;
-	ip->SetDialog(dialogResRef);
-	ip->SetEnter(wavResRef);
+
+	// PST has garbage here and there
+	if (dialogResRef.IsASCII()) {
+		ip->SetDialog(dialogResRef);
+	}
+	if (wavResRef.IsASCII()) {
+		ip->SetEnter(wavResRef);
+	}
 
 	if (script0.IsEmpty()) {
 		ip->Scripts[0] = nullptr;
@@ -1027,6 +1034,10 @@ void AREImporter::GetSpawnPoint(DataStream* str, int idx, Map* map) const
 	}
 	sp->Frequency = spawningFrequency;
 	str->ReadWord(sp->Method);
+	if (sp->Method & SPF_BGT) {
+		sp->Difficulty /= 100;
+	}
+
 	str->ReadDword(sp->sduration); // time to live for spawns
 	str->ReadWord(sp->rwdist); // random walk distance (0 is unlimited), hunting range
 	str->ReadWord(sp->owdist); // other walk distance (inactive in all engines?), follow range
@@ -1036,6 +1047,7 @@ void AREImporter::GetSpawnPoint(DataStream* str, int idx, Map* map) const
 	str->ReadWord(sp->DayChance);
 	str->ReadWord(sp->NightChance);
 	// 14 reserved dwords
+	// TODO: ee added several more fields; check if they're actually used first
 }
 
 bool AREImporter::GetActor(DataStream* str, PluginHolder<ActorMgr> actorMgr, Map* map) const
@@ -1298,7 +1310,7 @@ void AREImporter::GetAutomapNotes(DataStream* str, Map* map) const
 			bytes[500] = '\0';
 			ieDword readonly;
 			str->ReadDword(readonly); // readonly == 1
-			map->AddMapNote(point, 0, StringFromCString(bytes), readonly);
+			map->AddMapNote(point, 0, StringFromTLK(StringView(bytes)), readonly);
 			str->Seek(20, GEM_CURRENT_POS);
 		}
 	} else {
@@ -1440,7 +1452,7 @@ Map* AREImporter::GetMap(const ResRef& resRef, bool day_or_night)
 	try {
 		map = new Map(tm, MakeTileProps(tm, WEDResRef, day_or_night), sm ? sm->GetSprite2D() : nullptr);
 	} catch (const std::exception& e) {
-		Log(ERROR, "AREImporter", "{}", e.what());
+		Log(ERROR, "AREImporter", "{}", e);
 		return nullptr;
 	}
 	
@@ -1589,7 +1601,6 @@ Map* AREImporter::GetMap(const ResRef& resRef, bool day_or_night)
 
 	Log(DEBUG, "AREImporter", "Loading explored bitmap");
 	ieDword mapSize = ieDword(map->ExploredBitmap.Bytes());
-	assert(ExploredBitmapSize <= mapSize);
 	mapSize = std::min(mapSize, ExploredBitmapSize);
 	str->Seek(ExploredBitmapOffset, GEM_STREAM_START);
 	str->Read(map->ExploredBitmap.begin(), mapSize);
@@ -1760,9 +1771,8 @@ int AREImporter::GetStoredFileSize(Map *map)
 	headersize += TrapCount * 0x1c;
 	NoteOffset = headersize;
 
-	int pst = core->HasFeature( GFFlags::AUTOMAP_INI );
 	NoteCount = map->GetMapNoteCount();
-	headersize += NoteCount * (pst?0x214: 0x34);
+	headersize += NoteCount * (core->HasFeature(GFFlags::AUTOMAP_INI) ? 0x214 : 0x34);
 	SongHeader = headersize;
 
 	headersize += 0x90;
@@ -1775,7 +1785,6 @@ int AREImporter::GetStoredFileSize(Map *map)
 int AREImporter::PutHeader(DataStream *stream, const Map *map) const
 {
 	ResRef signature = "AREAV1.0";
-	int pst = core->HasFeature( GFFlags::AUTOMAP_INI );
 
 	if (map->version==16) {
 		signature[5] = '9';
@@ -1853,7 +1862,7 @@ int AREImporter::PutHeader(DataStream *stream, const Map *map) const
 	stream->WriteDword(RestHeader);
 	//an empty dword for pst
 	int i = 56;
-	if (pst) {
+	if (core->HasFeature(GFFlags::AUTOMAP_INI)) {
 		stream->WriteDword(0xffffffff);
 		i=52;
 	}
@@ -2320,9 +2329,7 @@ int AREImporter::PutMapnotes(DataStream *stream, const Map *map) const
 			size_t len = 0;
 			// limited to 500 *bytes* of text, convert to a multibyte encoding.
 			// we convert to MB because it fits more than if we wrote the wide characters
-			std::string mbstring = MBStringFromString(mn.text);
-			// FIXME: depends on locale blah blah (see MBStringFromString definition)
-			// only care about number of bytes before null so strlen is what we want despite being MB string
+			std::string mbstring = TLKStringFromString(mn.text);
 			len = std::min<size_t>(mbstring.length(), 500);
 			stream->Write(mbstring.c_str(), len);
 
@@ -2430,13 +2437,13 @@ int AREImporter::PutTiles(DataStream *stream, const Map *map) const
 {
 	for (unsigned int i=0;i<TileCount;i++) {
 		const TileObject *am = map->TMap->GetTile(i);
-		stream->WriteVariable(am->Name);
-		stream->WriteResRef( am->Tileset );
-		stream->WriteDword(am->Flags);
-		stream->WriteDword(am->opencount);
+		stream->WriteVariable(am->name);
+		stream->WriteResRef(am->tileset);
+		stream->WriteDword(am->flags);
+		stream->WriteDword(am->openCount);
 		//can't write tiles, otherwise now we should write a tile index
 		stream->WriteDword(0);
-		stream->WriteDword(am->closedcount);
+		stream->WriteDword(am->closedCount);
 		//can't write tiles otherwise now we should write a tile index
 		stream->WriteDword(0);
 		stream->WriteFilling(48);

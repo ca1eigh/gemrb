@@ -190,7 +190,7 @@ using namespace GemRB;
 		}
 		if (value && ![value isEqualToString:@""]) {
 			std::string ckey = [key cStringUsingEncoding:NSASCIIStringEncoding];
-			config[ckey] = [value cStringUsingEncoding:NSASCIIStringEncoding];
+			config.Set(ckey, [value cStringUsingEncoding:NSASCIIStringEncoding]);
 		}
 	}
 	
@@ -208,8 +208,9 @@ using namespace GemRB;
 		[_configWindow close];
 		// pass control to GemRB
 		gemrb.Main();
+		VideoDriver.reset();
 	} catch (std::exception& e) {
-		Log(FATAL, "Cocoa Wrapper", "Unable to initialize core: {}. Terminating.", e.what());
+		Log(FATAL, "Cocoa Wrapper", "Unable to initialize core: {}. Terminating.", e);
 	}
 
 	if ([defaults boolForKey:@"TerminateOnClose"]) {

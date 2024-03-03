@@ -221,12 +221,12 @@ void TextArea::SpanSelector::OnMouseLeave(const MouseEvent& me, const DragOp* op
 	ContentContainer::OnMouseLeave(me, op);
 }
 
-TextArea::TextArea(const Region& frame, Font* text)
+TextArea::TextArea(const Region& frame, Holder<Font> text)
 : TextArea(frame, text, text)
 {}
 
-TextArea::TextArea(const Region& frame, Font* text, Font* caps)
-: Control(frame), scrollview(Region(Point(), Dimensions())), ftext(text), colors()
+TextArea::TextArea(const Region& frame, Holder<Font> text, Holder<Font> caps)
+	: Control(frame), scrollview(Region(Point(), Dimensions())), ftext(std::move(text)), colors()
 {
 	colors[COLOR_HOVER] = SelectOptionHover;
 	colors[COLOR_SELECTED] = SelectOptionSelected;
@@ -352,7 +352,7 @@ void TextArea::UpdateScrollview()
 			y = nodeBounds.y - LineHeight();
 		}
 
-		// FIXME: must update before the scroll, but this should be automaticly done as a reaction to changing sizes/origins of subviews
+		// FIXME: must update before the scroll, but this should be automatically done as a reaction to changing sizes/origins of subviews
 		scrollview.Update();
 		scrollview.ScrollTo(Point(0, -y), anim);
 	} else if (!core->HasFeature(GFFlags::DIALOGUE_SCROLLS)) {

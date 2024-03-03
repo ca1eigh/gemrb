@@ -118,4 +118,12 @@ float Audio::GetReverb(unsigned int channel) const
 	return channels[channel].getReverb();
 }
 
+Holder<SoundHandle> Audio::PlayMB(const String& resource, unsigned int channel, const Point& p, unsigned int flags, tick_t* length)
+{
+	auto mbString = MBStringFromString(resource);
+	auto mbResource = StringView{mbString};
+
+	return Play(mbResource, channel, p, flags, length);
+}
+
 }

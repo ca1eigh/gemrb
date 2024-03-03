@@ -16,14 +16,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
-#include <iconv.h>
-
 #include "PythonConversions.h"
-#include "PythonErrors.h"
 
 #include "GameData.h"
-#include "Interface.h"
 #include "ImageMgr.h"
+#include "Interface.h"
+#include "PythonErrors.h"
+
+#include "Strings/Iconv.h"
 
 namespace GemRB {
 
@@ -137,11 +137,6 @@ PyObject* PyString_FromStringObj(const std::string& s)
 	return PyUnicode_Decode(s.c_str(), s.length(), core->TLKEncoding.encoding.c_str(), "strict");
 }
 
-PyObject* PyString_FromSystemStringObj(const std::string& s)
-{
-	return PyUnicode_Decode(s.c_str(), s.length(), core->config.SystemEncoding.c_str(), "strict");
-}
-	
 PyObject* PyString_FromStringObj(const String& s)
 {
 	return PyUnicode_Decode(reinterpret_cast<const char*>(s.c_str()), s.length() * sizeof(char16_t), "UTF-16", "strict");
@@ -199,11 +194,11 @@ String PyString_AsStringObj(PyObject* obj)
 	auto in = reinterpret_cast<char*>(PyUnicode_DATA(obj));
 	auto outBuf = reinterpret_cast<char*>(const_cast<char16_t*>(buffer.data()));
 
-	size_t ret = iconv(cd, &in, &inLen, &outBuf, &outLenLeft);
+	size_t ret = portableIconv(cd, &in, &inLen, &outBuf, &outLenLeft);
 	iconv_close(cd);
 
 	if (ret == static_cast<size_t>(-1)) {
-		Log(ERROR, "PythonConversions", "iconv failed to convert a Pythong string from {} to UTF-16 with error: {}", encoding, strerror(errno));
+		Log(ERROR, "PythonConversions", "iconv failed to convert a Python string from {} to UTF-16 with error: {}", encoding, strerror(errno));
 		return u"";
 	}
 
@@ -218,7 +213,7 @@ String PyString_AsStringObj(PyObject* obj)
 PyStringWrapper PyString_AsStringView(PyObject* obj)
 {
 	// TODO: this is the same as PyString_AsString
-	// it exists to diferentiate uses so that we can weed out PyString_AsString
+	// it exists to differentiate uses so that we can weed out PyString_AsString
 	// and replace them with PyUnicode_Decode or other alternatives
 	return PyStringWrapper(obj, core->config.SystemEncoding.c_str());
 }

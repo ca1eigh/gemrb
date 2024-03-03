@@ -134,7 +134,7 @@ void Spell::AddCastingGlow(EffectQueue *fxqueue, ieDword duration, int gender) c
 		}
 		// only actors have fxqueue's and also the parent function checks for that
 		Actor *caster = (Actor *) fxqueue->GetOwner();
-		caster->casting_sound = core->GetAudioDrv()->Play(Resource, SFX_CHAN_CASTING, caster->Pos);
+		caster->casting_sound = core->GetAudioDrv()->Play(Resource, SFX_CHAN_CASTING, caster->Pos, GEM_SND_SPATIAL);
 	}
 
 	fx = EffectQueue::CreateEffect(fx_casting_glow_ref, 0, CastingGraphics, FX_DURATION_ABSOLUTE);
@@ -206,7 +206,7 @@ EffectQueue Spell::GetEffectBlock(Scriptable *self, const Point &pos, int block_
 		if ((Flags & SF_SIMPLIFIED_DURATION) && block_index >= 0 && fx.HasDuration()) {
 			fx.Duration = (TimePerLevel * block_index + TimeConstant) * core->Time.round_sec;
 		} else if (tables.pstflags) {
-			// many pst spells require unhacking and we can't use the simplified duration bit and custome projectiles for all
+			// many pst spells require unhacking and we can't use the simplified duration bit and custom projectiles for all
 			// luckily this was redone in pstee simply with extra extended headers
 			// NOTE: some of these have several headers for increased range per level, but
 			//       simplified duration always operates only on the first, so we can use it even less
@@ -288,6 +288,7 @@ Projectile *Spell::GetProjectile(Scriptable *self, int header, int level, const 
 		pro->SetEffects(GetEffectBlock(self, target, header, level, seh->ProjectileAnimation));
 	}
 	pro->Range = GetCastingDistance(self);
+	pro->form = seh->SpellForm;
 	return pro;
 }
 

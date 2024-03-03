@@ -247,7 +247,7 @@ strret_t BIKPlayer::fileRead(strpos_t pos, void* buf, strpos_t count)
 
 int BIKPlayer::setAudioStream() const
 {
-	ieDword volume = core->GetVariable("Volume Movie", 0);
+	ieDword volume = core->GetDictionary().Get("Volume Movie", 0);
 
 	int source = core->GetAudioDrv()->SetupNewStream(0, 0, 0, volume, false, false);
 	return source;
@@ -401,13 +401,13 @@ int BIKPlayer::video_init()
 	int bh = (header.height + 7) >> 3;
 	int blocks = bw * bh;
 
-	for (int i = 0; i < BINK_NB_SRC; i++) {
-		c_bundle[i].data = (uint8_t *) av_malloc(blocks * 64);
+	for (auto& bundle : c_bundle) {
+		bundle.data = (uint8_t*) av_malloc(blocks * 64);
 		//not enough memory
-		if(!c_bundle[i].data) {
+		if (!bundle.data) {
 			return 1;
 		}
-		c_bundle[i].data_end = c_bundle[i].data + blocks * 64;
+		bundle.data_end = bundle.data + blocks * 64;
 	}
 
 	return 0;
@@ -937,7 +937,7 @@ const uint8_t bink_rlelens[4] = { 4, 8, 12, 32 };
 int BIKPlayer::read_block_types(Bundle *b)
 {
 	int t;
-	int last = 0;
+	int lastV = 0;
 
 	CHECK_READ_VAL(v_gb, b, t);
 	if (v_gb.get_bits(1)) {
@@ -948,12 +948,12 @@ int BIKPlayer::read_block_types(Bundle *b)
 		for (int i = 0; i < t; i++) {
 			int v = GET_HUFF(b->tree);
 			if (v < 12) {
-				last = v;
+				lastV = v;
 				*b->cur_dec++ = v;
 			} else {
 				int run = bink_rlelens[v - 12];
 
-				memset(b->cur_dec, last, run);
+				memset(b->cur_dec, lastV, run);
 				b->cur_dec += run;
 				i += run - 1;
 			}

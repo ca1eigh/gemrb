@@ -27,11 +27,11 @@
 
 namespace GemRB {
 
-Label::Label(const Region& frame, Font* font, const String& string)
+Label::Label(const Region& frame, Holder<Font> fnt, const String& string)
 	: Control(frame)
 {
 	ControlType = IE_GUI_LABEL;
-	this->font = font;
+	font = std::move(fnt);
 
 	SetAlignment(IE_FONT_ALIGN_CENTER|IE_FONT_ALIGN_MIDDLE);
 	SetFlags(IgnoreEvents, BitOp::OR);

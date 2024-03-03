@@ -64,6 +64,7 @@ path_t TypeExt(SClass_ID type)
 		{ IE_TLK_CLASS_ID, "tlk" },
 		{ IE_TOH_CLASS_ID, "toh" },
 		{ IE_TOT_CLASS_ID, "tot" },
+		{ IE_TTF_CLASS_ID, "ttf" },
 		{ IE_VAR_CLASS_ID, "var" },
 		{ IE_VEF_CLASS_ID, "vef" },
 		{ IE_VVC_CLASS_ID, "vvc" },
@@ -109,6 +110,13 @@ static void PrintPossibleFiles(std::string& buffer, StringView ResRef, const Typ
 	for (const auto& type2 : types) {
 		AppendFormat(buffer, "{}.{} ", ResRef, type2.GetExt());
 	}
+}
+
+bool ResourceManager::Exists(const String& resource, SClass_ID type, bool silent) const {
+	auto mbString = MBStringFromString(resource);
+	auto mbResource = StringView{mbString};
+
+	return Exists(mbResource, type, silent);
 }
 
 bool ResourceManager::Exists(StringView ResRef, SClass_ID type, bool silent) const

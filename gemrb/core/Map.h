@@ -64,6 +64,7 @@ class Wall_Polygon;
 #define SPF_NOSPAWN		0x0001	//if set don't span if WAIT is set
 #define SPF_ONCE		0x0002	//only spawn a single time
 #define SPF_WAIT		0x0004	//spawn temporarily disabled
+#define SPF_BGT                 0x0008 // bgt v1.21 adjusted bg1 spawns to bg2 mode
 
 //area flags (pst uses them only for resting purposes!)
 #define AF_NOSAVE         1
@@ -219,8 +220,8 @@ public:
 class GEM_EXPORT AreaAnimation {
 public:
 	using index_t = Animation::index_t;
-	
-	mutable std::vector<Animation> animation; // FIXME: we need an "update" step, currently we do it in Draw() wich should remian const
+
+	std::vector<Animation> animation;
 	//dwords, or stuff combining to a dword
 	Point Pos;
 	ieDword appearance = 0;
@@ -254,6 +255,7 @@ public:
 	bool Schedule(ieDword gametime) const;
 	Region DrawingRegion() const;
 	void Draw(const Region &screen, Color tint, BlitFlags flags) const;
+	void Update();
 	int GetHeight() const;
 };
 
@@ -290,6 +292,7 @@ using aniIterator = std::list<AreaAnimation>::iterator;
 using scaIterator = std::list<VEFObject*>::const_iterator;
 using proIterator = std::list<Projectile*>::const_iterator;
 using spaIterator = std::list<Particles*>::const_iterator;
+static const Size ZeroSize;
 
 class GEM_EXPORT TileProps {
 	// tileProps contains the searchmap, the lightmap, the heightmap, and the material map
@@ -401,7 +404,7 @@ private:
 
 	private:
 		using profile_t = uint8_t;
-		profile_t loadProperties(const AutoTable &reverbs, id_t reverbID);
+		profile_t loadProperties(const AutoTable& reverbs, id_t reverbIdx);
 		static id_t obtainProfile(const ResRef& mapref);
 	};
 	
@@ -512,6 +515,7 @@ public:
 	bool HasActor(const Actor *actor) const;
 	bool SpawnsAlive() const;
 	void RemoveActor(Actor* actor);
+	Actor* GetRandomEnemySeen(const Actor* origin) const;
 
 	int GetActorCount(bool any) const;
 	//fix actors position if required
@@ -540,6 +544,7 @@ public:
 	//returns the duration of a VVC cell set in the area (point may be set to empty)
 	ieDword HasVVCCell(const ResRef &resource, const Point &p) const;
 	void AddVVCell(VEFObject* vvc);
+	void AddVVCell(ScriptedAnimation* vvc);
 	bool CanFree();
 	int GetCursor(const Point &p) const;
 	//adds a sparkle puff of colour to a point in the area
@@ -574,8 +579,8 @@ public:
 	void UpdateFog();
 	//PathFinder
 	/* Finds the nearest passable point */
-	void AdjustPosition(Point &goal, int radiusx = 0, int radiusy = 0, int size = -1) const;
-	void AdjustPositionNavmap(Point &goal, int radiusx = 0, int radiusy = 0) const;
+	void AdjustPosition(Point& goal, const Size& startingRadius = ZeroSize, int size = -1) const;
+	void AdjustPositionNavmap(Point& goal, const Size& radius = ZeroSize) const;
 	/* Finds the path which leads the farthest from d */
 	PathListNode* RunAway(const Point &s, const Point &d, unsigned int size, int maxPathLength, bool backAway, const Actor *caller) const;
 	PathListNode* RandomWalk(const Point &s, int size, int radius, const Actor *caller) const;
@@ -618,7 +623,7 @@ public:
 	/* May spawn creature(s), returns the remaining number of (unrested) hours for interrupted rest */
 	int CheckRestInterruptsAndPassTime(const Point &pos, int hours, int day);
 	/* Spawns creature(s) in radius of position */
-	bool SpawnCreature(const Point& pos, const ResRef& creResRef, int radiusx = 0, int radiusy = 0, ieWord rwdist = 0, int* difficulty = nullptr, unsigned int* creCount = nullptr);
+	bool SpawnCreature(const Point& pos, const ResRef& creResRef, const Size& radius = Size(), ieWord rwdist = 0, int* difficulty = nullptr, unsigned int* creCount = nullptr);
 
 	//spawns
 	void LoadIniSpawn();
@@ -648,7 +653,7 @@ public:
 	void SetBackground(const ResRef &bgResref, ieDword duration);
 
 private:
-	const AreaAnimation *GetNextAreaAnimation(aniIterator &iter, ieDword gametime) const;
+	AreaAnimation* GetNextAreaAnimation(aniIterator& iter, ieDword gametime) const;
 	Particles *GetNextSpark(const spaIterator &iter) const;
 	VEFObject *GetNextScriptedAnimation(const scaIterator &iter) const;
 	Actor *GetNextActor(int &q, size_t &index) const;
@@ -661,6 +666,8 @@ private:
 	void SetDrawingStencilForObject(const void*, const Region&, const WallPolygonSet&, const Point& viewPortOrigin);
 	BlitFlags SetDrawingStencilForScriptable(const Scriptable*, const Region& viewPort);
 	BlitFlags SetDrawingStencilForAreaAnimation(const AreaAnimation*, const Region& viewPort);
+	BlitFlags SetDrawingStencilForScriptedAnimation(const ScriptedAnimation* anim, const Region& viewPort, int height);
+	BlitFlags SetDrawingStencilForProjectile(const Projectile* pro, const Region& viewPort);
 
 	void DrawDebugOverlay(const Region &vp, uint32_t dFlags) const;
 	void DrawPortal(const InfoPoint *ip, int enable);
@@ -679,9 +686,9 @@ private:
 	//actor uses travel region
 	void UseExit(Actor *pc, InfoPoint *ip);
 	//separated position adjustment, so their order could be randomised
-	bool AdjustPositionX(SearchmapPoint& goal, int radiusx, int radiusy, int size = -1) const;
-	bool AdjustPositionY(SearchmapPoint& goal, int radiusx, int radiusy, int size = -1) const;
-	
+	bool AdjustPositionX(SearchmapPoint& goal, const Size& radius, int size = -1) const;
+	bool AdjustPositionY(SearchmapPoint& goal, const Size& radius, int size = -1) const;
+
 	void UpdateSpawns() const;
 	PathMapFlags GetBlockedInLine(const Point &s, const Point &d, bool stopOnImpassable, const Actor *caller = NULL) const;
 	void AddProjectile(Projectile* pro);

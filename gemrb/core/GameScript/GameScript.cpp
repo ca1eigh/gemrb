@@ -41,16 +41,18 @@
 
 #include "GameScript/GameScript.h"
 
-#include "GameScript/GSUtils.h"
-#include "GameScript/Matching.h"
+#include "voodooconst.h"
 
 #include "Game.h"
-#include "GUI/GameControl.h" // just for DF_POSTPONE_SCRIPTS
 #include "GameData.h"
 #include "Interface.h"
 #include "PluginMgr.h"
-#include "TableMgr.h"
 #include "RNG.h"
+#include "TableMgr.h"
+
+#include "GUI/GameControl.h"
+#include "GameScript/GSUtils.h"
+#include "GameScript/Matching.h"
 
 #include <cstdarg>
 
@@ -198,9 +200,9 @@ static const TriggerLink triggernames[] = {
 	{"hasitem", GameScript::HasItem, 0},
 	{"hasitemcategory", GameScript::HasItemCategory, 0},
 	{"hasitemequiped", GameScript::HasItemEquipped, 0}, //typo in bg2
-	{"hasitemequipedreal", GameScript::HasItemEquipped, 0}, //not sure
+	{"hasitemequipedreal", GameScript::HasItemEquippedReal, 0},
 	{"hasitemequipped", GameScript::HasItemEquipped, 0},
-	{"hasitemequippedreal", GameScript::HasItemEquipped, 0}, //not sure
+	{"hasitemequippedreal", GameScript::HasItemEquippedReal, 0},
 	{"hasiteminslot", GameScript::HasItemSlot, 0},
 	{"hasitemslot", GameScript::HasItemSlot, 0},
 	{"hasitemtypeslot", GameScript::HasItemTypeSlot, 0},//gemrb extension
@@ -421,6 +423,8 @@ static const TriggerLink triggernames[] = {
 	{"reserved1", nullptr, 0},
 	{"reserved2", nullptr, 0},
 	{"reserved3", nullptr, 0},
+	{"reset", GameScript::Reset, 0},
+	{"said", GameScript::False, 0},
 	{"school", GameScript::School, 0}, //similar to kit
 	{"secretdoordetected", GameScript::SecretDoorDetected, 0},
 	{"see", GameScript::See, 0},
@@ -439,6 +443,7 @@ static const TriggerLink triggernames[] = {
 	{"storymodeon", GameScript::StoryModeOn, 0},
 	{"stuffglobalrandom", GameScript::StuffGlobalRandom, 0},//hm, this is a trigger
 	{"subrace", GameScript::SubRace, 0},
+	{"summoned", GameScript::Summoned, 0},
 	{"summoninglimit", GameScript::SummoningLimit, 0},
 	{"summoninglimitgt", GameScript::SummoningLimitGT, 0},
 	{"summoninglimitlt", GameScript::SummoningLimitLT, 0},
@@ -489,7 +494,7 @@ static const TriggerLink triggernames[] = {
 
 //Make this an ordered list, so we could use bsearch!
 static const ActionLink actionnames[] = {
-	{"actionoverride",NULL, AF_INVALID}, //will this function ever be reached
+	{"actionoverride", GameScript::NoAction, AF_INVALID}, // will never be reached, but this sooths other references
 	{"activate", GameScript::Activate, 0},
 	{"activateportalcursor", GameScript::ActivatePortalCursor, 0},
 	{"addareaflag", GameScript::AddAreaFlag, 0},
@@ -497,6 +502,7 @@ static const ActionLink actionnames[] = {
 	{"addexperienceparty", GameScript::AddExperienceParty, 0},
 	{"addexperiencepartycr", GameScript::AddExperiencePartyCR, 0},
 	{"addexperiencepartyglobal", GameScript::AddExperiencePartyGlobal, 0},
+	{"addfamiliar", GameScript::AddFamiliar, 0},
 	{"addfeat", GameScript::AddFeat, 0},
 	{"addglobals", GameScript::AddGlobals, 0},
 	{"addhp", GameScript::AddHP, 0},
@@ -540,6 +546,7 @@ static const ActionLink actionnames[] = {
 	{"bitglobal", GameScript::BitGlobal,AF_MERGESTRINGS},
 	{"bitset", GameScript::GlobalBOr,AF_MERGESTRINGS}, //probably the same
 	{"breakinstants", GameScript::BreakInstants, AF_BLOCKING},//delay execution of instants to the next AI cycle???
+	{"buystuff", GameScript::NoAction, 0},
 	{"calllightning", GameScript::Kill, 0}, // just an instant death with Param2 = 0x100
 	{"calm", GameScript::Calm, 0},
 	{"changeaiscript", GameScript::ChangeAIScript, 0},
@@ -603,6 +610,9 @@ static const ActionLink actionnames[] = {
 	{"damage", GameScript::Damage, 0},
 	{"daynight", GameScript::DayNight, 0},
 	{"deactivate", GameScript::Deactivate, 0},
+	{"deathmatchpositionarea", nullptr, 0},
+	{"deathmatchpositionglobal", nullptr, 0},
+	{"deathmatchpositionlocal", nullptr, 0},
 	{"debug", GameScript::Debug, 0},
 	{"debugoutput", GameScript::Debug, 0},
 	{"deletejournalentry", GameScript::RemoveJournalEntry, 0},
@@ -697,7 +707,10 @@ static const ActionLink actionnames[] = {
 	{"forcerandomencounter", GameScript::ForceRandomEncounter, 0},
 	{"forcerandomencounterentry", GameScript::ForceRandomEncounter, 0},
 	{"forcespell", GameScript::ForceSpell, AF_BLOCKING|AF_ALIVE|AF_IWD2_OVERRIDE},
+	{"forcespellres", GameScript::ForceSpell, AF_BLOCKING | AF_ALIVE | AF_IWD2_OVERRIDE},
+	{"forcespellresnofeedback", GameScript::ForceSpell, AF_BLOCKING | AF_ALIVE | AF_IWD2_OVERRIDE},
 	{"forcespellpoint", GameScript::ForceSpellPoint, AF_BLOCKING|AF_ALIVE|AF_IWD2_OVERRIDE},
+	{"forcespellpointres", GameScript::ForceSpellPoint, AF_BLOCKING | AF_ALIVE | AF_IWD2_OVERRIDE},
 	{"forcespellpointrange", GameScript::ForceSpellPointRange, AF_BLOCKING|AF_ALIVE},
 	{"forcespellpointrangeres", GameScript::ForceSpellPointRange, AF_BLOCKING|AF_ALIVE},
 	{"forcespellrange", GameScript::ForceSpellRange, AF_BLOCKING|AF_ALIVE},
@@ -743,6 +756,7 @@ static const ActionLink actionnames[] = {
 	{"globalxor", GameScript::GlobalXor,AF_MERGESTRINGS},
 	{"globalxorglobal", GameScript::GlobalXorGlobal,AF_MERGESTRINGS},
 	{"gotostartscreen", GameScript::QuitGame, 0},//ending
+	{"groupattack", GameScript::GroupAttack, 0},
 	{"help", GameScript::Help, 0},
 	{"hide", GameScript::Hide, 0},
 	{"hideareaonmap", GameScript::HideAreaOnMap, 0},
@@ -768,6 +782,7 @@ static const ActionLink actionnames[] = {
 	{"jumptosavedlocation", GameScript::JumpToSavedLocation, 0},
 	{"kill", GameScript::Kill, 0},
 	{"killfloatmessage", GameScript::KillFloatMessage, 0},
+	{"layhands", GameScript::NoAction, 0}, // broken in released engines; likely on purpose, since a spell is cleaner
 	{"leader", GameScript::Leader, AF_ALIVE},
 	{"leavearea", GameScript::LeaveAreaLUA, 0}, //so far the same
 	{"leavearealua", GameScript::LeaveAreaLUA, 0},
@@ -823,10 +838,14 @@ static const ActionLink actionnames[] = {
 	{"nidspecial5", GameScript::UseItem, AF_BLOCKING|AF_DIRECT|AF_ALIVE},
 	{"nidspecial6", GameScript::Spell, AF_BLOCKING|AF_DIRECT|AF_ALIVE},
 	{"nidspecial7", GameScript::SpellNoDec, AF_BLOCKING|AF_DIRECT|AF_ALIVE},
-	//{"nidspecial8", GameScript::SpellPoint, AF_BLOCKING|AF_ALIVE}, //not needed
+	{"nidspecial8", GameScript::SpellPoint, AF_BLOCKING | AF_ALIVE}, // not needed, but avoids warning
 	{"nidspecial9", GameScript::ToggleDoor, AF_BLOCKING},//another internal hack, maybe we should use UseDoor instead
+	{"nidspecial10", GameScript::NoAction, 0},
+	{"nidspecial11", GameScript::NoAction, 0},
+	{"nidspecial12", GameScript::NoAction, 0},
 	{"noaction", GameScript::NoAction, 0},
 	{"opendoor", GameScript::OpenDoor,0},
+	{"overrideareadifficulty", GameScript::OverrideAreaDifficulty, 0},
 	{"panic", GameScript::Panic, AF_ALIVE},
 	{"permanentstatchange", GameScript::PermanentStatChange, 0}, //pst
 	{"pausegame", GameScript::PauseGame, AF_BLOCKING}, //this is almost surely blocking
@@ -835,7 +854,7 @@ static const ActionLink actionnames[] = {
 	{"pickupitem", GameScript::PickUpItem, 0},
 	{"playbardsong", GameScript::PlayBardSong, AF_ALIVE},
 	{"playdead", GameScript::PlayDead,AF_BLOCKING|AF_ALIVE},
-	{"playdeadinterruptable", GameScript::PlayDeadInterruptable,AF_BLOCKING|AF_ALIVE},
+	{"playdeadinterruptable", GameScript::PlayDeadInterruptible, AF_BLOCKING | AF_ALIVE},
 	{"playerdialog", GameScript::PlayerDialogue,AF_BLOCKING},
 	{"playerdialogue", GameScript::PlayerDialogue,AF_BLOCKING},
 	{"playsequence", GameScript::PlaySequence, 0},
@@ -873,6 +892,7 @@ static const ActionLink actionnames[] = {
 	{"regainrangerhood", GameScript::RegainRangerHood, 0},
 	{"removeareaflag", GameScript::RemoveAreaFlag, 0},
 	{"removeareatype", GameScript::RemoveAreaType, 0},
+	{"removefamiliar", GameScript::RemoveFamiliar, 0},
 	{"removejournalentry", GameScript::RemoveJournalEntry, 0},
 	{"removemapnote", GameScript::RemoveMapnote, 0},
 	{"removepaladinhood", GameScript::RemovePaladinHood, 0},
@@ -885,6 +905,7 @@ static const ActionLink actionnames[] = {
 	{"reputationset", GameScript::ReputationSet, 0},
 	{"reserved", nullptr, 0},
 	{"resetfogofwar", GameScript::UndoExplore, 0}, //pst
+	{"resetjoinrequests", nullptr, 0},
 	{"resetmorale", GameScript::ResetMorale, 0},
 	{"resetplayerai", GameScript::ResetPlayerAI, 0},
 	{"rest", GameScript::Rest, AF_ALIVE},
@@ -967,6 +988,7 @@ static const ActionLink actionnames[] = {
 	{"setname", GameScript::SetApparentName, 0},
 	{"setnamelessclass", GameScript::SetNamelessClass, 0},
 	{"setnamelessdeath", GameScript::SetNamelessDeath, 0},
+	{"setnamelessdeathparty", GameScript::SetNamelessDeathParty, 0},
 	{"setnamelessdisguise", GameScript::SetNamelessDisguise, 0},
 	{"setnooneontrigger", GameScript::SetNoOneOnTrigger, 0},
 	{"setnumtimestalkedto", GameScript::SetNumTimesTalkedTo, 0},
@@ -1011,6 +1033,7 @@ static const ActionLink actionnames[] = {
 	{"spellnodec", GameScript::SpellNoDec, AF_BLOCKING|AF_ALIVE|AF_IWD2_OVERRIDE},
 	{"spellpoint", GameScript::SpellPoint, AF_BLOCKING|AF_ALIVE|AF_IWD2_OVERRIDE},
 	{"spellpointnodec", GameScript::SpellPointNoDec, AF_BLOCKING|AF_ALIVE|AF_IWD2_OVERRIDE},
+	{"spellwait", GameScript::Spell, AF_BLOCKING | AF_ALIVE | AF_IWD2_OVERRIDE},
 	{"startcombatcounter", GameScript::StartCombatCounter, 0},
 	{"startcutscene", GameScript::StartCutScene, 0},
 	{"startcutsceneex", GameScript::StartCutSceneEx, 0}, //pst (unknown), EE perhaps as of PST:EE
@@ -1042,6 +1065,7 @@ static const ActionLink actionnames[] = {
 	{"staticsequence", GameScript::PlaySequence, 0},//bg2 animation sequence
 	{"staticstart", GameScript::StaticStart, 0},
 	{"staticstop", GameScript::StaticStop, 0},
+	{"stopjoinrequests", GameScript::NoAction, 0},
 	{"stickysinisterpoof", GameScript::CreateVisualEffectObjectSticky, 0},
 	{"stopmoving", GameScript::StopMoving, 0},
 	{"storepartylocations", GameScript::StorePartyLocation, 0},
@@ -1080,9 +1104,11 @@ static const ActionLink actionnames[] = {
 	{"usecontainer", GameScript::UseContainer,AF_BLOCKING},
 	{"usedoor", GameScript::UseDoor,AF_BLOCKING},
 	{"useitem", GameScript::UseItem,AF_BLOCKING},
+	{"useitemability", GameScript::UseItem, AF_BLOCKING},
 	{"useitempoint", GameScript::UseItemPoint,AF_BLOCKING},
 	{"useitempointslot", GameScript::UseItemPoint,AF_BLOCKING},
 	{"useitemslot", GameScript::UseItem,AF_BLOCKING},
+	{"useitemslotability", GameScript::UseItem, AF_BLOCKING},
 	{"vequip",GameScript::SetArmourLevel, 0},
 	{"verbalconstant", GameScript::VerbalConstant, 0},
 	{"verbalconstanthead", GameScript::VerbalConstantHead, 0},
@@ -1259,59 +1285,27 @@ static const IDSLink idsnames[] = {
 
 static int NextTriggerObjectID = 0;
 
-static const TriggerLink* FindTrigger(StringView triggername)
+template<typename L, typename L2>
+static const L* FindLink(StringView name, const L2& names)
 {
-	if (triggername.empty()) {
+	if (name.empty()) {
 		return nullptr;
 	}
 
-	auto len = std::min(FindFirstOf(triggername, "("), triggername.length());
-	for (int i = 0; triggernames[i].Name; i++) {
-		if (!strnicmp(triggernames[i].Name, triggername.c_str(), len)) {
-			return triggernames + i;
+	auto len = std::min(FindFirstOf(name, "("), name.length());
+	for (int i = 0; names[i].Name; i++) {
+		if (!strnicmp(names[i].Name, name.c_str(), len)) {
+			return &names[i];
 		}
 	}
-	return NULL;
+	return nullptr;
 }
 
-static const ActionLink* FindAction(StringView actionname)
+static const IDSLink* FindIdentifier(const std::string& idsname)
 {
-	if (actionname.empty()) {
-		return nullptr;
-	}
-
-	auto len = std::min(FindFirstOf(actionname, "("), actionname.length());
-	for (int i = 0; actionnames[i].Name; i++) {
-		if (!strnicmp(actionnames[i].Name, actionname.c_str(), len)) {
-			return actionnames + i;
-		}
-	}
-	return NULL;
-}
-
-static const ObjectLink* FindObject(StringView objectname)
-{
-	if (objectname.empty()) {
-		return nullptr;
-	}
-
-	auto len = std::min(FindFirstOf(objectname, "("), objectname.length());
-	for (int i = 0; objectnames[i].Name; i++) {
-		if (!strnicmp(objectnames[i].Name, objectname.c_str(), len)) {
-			return objectnames + i;
-		}
-	}
-	return NULL;
-}
-
-static const IDSLink* FindIdentifier(const char* idsname)
-{
-	if (!idsname) {
-		return NULL;
-	}
-	int len = (int)strlen( idsname );
+	int len = static_cast<int>(idsname.size());
 	for (int i = 0; idsnames[i].Name; i++) {
-		if (!strnicmp( idsnames[i].Name, idsname, len )) {
+		if (!strnicmp(idsnames[i].Name, idsname.c_str(), len)) {
 			return idsnames + i;
 		}
 	}
@@ -1458,17 +1452,22 @@ static void CleanupIEScript()
 	overrideTriggersTable.reset();
 }
 
-static void printFunction(std::string& buffer, const PluginHolder<SymbolMgr>& table, int index)
+static void printFunction(std::string& buffer, const std::string& str, int value)
 {
-	const auto& str = table->GetStringIndex(index);
-	int value = table->GetValueIndex(index);
-
 	size_t len = str.find_first_of('(');
 	if (len == std::string::npos) {
 		AppendFormat(buffer, "{} {}", value, str);
 	} else {
 		AppendFormat(buffer, "{} {:*^{}}", value, str, len);
 	}
+}
+
+static void printFunction(std::string& buffer, const PluginHolder<SymbolMgr>& table, int index)
+{
+	const auto& str = table->GetStringIndex(index);
+	int value = table->GetValueIndex(index);
+
+	return printFunction(buffer, str, value);
 }
 
 static void LoadActionFlags(const ResRef& tableName, int flag, bool critical)
@@ -1502,33 +1501,314 @@ static void LoadActionFlags(const ResRef& tableName, int flag, bool critical)
 	}
 }
 
+template<typename L, typename F>
+static void CheckSynonym(const L& names, const F& func, const std::string& idx)
+{
+	for (int i = 0; names[i].Name; i++) {
+		if (func == names[i].Function) {
+			Log(MESSAGE, "GameScript", "{} is a synonym of {}", idx, names[i].Name);
+			break;
+		}
+	}
+}
+
+static void SetupTriggers()
+{
+	std::list<int> missingTriggers;
+	size_t max = triggersTable->GetSize();
+	for (size_t j = 0; j < max; j++) {
+		int i = triggersTable->GetValueIndex(j);
+		const std::string& name = triggersTable->GetStringIndex(j);
+		const TriggerLink* poi = FindLink<TriggerLink>(name, triggernames);
+
+		bool wasCondition = (i & 0x4000);
+		i &= 0x3fff;
+		if (i >= MAX_TRIGGERS) {
+			Log(ERROR, "GameScript", "Trigger {} ({}) is too high, ignoring", i, name);
+			continue;
+		}
+
+		if (triggers[i]) {
+			if (poi && triggers[i] != poi->Function) {
+				std::string buffer = fmt::format("{} is in collision with ", name);
+				printFunction(buffer, name, i);
+				Log(WARNING, "GameScript", "{}", buffer);
+			} else if (InDebugMode(DebugMode::TRIGGERS)) {
+				std::string buffer = fmt::format("{} is a synonym of ", name);
+				printFunction(buffer, name, i);
+				Log(DEBUG, "GameScript", "{}", buffer);
+			}
+			continue; // we already found an alternative
+		}
+
+		if (poi == nullptr) {
+			// missing trigger which might be resolved later
+			triggers[i] = nullptr;
+			triggerflags[i] = 0;
+			missingTriggers.push_back(static_cast<int>(j));
+			continue;
+		}
+		triggers[i] = poi->Function;
+		triggerflags[i] = poi->Flags;
+		if (wasCondition) {
+			triggerflags[i] |= TF_CONDITION;
+		}
+	}
+
+	// retry resolving previously missing triggers
+	for (auto l = missingTriggers.begin(); l != missingTriggers.end(); ++l) {
+		int j = *l;
+		// found later as a different name
+		int ii = triggersTable->GetValueIndex(j) & 0x3fff;
+		if (ii >= MAX_TRIGGERS) {
+			continue;
+		}
+
+		TriggerFunction f = triggers[ii];
+		if (f) {
+			CheckSynonym(triggernames, f, triggersTable->GetStringIndex(j));
+			continue;
+		}
+
+		std::string buffer("Couldn't assign function to trigger: ");
+		printFunction(buffer, triggersTable, j);
+		Log(WARNING, "GameScript", "{}", buffer);
+	}
+}
+
+static void SetupActions()
+{
+	std::list<int> missingActions;
+	size_t max = actionsTable->GetSize();
+	for (size_t j = 0; j < max; j++) {
+		int i = actionsTable->GetValueIndex(j);
+		const std::string& name = actionsTable->GetStringIndex(j);
+		if (i >= MAX_ACTIONS) {
+			Log(ERROR, "GameScript", "action {} ({}) is too high, ignoring", i, name);
+			continue;
+		}
+		const ActionLink* poi = FindLink<ActionLink>(name, actionnames);
+		if (actions[i]) {
+			if (poi && actions[i] != poi->Function) {
+				std::string buffer = fmt::format("{} is in collision with ", name);
+				printFunction(buffer, name, i);
+				Log(WARNING, "GameScript", "{}", buffer);
+			} else if (InDebugMode(DebugMode::ACTIONS)) {
+				std::string buffer = fmt::format("{} is a synonym of ", name);
+				printFunction(buffer, name, i);
+				Log(DEBUG, "GameScript", "{}", buffer);
+			}
+			continue; // we already found an alternative
+		}
+		if (poi == nullptr) {
+			actions[i] = nullptr;
+			actionflags[i] = 0;
+			missingActions.push_back(static_cast<int>(j));
+			continue;
+		}
+		actions[i] = poi->Function;
+		actionflags[i] = poi->Flags;
+	}
+
+	// retry resolving previously missing actions
+	for (auto l = missingActions.begin(); l != missingActions.end(); ++l) {
+		int j = *l;
+		// found later as a different name
+		int ii = actionsTable->GetValueIndex(j);
+		if (ii >= MAX_ACTIONS) {
+			continue;
+		}
+
+		ActionFunction f = actions[ii];
+		if (f) {
+			CheckSynonym(actionnames, f, actionsTable->GetStringIndex(j));
+			continue;
+		}
+		std::string buffer("Couldn't assign function to action: ");
+		printFunction(buffer, actionsTable, j);
+		Log(WARNING, "GameScript", "{}", buffer);
+	}
+}
+
+static void SetupObjects()
+{
+	std::list<int> missingObjects;
+	size_t j = objectsTable->GetSize();
+	while (j--) {
+		int i = objectsTable->GetValueIndex(j);
+		const std::string& name = objectsTable->GetStringIndex(j);
+		if (i >= MAX_OBJECTS) {
+			Log(ERROR, "GameScript", "object {} ({}) is too high, ignoring", i, name);
+			continue;
+		}
+		const ObjectLink* poi = FindLink<ObjectLink>(name, objectnames);
+		if (objects[i]) {
+			if (poi && objects[i] != poi->Function) {
+				std::string buffer = fmt::format("{} is in collision with ", name);
+				printFunction(buffer, name, i);
+				Log(WARNING, "GameScript", "{}", buffer);
+			} else {
+				std::string buffer = fmt::format("{} is a synonym of ", name);
+				printFunction(buffer, name, i);
+				Log(DEBUG, "GameScript", "{}", buffer);
+			}
+			continue;
+		}
+		if (poi == nullptr) {
+			objects[i] = nullptr;
+			missingObjects.push_back(static_cast<int>(j));
+		} else {
+			objects[i] = poi->Function;
+		}
+	}
+
+	// retry resolving previously missing objects
+	for (auto l = missingObjects.begin(); l != missingObjects.end(); ++l) {
+		j = *l;
+		// found later as a different name
+		int ii = objectsTable->GetValueIndex(j);
+		if (ii >= MAX_OBJECTS) {
+			continue;
+		}
+
+		ObjectFunction f = objects[ii];
+		if (f) {
+			CheckSynonym(objectnames, f, objectsTable->GetStringIndex(j));
+			continue;
+		}
+		std::string buffer("Couldn't assign function to object: ");
+		printFunction(buffer, objectsTable, static_cast<int>(j));
+		Log(WARNING, "GameScript", "{}", buffer);
+	}
+}
+
+static void SetupOverrideActions()
+{
+	size_t max = overrideActionsTable->GetSize();
+	for (size_t j = 0; j < max; j++) {
+		int i = overrideActionsTable->GetValueIndex(j);
+		const std::string& name = overrideActionsTable->GetStringIndex(j);
+		if (i >= MAX_ACTIONS) {
+			Log(ERROR, "GameScript", "action {} ({}) is too high, ignoring", i, name);
+			continue;
+		}
+		const ActionLink* poi = FindLink<ActionLink>(name, actionnames);
+		if (!poi) {
+			std::string buffer("Couldn't assign function to override action: ");
+			printFunction(buffer, name, i);
+			continue;
+		}
+		if (actions[i] && (actions[i] != poi->Function || actionflags[i] != poi->Flags)) {
+			std::string buffer = fmt::format("{} overrides existing action ", name);
+			int x = actionsTable->FindValue(i);
+			if (x >= 0) {
+				printFunction(buffer, actionsTable, actionsTable->FindValue(i));
+			} else {
+				printFunction(buffer, name, i);
+			}
+			Log(MESSAGE, "GameScript", "{}", buffer);
+		}
+		actions[i] = poi->Function;
+		actionflags[i] = poi->Flags;
+	}
+}
+
+static void SetupOverrideTriggers()
+{
+	size_t max = overrideTriggersTable->GetSize();
+	for (size_t j = 0; j < max; j++) {
+		int i = overrideTriggersTable->GetValueIndex(j);
+		bool wasCondition = (i & 0x4000);
+		i &= 0x3fff;
+		const auto& trName = overrideTriggersTable->GetStringIndex(j);
+		if (i >= MAX_TRIGGERS) {
+			Log(ERROR, "GameScript", "Trigger {} ({}) is too high, ignoring", i, trName);
+			continue;
+		}
+		if (!NextTriggerObjectID && !stricmp(trName.c_str(), "NextTriggerObject(O:Object*)")) {
+			NextTriggerObjectID = i;
+		}
+		const TriggerLink* poi = FindLink<TriggerLink>(trName, triggernames);
+		if (!poi) {
+			std::string buffer("Couldn't assign function to override trigger: ");
+			printFunction(buffer, trName, i);
+			continue;
+		}
+
+		short tf = poi->Flags | (wasCondition ? TF_CONDITION : 0);
+		if (triggers[i] && (triggers[i] != poi->Function || triggerflags[i] != tf)) {
+			std::string buffer = fmt::format("{} overrides existing trigger ", trName);
+			int x = triggersTable->FindValue(i);
+			if (x < 0) x = triggersTable->FindValue(i | 0x4000);
+			if (x >= 0) {
+				printFunction(buffer, triggersTable, x);
+			} else {
+				x = overrideTriggersTable->FindValue(i);
+				if (x < 0 || size_t(x) >= j) x = overrideTriggersTable->FindValue(i | 0x4000);
+				printFunction(buffer, overrideTriggersTable, x);
+			}
+			Log(MESSAGE, "GameScript", "{}", buffer);
+		}
+		triggers[i] = poi->Function;
+		triggerflags[i] = tf;
+	}
+}
+
+static void SetupSavedTriggers()
+{
+	int savedTriggersIndex = core->LoadSymbol("svtriobj");
+	if (savedTriggersIndex < 0) {
+		// leaving this as not strictly necessary, for now
+		Log(WARNING, "GameScript", "Couldn't find saved trigger symbols!");
+	} else {
+		auto savedTriggersTable = core->GetSymbol(savedTriggersIndex);
+		if (!savedTriggersTable) {
+			error("GameScript", "Couldn't load saved trigger symbols!");
+		}
+		size_t j = savedTriggersTable->GetSize();
+		while (j--) {
+			int i = savedTriggersTable->GetValueIndex(j);
+			const std::string& trName = savedTriggersTable->GetStringIndex(j);
+			i &= 0x3fff;
+			if (i >= MAX_TRIGGERS) {
+				Log(ERROR, "GameScript", "saved trigger {} ({}) is too high, ignoring", i, trName);
+				continue;
+			}
+			if (!triggers[i]) {
+				Log(WARNING, "GameScript", "saved trigger {} ({}) doesn't exist, ignoring", i, trName);
+				continue;
+			}
+			triggerflags[i] |= TF_SAVED;
+		}
+	}
+}
+
 void InitializeIEScript()
 {
-	std::list<int> missing_triggers;
-	std::list<int> missing_actions;
-	std::list<int> missing_objects;
-	std::list<int>::iterator l;
-
 	PluginMgr::Get()->RegisterCleanup(CleanupIEScript);
 
 	NoCreate = core->HasFeature(GFFlags::NO_NEW_VARIABLES);
 	HasKaputz = core->HasFeature(GFFlags::HAS_KAPUTZ);
 
-	InitScriptTables();
-	int tT = core->LoadSymbol( "trigger" );
-	int aT = core->LoadSymbol( "action" );
-	int oT = core->LoadSymbol( "object" );
-	int gaT = core->LoadSymbol( "gemact" );
-	int gtT = core->LoadSymbol( "gemtrig" );
+	// see note in voodooconst.h
+	if (core->HasFeature(GFFlags::AREA_OVERRIDE)) {
+		MAX_OPERATING_DISTANCE = 40 * 3;
+	}
+
+	int tT = core->LoadSymbol("trigger");
+	int aT = core->LoadSymbol("action");
+	int oT = core->LoadSymbol("object");
+	int gaT = core->LoadSymbol("gemact");
+	int gtT = core->LoadSymbol("gemtrig");
 	AutoTable objNameTable = gamedata->LoadTable("script");
 	if (tT < 0 || aT < 0 || oT < 0 || !objNameTable) {
 		error("GameScript", "A critical scripting file is missing!");
 	}
-	triggersTable = core->GetSymbol( tT );
-	actionsTable = core->GetSymbol( aT );
-	objectsTable = core->GetSymbol( oT );
-	overrideActionsTable = core->GetSymbol( gaT );
-	overrideTriggersTable = core->GetSymbol( gtT );
+	triggersTable = core->GetSymbol(tT);
+	actionsTable = core->GetSymbol(aT);
+	objectsTable = core->GetSymbol(oT);
+	overrideActionsTable = core->GetSymbol(gaT);
+	overrideTriggersTable = core->GetSymbol(gtT);
 	if (!triggersTable || !actionsTable || !objectsTable || !objNameTable) {
 		error("GameScript", "A critical scripting file is damaged!");
 	}
@@ -1536,25 +1816,23 @@ void InitializeIEScript()
 	/* Loading Script Configuration Parameters */
 
 	ObjectIDSCount = objNameTable->QueryFieldSigned<int>(0, 0);
-	if (ObjectIDSCount<0 || ObjectIDSCount>MAX_OBJECT_FIELDS) {
+	if (ObjectIDSCount < 0 || ObjectIDSCount > MAX_OBJECT_FIELDS) {
 		error("GameScript", "The IDS Count shouldn't be more than 10!");
 	}
 
 	ObjectIDSTableNames.resize(ObjectIDSCount);
 	for (int i = 0; i < ObjectIDSCount; i++) {
-		const char *idsname;
-		idsname=objNameTable->QueryField( 0, i + 1 ).c_str();
-		const IDSLink *poi=FindIdentifier( idsname );
-		if (poi==NULL) {
-			idtargets[i]=NULL;
+		const std::string& idsName = objNameTable->QueryField(0, i + 1);
+		const IDSLink* poi = FindIdentifier(idsName.c_str());
+		if (poi == nullptr) {
+			idtargets[i] = nullptr;
+		} else {
+			idtargets[i] = poi->Function;
 		}
-		else {
-			idtargets[i]=poi->Function;
-		}
-		ObjectIDSTableNames[i] = ResRef(idsname);
+		ObjectIDSTableNames[i] = ResRef(idsName);
 	}
 	MaxObjectNesting = objNameTable->QueryFieldSigned<int>(1, 0);
-	if (MaxObjectNesting<0 || MaxObjectNesting>MAX_NESTING) {
+	if (MaxObjectNesting < 0 || MaxObjectNesting > MAX_NESTING) {
 		error("GameScript", "The Object Nesting Count shouldn't be more than 5!");
 	}
 	HasAdditionalRect = objNameTable->QueryFieldSigned<int>(2, 0) != 0;
@@ -1563,266 +1841,26 @@ void InitializeIEScript()
 	ObjectFieldsCount = ObjectIDSCount - ExtraParametersCount;
 
 	/* Initializing the Script Engine */
-
-	memset( triggers, 0, sizeof( triggers ) );
-	memset( triggerflags, 0, sizeof( triggerflags ) );
-	memset( actions, 0, sizeof( actions ) );
-	memset( actionflags, 0, sizeof( actionflags ) );
-	memset( objects, 0, sizeof( objects ) );
-
-	size_t max = triggersTable->GetSize();
-	for (size_t j = 0; j < max; j++) {
-		int i = triggersTable->GetValueIndex(j);
-		const TriggerLink* poi = FindTrigger(triggersTable->GetStringIndex( j ));
-
-		bool was_condition = (i & 0x4000);
-		i &= 0x3fff;
-		if (i >= MAX_TRIGGERS) {
-			Log(ERROR, "GameScript", "Trigger {} ({}) is too high, ignoring", i, triggersTable->GetStringIndex(j));
-			continue;
-		}
-
-		if (triggers[i]) {
-			if (poi && triggers[i]!=poi->Function) {
-				std::string buffer = fmt::format("{} is in collision with ", triggersTable->GetStringIndex(j));
-				printFunction(buffer, triggersTable, triggersTable->FindValue(triggersTable->GetValueIndex(j)));
-				Log(WARNING, "GameScript", "{}", buffer);
-			} else {
-				if (InDebugMode(DebugMode::TRIGGERS)) {
-					std::string buffer = fmt::format("{} is a synonym of ", triggersTable->GetStringIndex(j));
-					printFunction(buffer, triggersTable, triggersTable->FindValue(triggersTable->GetValueIndex(j)));
-					Log(DEBUG, "GameScript", "{}", buffer);
-				}
-			}
-			continue; //we already found an alternative
-		}
-
-		if (poi == NULL) {
-			// missing trigger which might be resolved later
-			triggers[i] = NULL;
-			triggerflags[i] = 0;
-			missing_triggers.push_back(static_cast<int>(j));
-			continue;
-		}
-		triggers[i] = poi->Function;
-		triggerflags[i] = poi->Flags;
-		if (was_condition)
-			triggerflags[i] |= TF_CONDITION;
-	}
-
-	for (l = missing_triggers.begin(); l != missing_triggers.end(); ++l) {
-		int j = *l;
-		// found later as a different name
-		int ii = triggersTable->GetValueIndex( j ) & 0x3fff;
-		if (ii >= MAX_TRIGGERS) {
-			continue;
-		}
-		
-		TriggerFunction f = triggers[ii];
-		if (f) {
-			for (int i = 0; triggernames[i].Name; i++) {
-				if (f == triggernames[i].Function) {
-					ScriptDebugLog(DebugMode::TRIGGERS, "{} is a synonym of {}", triggersTable->GetStringIndex(j), triggernames[i].Name);
-					break;
-				}
-			}
-			continue;
-		}
-
-		std::string buffer("Couldn't assign function to trigger: ");
-		printFunction(buffer, triggersTable, j);
-		Log(WARNING, "GameScript", "{}", buffer);
-	}
-
-	max = actionsTable->GetSize();
-	for (size_t j = 0; j < max; j++) {
-		int i = actionsTable->GetValueIndex(j);
-		if (i >= MAX_ACTIONS) {
-			Log(ERROR, "GameScript", "action {} ({}) is too high, ignoring",
-				i, actionsTable->GetStringIndex( j ) );
-			continue;
-		}
-		const ActionLink* poi = FindAction( actionsTable->GetStringIndex( j ));
-		if (actions[i]) {
-			if (poi && actions[i]!=poi->Function) {
-				std::string buffer = fmt::format("{} is in collision with ",
-					actionsTable->GetStringIndex( j ) );
-				printFunction(buffer, actionsTable, actionsTable->FindValue(actionsTable->GetValueIndex(j)));
-				Log(WARNING, "GameScript", "{}", buffer);
-			} else {
-				if (InDebugMode(DebugMode::ACTIONS)) {
-					std::string buffer = fmt::format("{} is a synonym of ",
-						actionsTable->GetStringIndex( j ) );
-					printFunction(buffer, actionsTable, actionsTable->FindValue(actionsTable->GetValueIndex(j)));
-					Log(DEBUG, "GameScript", "{}", buffer);
-				}
-			}
-			continue; //we already found an alternative
-		}
-		if (poi == NULL) {
-			actions[i] = NULL;
-			actionflags[i] = 0;
-			missing_actions.push_back(static_cast<int>(j));
-			continue;
-		}
-		actions[i] = poi->Function;
-		actionflags[i] = poi->Flags;
-	}
+	SetupTriggers();
+	SetupActions();
 
 	if (overrideActionsTable) {
 		/*
 		 * we add/replace some actions from gemact.ids
 		 * right now you can't print or generate these actions!
 		 */
-		max = overrideActionsTable->GetSize();
-		for (size_t j = 0; j < max; j++) {
-			int i = overrideActionsTable->GetValueIndex(j);
-			if (i >= MAX_ACTIONS) {
-				Log(ERROR, "GameScript", "action {} ({}) is too high, ignoring",
-					i, overrideActionsTable->GetStringIndex( j ) );
-				continue;
-			}
-			const ActionLink *poi = FindAction( overrideActionsTable->GetStringIndex( j ));
-			if (!poi) {
-				std::string buffer("Couldn't assign function to override action: ");
-				printFunction(buffer, overrideActionsTable, static_cast<int>(j));
-				continue;
-			}
-			if (actions[i] && (actions[i]!=poi->Function || actionflags[i]!=poi->Flags) ) {
-				std::string buffer = fmt::format("{} overrides existing action ",
-					overrideActionsTable->GetStringIndex( j ) );
-				int x = actionsTable->FindValue(i);
-				if (x>=0) {
-					printFunction(buffer, actionsTable, actionsTable->FindValue(i));
-				} else {
-					printFunction(buffer, overrideActionsTable, overrideActionsTable->FindValue(overrideActionsTable->GetValueIndex(j)));
-				}
-				Log(MESSAGE, "GameScript", "{}", buffer);
-			}
-			actions[i] = poi->Function;
-			actionflags[i] = poi->Flags;
-		}
+		SetupOverrideActions();
 	}
 
 	if (overrideTriggersTable) {
 		/*
-		 * we add/replace some actions from gemtrig.ids
+		 * we add/replace some triggers from gemtrig.ids
 		 * right now you can't print or generate these actions!
 		 */
-		max = overrideTriggersTable->GetSize();
-		for (size_t j = 0; j < max; j++) {
-			int i = overrideTriggersTable->GetValueIndex( j );
-			bool was_condition = (i & 0x4000);
-			i &= 0x3fff;
-			const auto& trName = overrideTriggersTable->GetStringIndex(j);
-			if (i >= MAX_TRIGGERS) {
-				Log(ERROR, "GameScript", "Trigger {} ({}) is too high, ignoring", i, trName);
-				continue;
-			}
-			if (!NextTriggerObjectID && !stricmp(trName.c_str(), "NextTriggerObject(O:Object*)")) {
-				NextTriggerObjectID = i;
-			}
-			const TriggerLink *poi = FindTrigger(trName);
-			if (!poi) {
-				std::string buffer("Couldn't assign function to override trigger: ");
-				printFunction(buffer, overrideTriggersTable, static_cast<int>(j));
-				continue;
-			}
-			short tf = poi->Flags | (was_condition ? TF_CONDITION : 0);
-			if (triggers[i] && (triggers[i] != poi->Function || triggerflags[i] != tf)) {
-				std::string buffer = fmt::format("{} overrides existing trigger ", trName);
-				int x = triggersTable->FindValue(i);
-				if (x<0) x = triggersTable->FindValue(i|0x4000);
-				if (x>=0) {
-					printFunction(buffer, triggersTable, x);
-				} else {
-					x = overrideTriggersTable->FindValue(i);
-					if (x < 0 || size_t(x) >= j) x = overrideTriggersTable->FindValue(i|0x4000);
-					printFunction(buffer, overrideTriggersTable, x);
-				}
-				Log(MESSAGE, "GameScript", "{}", buffer);
-			}
-			triggers[i] = poi->Function;
-			triggerflags[i] = tf;
-		}
+		SetupOverrideTriggers();
 	}
 
-	for (l = missing_actions.begin(); l != missing_actions.end(); ++l) {
-		int j = *l;
-		// found later as a different name
-		int ii = actionsTable->GetValueIndex( j );
-		if (ii>=MAX_ACTIONS) {
-			continue;
-		}
-
-		ActionFunction f = actions[ii];
-		if (f) {
-			for (int i = 0; actionnames[i].Name; i++) {
-				if (f == actionnames[i].Function) {
-					ScriptDebugLog(DebugMode::ACTIONS, "{} is a synonym of {}", actionsTable->GetStringIndex(j), actionnames[i].Name);
-					break;
-				}
-			}
-			continue;
-		}
-		std::string buffer("Couldn't assign function to action: ");
-		printFunction(buffer, actionsTable, j);
-		Log(WARNING, "GameScript", "{}", buffer);
-	}
-
-	size_t j = objectsTable->GetSize();
-	while (j--) {
-		int i = objectsTable->GetValueIndex(j);
-		if (i >= MAX_OBJECTS) {
-			Log(ERROR, "GameScript", "object {} ({}) is too high, ignoring", i, objectsTable->GetStringIndex(j));
-			continue;
-		}
-		const ObjectLink* poi = FindObject( objectsTable->GetStringIndex( j ));
-		if (objects[i]) {
-			if (poi && objects[i]!=poi->Function) {
-				std::string buffer = fmt::format("{} is in collision with ",
-					objectsTable->GetStringIndex( j ) );
-				printFunction(buffer, objectsTable, objectsTable->FindValue(objectsTable->GetValueIndex(j)));
-				Log(WARNING, "GameScript", "{}", buffer);
-			} else {
-				std::string buffer = fmt::format("{} is a synonym of ",
-					objectsTable->GetStringIndex( j ) );
-				printFunction(buffer, objectsTable, objectsTable->FindValue(objectsTable->GetValueIndex(j)));
-				Log(DEBUG, "GameScript", "{}", buffer);
-			}
-			continue;
-		}
-		if (poi == NULL) {
-			objects[i] = NULL;
-			missing_objects.push_back(static_cast<int>(j));
-		} else {
-			objects[i] = poi->Function;
-		}
-	}
-
-	for (l = missing_objects.begin(); l != missing_objects.end(); ++l) {
-		j = *l;
-		// found later as a different name
-		int ii = objectsTable->GetValueIndex( j );
-		if (ii>=MAX_OBJECTS) {
-			continue;
-		}
-
-		ObjectFunction f = objects[ii];
-		if (f) {
-			for (int i = 0; objectnames[i].Name; i++) {
-				if (f == objectnames[i].Function) {
-					Log(MESSAGE, "GameScript", "{} is a synonym of {}",
-						objectsTable->GetStringIndex( j ), objectnames[i].Name );
-					break;
-				}
-			}
-			continue;
-		}
-		std::string buffer("Couldn't assign function to object: ");
-		printFunction(buffer, objectsTable, static_cast<int>(j));
-		Log(WARNING, "GameScript", "{}", buffer);
-	}
+	SetupObjects();
 
 	if (gamedata->Exists("dlginst", IE_IDS_CLASS_ID, true)) {
 		LoadActionFlags("dlginst", AF_DLG_INSTANT, true);
@@ -1833,32 +1871,7 @@ void InitializeIEScript()
 	LoadActionFlags("actsleep", AF_SLEEP, false);
 	LoadActionFlags("chase", AF_CHASE, false);
 
-	int savedTriggersIndex = core->LoadSymbol("svtriobj");
-	if (savedTriggersIndex < 0) {
-		// leaving this as not strictly necessary, for now
-		Log(WARNING, "GameScript", "Couldn't find saved trigger symbols!");
-	} else {
-		auto savedTriggersTable = core->GetSymbol(savedTriggersIndex);
-		if (!savedTriggersTable) {
-			error("GameScript", "Couldn't load saved trigger symbols!");
-		}
-		j = savedTriggersTable->GetSize();
-		while (j--) {
-			int i = savedTriggersTable->GetValueIndex(j);
-			i &= 0x3fff;
-			if (i >= MAX_TRIGGERS) {
-				Log(ERROR, "GameScript", "saved trigger {} ({}) is too high, ignoring",
-					i, savedTriggersTable->GetStringIndex( j ) );
-				continue;
-			}
-			if (!triggers[i]) {
-				Log(WARNING, "GameScript", "saved trigger {} ({}) doesn't exist, ignoring",
-					i, savedTriggersTable->GetStringIndex( j ) );
-				continue;
-			}
-			triggerflags[i] |= TF_SAVED;
-		}
-	}
+	SetupSavedTriggers();
 }
 
 /********************** GameScript *******************************/
@@ -2176,24 +2189,31 @@ void GameScript::EvaluateAllBlocks(bool testConditions)
 		const ResponseSet *rS = rB->responseSet;
 		if (rS->responses.empty()) continue;
 
-		const Response *response = rS->responses[0];
+		Response* response = rS->responses[0];
 		if (response->actions.empty()) continue;
 
 		const Action *action = response->actions[0];
 		Scriptable* target = GetScriptableFromObject(MySelf, action->objects[1]);
-		if (target) {
-			// save the target in case it selfdestructs and we need to manually exit the cutscene
-			core->SetCutSceneRunner(target);
-			// TODO: sometimes SetInterrupt(false) and SetInterrupt(true) are added before/after? (is this true elsewhere than in dialog?)
-			rS->responses[0]->Execute(target);
-			// NOTE: this will break blocking instants, if there are any
-			target->ReleaseCurrentAction();
-		} else {
+		if (!target) {
 			Log(ERROR, "GameScript", "Failed to find CutSceneID target!");
 			if (InDebugMode(DebugMode::CUTSCENE) && action->objects[1]) {
 				action->objects[1]->dump();
 			}
+			continue;
 		}
+
+		// save the target in case it selfdestructs and we need to manually exit the cutscene
+		core->SetCutSceneRunner(target);
+
+		// the original first queued them all similarly to DialogHandler::DialogChoose
+		if (target->Type != ST_ACTOR) {
+			response->actions.insert(response->actions.begin(), GenerateAction("SetInterrupt(FALSE)"));
+			response->actions.push_back(GenerateAction("SetInterrupt(TRUE)"));
+		}
+		rS->responses[0]->Execute(target);
+
+		// NOTE: this will break blocking instants, if there are any
+		target->ReleaseCurrentAction();
 	}
 }
 
@@ -2469,7 +2489,7 @@ static void HandleActionOverride(Scriptable* target, const Action* aC)
 		target->ClearActions(1);
 	} else if (core->HasFeature(GFFlags::RULES_3ED)) { // iwd2
 		// it was more complicated, always releasing if the game was paused — not something to replicate
-		if (target->CurrentActionInterruptable) {
+		if (target->CurrentActionInterruptible) {
 			target->ReleaseCurrentAction();
 		}
 	} else { // for all the games we don't understand fully yet
@@ -2481,7 +2501,7 @@ static void HandleActionOverride(Scriptable* target, const Action* aC)
 		assert(target->GetNextAction());
 		// there are plenty of places where it's vital that ActionOverride is not interrupted,
 		// so make double sure it doesn't happen
-		target->CurrentActionInterruptable = false;
+		target->CurrentActionInterruptible = false;
 	}
 }
 
@@ -2520,7 +2540,7 @@ void GameScript::ExecuteAction(Scriptable* Sender, Action* aC)
 	}
 
 	// check for ActionOverride
-	// actions use the second and third object, so this is only set when overriden (see GenerateActionCore)
+	// actions use the second and third object, so this is only set when overridden (see GenerateActionCore)
 	if (aC->objects[0]) {
 		Scriptable* scr = GetScriptableFromObject(Sender, aC->objects[0]);
 		if (CheckDeadException(scr, actionID)) {
@@ -2557,8 +2577,8 @@ void GameScript::ExecuteAction(Scriptable* Sender, Action* aC)
 	}
 	ActionFunction func = actions[actionID];
 	if (func) {
-		//turning off interruptable flag
-		//uninterruptable actions will set it back
+		// turning off interruptible flag
+		// uninterruptible actions will set it back
 		if (Sender->Type==ST_ACTOR) {
 			Sender->Activate();
 			if (actionflags[actionID] & AF_ALIVE && Sender->GetInternalFlag() & IF_STOPATTACK) {
