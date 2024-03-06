@@ -53,7 +53,6 @@ def SinglePlayerPress():
 	
 	SinglePlayerButton.SetText(13728)
 	MultiPlayerButton.SetText(13729)
-	MoviesButton.SetText(24110)
 	ExitButton.SetText(15416)
 	MultiPlayerButton.OnPress (LoadSingle)
 	SinglePlayerButton.OnPress (NewSingle)
@@ -61,8 +60,9 @@ def SinglePlayerPress():
 	ExitButton.MakeEscape()
 	if HasTOTSC():
 		MoviesButton.OnPress (MissionPack)
+		MoviesButton.SetText(24110)
 	else:
-		MoviesButton.SetFlags(IE_GUI_BUTTON_NO_IMAGE, OP_OR)
+		MoviesButton.SetFlags(IE_GUI_BUTTON_NO_IMAGE | IE_GUI_BUTTON_NO_TEXT, OP_SET)
 		MoviesButton.SetStatus(IE_GUI_BUTTON_DISABLED)
 
 	return
@@ -72,14 +72,13 @@ def MultiPlayerPress():
 	SinglePlayerButton.SetText(11825)
 	MultiPlayerButton.SetText(20642)
 	MoviesButton.SetText(15416)
-	ExitButton.SetText("")
 	SinglePlayerButton.OnPress (PregenPress)
 	MultiPlayerButton.OnPress (ConnectPress)
 	MoviesButton.OnPress (BackToMain)
 	MoviesButton.MakeEscape()
 	ExitButton.OnPress (None)
 	ExitButton.SetStatus(IE_GUI_BUTTON_DISABLED)
-	ExitButton.SetFlags(IE_GUI_BUTTON_NO_IMAGE, OP_SET)
+	ExitButton.SetFlags(IE_GUI_BUTTON_NO_IMAGE | IE_GUI_BUTTON_NO_TEXT, OP_SET)
 	return
 
 def ConnectPress():
@@ -153,8 +152,8 @@ def BackToMain():
 	MultiPlayerButton.OnPress (MultiPlayerPress)
 	MoviesButton.OnPress (MoviesPress)
 	ExitButton.OnPress (ExitPress)
-	MoviesButton.SetFlags(IE_GUI_BUTTON_NO_IMAGE, OP_NAND)
-	ExitButton.SetFlags(IE_GUI_BUTTON_NO_IMAGE, OP_NAND)
+	MoviesButton.SetFlags(IE_GUI_BUTTON_NORMAL, OP_SET)
+	ExitButton.SetFlags(IE_GUI_BUTTON_NORMAL, OP_SET)
 	ExitButton.MakeEscape()
 
 	return
