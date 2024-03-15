@@ -195,8 +195,8 @@ static void InitActorTables();
 #define DAMAGE_LEVELS 19
 
 // ANIMATION1 in dmgtypes.2da, except it only has fire, electricity, cold AND no levels
-// we have both maps in damage.2da, plus the gradient info in d_gradient
-static ResRef d_main[DAMAGE_LEVELS] = {
+// we have both maps in damage.2da, plus the gradient info in damageGradients
+static ResRef damageMainResources[DAMAGE_LEVELS] = {
 	//slot 0 is not used in the original engine
 	"BLOODCR","BLOODS","BLOODM","BLOODL", //blood
 	"SPFIRIMP","SPFIRIMP","SPFIRIMP",     //fire
@@ -206,7 +206,7 @@ static ResRef d_main[DAMAGE_LEVELS] = {
 	"SPDUSTY2","SPDUSTY2","SPDUSTY2"      //disintegrate
 };
 // ANIMATION2 in dmgtypes.2da with the same limitations
-static ResRef d_splash[DAMAGE_LEVELS] = {
+static ResRef damageSparks[DAMAGE_LEVELS] = {
 	"","","","",
 	"SPBURN","SPBURN","SPBURN", //flames
 	"SPSPARKS","SPSPARKS","SPSPARKS", //sparks
@@ -215,12 +215,14 @@ static ResRef d_splash[DAMAGE_LEVELS] = {
 	"","",""
 };
 
+static bool damageBlendFlags[DAMAGE_LEVELS] = {0};
+
 #define BLOOD_GRADIENT 19
 #define FIRE_GRADIENT 19
 #define ICE_GRADIENT 71
 #define STONE_GRADIENT 93
 
-static int d_gradient[DAMAGE_LEVELS] = {
+static int damageGradients[DAMAGE_LEVELS] = {
 	BLOOD_GRADIENT,BLOOD_GRADIENT,BLOOD_GRADIENT,BLOOD_GRADIENT,
 	FIRE_GRADIENT,FIRE_GRADIENT,FIRE_GRADIENT,
 	-1,-1,-1,
@@ -660,6 +662,33 @@ static void ApplyClab_internal(Actor* actor, const ResRef& clab, int level, bool
 #define KIT_SWASHBUCKLER KIT_BASECLASS+12
 #define KIT_WILDMAGE KIT_BASECLASS+30
 #define KIT_BARBARIAN KIT_BASECLASS+31
+
+static ieDword GetKitUsability(ieDword baseClass, ieDword kit)
+{
+	ieDword usability = 0;
+	int idx = 0;
+	for (const auto& aKit : class2kits[baseClass].indices) {
+		if (kit == aKit) return class2kits[baseClass].ids[idx];
+		idx++;
+	}
+
+	return usability;
+}
+
+int Actor::GetSpecialistSaveBonus(ieDword school) const
+{
+	int bonus = 0;
+	ieDword specialist = Modified[IE_KIT];
+	if (GetMageLevel() && specialist != KIT_BASECLASS) {
+		if (specialist > KIT_BASECLASS) {
+			specialist = GetKitUsability(1, specialist - KIT_BASECLASS); // send the kit index for pcs
+		}
+		if (specialist & (1 << (school + 5))) {
+			bonus = 2;
+		}
+	}
+	return bonus;
+}
 
 // iwd2 supports multiple kits per actor, but sanely only one kit per class
 static TableMgr::index_t GetIWD2KitIndex (ieDword kit, ieDword baseclass=0, bool strict=false)
@@ -1490,6 +1519,7 @@ static const PostChangeFunctionType post_change_functions[MAX_STATS] = {
 #define COL_MAIN       0
 #define COL_SPARKS     1
 #define COL_GRADIENT   2
+#define COL_BLEND      3
 
 /* returns the ISCLASS for the class based on name */
 static int IsClassFromName (const std::string& name)
@@ -1720,16 +1750,19 @@ static void InitActorTables()
 	if (tm) {
 		for (int i = 0; i < DAMAGE_LEVELS; i++) {
 			ResRef tmp = tm->QueryField( i, COL_MAIN );
-			d_main[i] = tmp;
-			if (IsStar(d_main[i])) {
-				d_main[i].Reset();
+			damageMainResources[i] = tmp;
+			if (IsStar(damageMainResources[i])) {
+				damageMainResources[i].Reset();
 			}
 			tmp = tm->QueryField(i, COL_SPARKS);
-			d_splash[i] = tmp;
-			if (IsStar(d_splash[i])) {
-				d_splash[i].Reset();
+			damageSparks[i] = tmp;
+			if (IsStar(damageSparks[i])) {
+				damageSparks[i].Reset();
 			}
-			d_gradient[i] = tm->QueryFieldSigned<int>(i, COL_GRADIENT);
+			damageGradients[i] = tm->QueryFieldSigned<int>(i, COL_GRADIENT);
+
+			uint8_t value = tm->QueryFieldUnsigned<uint8_t>(i, COL_BLEND);
+			damageBlendFlags[i] = value > 0;
 		}
 	}
 
@@ -2351,8 +2384,11 @@ void Actor::PlayDamageAnimation(int type, bool hit)
 	int flags = AA_PLAYONCE;
 	int height = 22;
 	if (pstflags) {
-		flags |= AA_BLEND;
 		height = 45; // empirical like in fx_visual_spell_hit
+	}
+
+	if (damageBlendFlags[type]) {
+		flags |= AA_BLEND;
 	}
 
 	Log(COMBAT, "Actor", "Damage animation type: {}", type);
@@ -2367,44 +2403,52 @@ void Actor::PlayDamageAnimation(int type, bool hit)
 			//fall through
 		case 1: case 2: case 3: //blood
 			i = anims->GetBloodColor();
-			if (!i) i = d_gradient[type];
+			if (!i) i = damageGradients[type];
 			fx = fxqueue.HasEffectWithParam(fx_animation_override_data_ref, 2);
 			if (fx) {
 				i = fx->Parameter1;
 			}
 			if (hit) {
-				AddAnimation(d_main[type], i, height, flags);
+				AddAnimation(damageMainResources[type], i, height, flags);
 			}
 			break;
 		case 4: case 5: case 6: //fire
 			if(hit) {
-				AddAnimation(d_main[type], d_gradient[type], height, flags);
+				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
 			}
 			for(i=DL_FIRE;i<=type;i++) {
-				AddAnimation(d_splash[i], d_gradient[i], height, flags);
+				AddAnimation(damageSparks[i], damageGradients[i], height, flags);
 			}
 			break;
 		case 7: case 8: case 9: //electricity
 			if (hit) {
-				AddAnimation(d_main[type], d_gradient[type], height, flags);
+				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
 			}
 			for(i=DL_ELECTRICITY;i<=type;i++) {
-				AddAnimation(d_splash[i], d_gradient[i], height, flags);
+				AddAnimation(damageSparks[i], damageGradients[i], height, flags);
 			}
 			break;
 		case 10: case 11: case 12://cold
 			if (hit) {
-				AddAnimation(d_main[type], d_gradient[type], height, flags);
+				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
+			}
+
+			for (i = DL_COLD; i <= type; i++) {
+				AddAnimation(damageSparks[i], damageGradients[i], height, flags);
 			}
 			break;
 		case 13: case 14: case 15://acid
 			if (hit) {
-				AddAnimation(d_main[type], d_gradient[type], height, flags);
+				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
+			}
+
+			for (i = DL_ACID; i <= type; i++) {
+				AddAnimation(damageSparks[i], damageGradients[i], height, flags);
 			}
 			break;
 		case 16: case 17: case 18://disintegrate
 			if (hit) {
-				AddAnimation(d_main[type], d_gradient[type], height, flags);
+				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
 			}
 			break;
 	}
@@ -2905,6 +2949,23 @@ void Actor::RefreshHP() {
 	lastConBonus = bonus;
 }
 
+int Actor::GetStyleExtraAPR(ieDword& warriorLevel) const
+{
+	if (third) return 0;
+
+	ieDword stars = GetProficiency(weaponInfo[0].prof) & PROFS_MASK;
+	// tenser's transformation ensures the actor is at least proficient with any weapon
+	if (!stars && HasSpellState(SS_TENSER)) stars = 1;
+	if (!stars) return 0;
+
+	warriorLevel = GetWarriorLevel();
+	if (warriorLevel) {
+		return gamedata->GetWeaponStyleAPRBonus(stars, warriorLevel - 1);
+	} else {
+		return gamedata->GetWeaponStyleAPRBonus(stars, 0);
+	}
+}
+
 // refresh stats on creatures (PC or NPC) with a valid class (not animals etc)
 // internal use only, and this is maybe a stupid name :)
 void Actor::RefreshPCStats() {
@@ -2935,17 +2996,13 @@ void Actor::RefreshPCStats() {
 
 	//get the wspattack bonuses for proficiencies
 	const ITMExtHeader* header = GetWeapon(false);
-	ieDword stars;
-	int dualwielding = IsDualWielding();
-	stars = GetProficiency(weaponInfo[0].prof) & PROFS_MASK;
-
-	// tenser's transformation ensures the actor is at least proficient with any weapon
-	if (!stars && HasSpellState(SS_TENSER)) stars = 1;
 
 	if (header) {
-		//wspattack appears to only effect warriors
-		int defaultattacks = 2 + 2*dualwielding;
-		if (stars) {
+		// haste and monk bonuses are added on top, later
+		int defaultattacks = 2 + 2 * IsDualWielding();
+		ieDword warriorLevel = 0;
+		int bonus = GetStyleExtraAPR(warriorLevel);
+		if (bonus) {
 			// In bg2 the proficiency and warrior level bonus is added after effects, so also ranged weapons are affected,
 			// since their rate of fire (apr) is set using an effect with a flat modifier.
 			// SetBase will compensate only for the difference between the current two stats, not considering the default
@@ -2953,18 +3010,17 @@ void Actor::RefreshPCStats() {
 			// the adjustment results in a base of 2-5 (2+[0-3]) and the modified stat degrades to 4+(4-[2-5]) = 8-[2-5] = 3-6
 			// instead of 4+[0-3] = 4-7
 			// For a master ranger at level 14, the difference ends up as 2 (1 apr).
-			ieDword warriorLevel = GetWarriorLevel();
+			defaultattacks += bonus;
 			if (warriorLevel) {
 				int mod = Modified[IE_NUMBEROFATTACKS] - BaseStats[IE_NUMBEROFATTACKS];
-				int bonus = gamedata->GetWeaponStyleAPRBonus(stars, warriorLevel - 1);
-				BaseStats[IE_NUMBEROFATTACKS] = defaultattacks + bonus;
+				BaseStats[IE_NUMBEROFATTACKS] = defaultattacks;
 				if (fxqueue.HasEffectWithParam(fx_attacks_per_round_modifier_ref, 1)) { // launcher sets base APR
 					Modified[IE_NUMBEROFATTACKS] += bonus; // no default
 				} else {
 					Modified[IE_NUMBEROFATTACKS] = BaseStats[IE_NUMBEROFATTACKS] + mod;
 				}
 			} else {
-				SetBase(IE_NUMBEROFATTACKS, defaultattacks + gamedata->GetWeaponStyleAPRBonus(stars, 0));
+				SetBase(IE_NUMBEROFATTACKS, defaultattacks);
 			}
 		} else {
 			// unproficient user - force defaultattacks
@@ -9443,10 +9499,7 @@ void Actor::SetFeatValue(unsigned int feat, int value, bool init)
 		return;
 	}
 
-	//handle maximum and minimum values
-	if (value<0) value = 0;
-	else if (value>featmax[feat]) value = featmax[feat];
-
+	value = Clamp<int>(value, 0, featmax[feat]);
 	if (value) {
 		SetFeat(feat, BitOp::OR);
 		if (featstats[feat]) SetBase(featstats[feat], value);
@@ -10183,20 +10236,14 @@ bool Actor::IsDualSwap() const
 
 ieDword Actor::GetWarriorLevel() const
 {
-	ieDword warriorlevels[4] = {
+	std::array<ieDword, 4> warriorlevels = {
 		GetBarbarianLevel(),
 		GetFighterLevel(),
 		GetPaladinLevel(),
 		GetRangerLevel()
 	};
 
-	ieDword highest = 0;
-	for (unsigned int warriorLevel : warriorlevels) {
-		if (warriorLevel > highest) {
-			highest = warriorLevel;
-		}
-	}
-
+	ieDword highest = *std::max_element(warriorlevels.begin(), warriorlevels.end());
 	return highest;
 }
 

@@ -6145,6 +6145,26 @@ void GameScript::SaveGame(Scriptable* /*Sender*/, Action* parameters)
 	}
 }
 
+static bool FindEscapePosition(Point& pos, const Scriptable* escapee)
+{
+	const Map* map = escapee->GetCurrentArea();
+	if (!map) {
+		return false;
+	}
+
+	const auto found = map->TMap->AdjustNearestTravel(pos);
+	Region vp = core->GetGameControl()->Viewport();
+	if (!found && vp.PointInside(pos)) {
+		// no travel region found, so look for alternative
+		// we don't need to bother if the actor isn't visible — immediate selfdestruction is fine
+		// the obvious direction would be to the closest map's edge, but that's not what the originals did
+		// it's on a timer, so we can simplify and direct to viewport edge (or only if it's closer)
+		// ... but even this simpler approach works good enough
+		pos = vp.Intercept(pos);
+	}
+	return true;
+}
+
 /*EscapeAreaMove(S:Area*,I:X*,I:Y*,I:Face*)*/
 void GameScript::EscapeArea(Scriptable* Sender, Action* parameters)
 {
@@ -6154,14 +6174,12 @@ void GameScript::EscapeArea(Scriptable* Sender, Action* parameters)
 		Sender->ReleaseCurrentAction();
 		return;
 	}
-	Map *map = Sender->GetCurrentArea();
-	if (!map) {
+
+	Point p = Sender->Pos;
+	if (!FindEscapePosition(p, Sender)) {
 		Sender->ReleaseCurrentAction();
 		return;
 	}
-
-	Point p = Sender->Pos;
-	map->TMap->AdjustNearestTravel(p);
 
 	if (!parameters->resref0Parameter.IsEmpty()) {
 		Point q(parameters->int0Parameter, parameters->int1Parameter);
@@ -6181,14 +6199,12 @@ void GameScript::EscapeAreaNoSee(Scriptable* Sender, Action* parameters)
 		Sender->ReleaseCurrentAction();
 		return;
 	}
-	Map *map = Sender->GetCurrentArea();
-	if (!map) {
+
+	Point p = Sender->Pos;
+	if (!FindEscapePosition(p, Sender)) {
 		Sender->ReleaseCurrentAction();
 		return;
 	}
-
-	Point p = Sender->Pos;
-	map->TMap->AdjustNearestTravel(p);
 
 	if (!parameters->resref0Parameter.IsEmpty()) {
 		Point q(parameters->int0Parameter, parameters->int1Parameter);
@@ -6197,7 +6213,6 @@ void GameScript::EscapeAreaNoSee(Scriptable* Sender, Action* parameters)
 		EscapeAreaCore(Sender, p, parameters->resref0Parameter, p, EscapeArea::DestroyNoSee, parameters->int0Parameter);
 	}
 	//EscapeAreaCore will do its ReleaseCurrentAction
-	//Sender->ReleaseCurrentAction();
 }
 
 void GameScript::EscapeAreaDestroy(Scriptable* Sender, Action* parameters)
@@ -6206,15 +6221,13 @@ void GameScript::EscapeAreaDestroy(Scriptable* Sender, Action* parameters)
 		Sender->ReleaseCurrentAction();
 		return;
 	}
-	Map *map = Sender->GetCurrentArea();
-	if (!map) {
+
+	Point p = Sender->Pos;
+	if (!FindEscapePosition(p, Sender)) {
 		Sender->ReleaseCurrentAction();
 		return;
 	}
 
-	//find nearest exit
-	Point p = Sender->Pos;
-	map->TMap->AdjustNearestTravel(p);
 	//EscapeAreaCore will do its ReleaseCurrentAction
 	EscapeAreaCore(Sender, p, parameters->resref0Parameter, p, EscapeArea::Destroy, parameters->int0Parameter);
 }
@@ -6717,21 +6730,25 @@ void GameScript::SelectWeaponAbility(Scriptable* Sender, Action* parameters)
 	if (!scr) {
 		return;
 	}
+
+	// weapon
 	int slot = parameters->int0Parameter;
-	int wslot = Inventory::GetWeaponSlot();
-	//weapon
 	if (core->QuerySlotType(slot)&SLOT_WEAPON) {
-		slot-=wslot;
+		slot = Inventory::GetWeaponQuickSlot(slot);
 		if (slot<0 || slot>=MAX_QUICKWEAPONSLOT) {
 			return;
 		}
+		// nothing to do? Then don't disrupt by reequipping
+		if (slot == scr->inventory.GetEquipped() && parameters->int1Parameter == scr->inventory.GetEquippedHeader()) return;
+
 		scr->SetEquippedQuickSlot(slot, parameters->int1Parameter);
+		core->SetEventFlag(EF_ACTION);
 		return;
 	}
+
 	//quick item
-	wslot = Inventory::GetQuickSlot();
 	if (core->QuerySlotType(slot)&SLOT_ITEM) {
-		slot-=wslot;
+		slot -= Inventory::GetQuickSlot();
 		if (slot<0 || slot>=MAX_QUICKITEMSLOT) {
 			return;
 		}

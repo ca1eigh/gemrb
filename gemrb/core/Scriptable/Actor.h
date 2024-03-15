@@ -832,6 +832,7 @@ public:
 	int GetDefense(int DamageType, ieDword wflags, const Actor *attacker) const;
 	/* returns the number of allocated proficiency points (stars) */
 	int GetStars(stat_t proficiency) const;
+	int GetStyleExtraAPR(ieDword& warriorLevel) const;
 	static bool IsCriticalEffectEligible(const WeaponInfo& wi, const Effect* fx);
 	/* get the current hit bonus */
 	bool GetCombatDetails(int& tohit, bool leftorright, \
@@ -991,6 +992,7 @@ public:
 	static ieDword GetClassID(ieDword isClass);
 	const std::string& GetClassName(ieDword classID) const;
 	const std::string& GetKitName(ieDword kitID) const;
+	int GetSpecialistSaveBonus(ieDword school) const;
 	/* Returns the actor's level of the given class */
 	ieDword GetFighterLevel() const { return GetClassLevel(ISFIGHTER); }
 	ieDword GetMageLevel() const { return GetClassLevel(ISMAGE); }

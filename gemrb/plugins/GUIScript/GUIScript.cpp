@@ -13313,9 +13313,6 @@ GUIScript::~GUIScript(void)
 		}
 		Py_Finalize();
 	}
-	StoreSpells.clear();
-	SpecialItems.clear();
-	UsedItems.clear();
 
 	GUIAction[0]=UNINIT_IEDWORD;
 
