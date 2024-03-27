@@ -46,7 +46,7 @@ namespace GemRB {
 class AnimationFactory;
 
 // various special heights/Zs hardcoded in the originals
-enum ProHeights {
+enum class ProHeights {
 	None = 0, // pst casting glows
 	Flying = 50, // this is the height of the projectile when Spark Flag Fly = 1
 	Normal = 0x23,
@@ -288,8 +288,8 @@ private:
 	// using std::vector over std::array for better movability
 	// the array will always be MAX_ORIENT in size
 	using AnimArray = std::vector<Animation>;
-	AnimArray travel;
-	AnimArray shadow;
+	AnimArray travelAnim;
+	AnimArray shadowAnim;
 
 	Holder<Sprite2D> light = nullptr; // this is just a round/halftrans sprite, has no animation
 	EffectQueue effects;
@@ -353,6 +353,7 @@ public:
 
 	Point GetPos() const { return Pos; }
 	int GetZPos() const;
+	void SetupZPos();
 	inline Point GetDestination() const { return Destination; }
 	inline const ResRef& GetName() const { return projectileName; }
 	inline ieWord GetType() const { return type; }
@@ -377,7 +378,7 @@ public:
 		}
 		//if projectile is drawn behind target (not behind everyone)
 		if (ExtFlags&PEF_BACKGROUND) {
-			return Pos.y - ProHeights::Background;
+			return Pos.y - int(ProHeights::Background);
 		}
 
 		return Pos.y + ZPos;
@@ -392,10 +393,6 @@ public:
 
 	inline void SetEffects(EffectQueue&& fx) {
 		effects = std::move(fx);
-	}
-
-	inline unsigned char GetNextFace() const {
-		return GemRB::GetNextFace(Orientation, NewOrientation);
 	}
 
 	inline void SetOrientation(orient_t value, bool slow) {
@@ -457,8 +454,8 @@ private:
 	//calculate target and destination points for a firewall
 	void SetupWall();
 	void BendPosition(Point& pos) const;
-	void DrawPopping(unsigned int face, const Point& pos, BlitFlags flags, const Color& popTint);
-	void DrawLine(const Region &screen, int face, BlitFlags flag);
+	void DrawPopping(orient_t face, const Point& pos, BlitFlags flags, const Color& popTint);
+	void DrawLine(const Region& screen, orient_t face, BlitFlags flag);
 	void DrawTravel(const Region& screen, BlitFlags flags);
 	void DrawChildren(const Region& screen, BlitFlags flags);
 	void InitExplodingPhase1() const;
@@ -468,9 +465,9 @@ private:
 	void SpawnFragment(Point& pos) const;
 	void SpawnFragments(const Holder<ProjectileExtension>& extension) const;
 	void DrawExploded(const Region& screen, BlitFlags flags);
-	int GetTravelPos(int face) const;
-	int GetShadowPos(int face) const;
-	void SetFrames(int face, int frame1, int frame2);
+	int GetTravelPos(orient_t face) const;
+	int GetShadowPos(orient_t face) const;
+	void SetFrames(orient_t face, int frame1, int frame2);
 
 	//logic to resolve target when single projectile hit destination
 	int CalculateTargetFlag() const;

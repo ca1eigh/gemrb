@@ -4575,14 +4575,14 @@ int fx_casting_glow (Scriptable* Owner, Actor* target, Effect* fx)
 		}
 		// as per the original bg2 code, should we externalize?
 		// only dragons got a different x, y, z offset (x and y being handled in the projectile)
-		int heightmod = core->HasFeature(GFFlags::PST_STATE_FLAGS) ? ProHeights::None : ProHeights::Normal;
+		ProHeights heightmod = core->HasFeature(GFFlags::PST_STATE_FLAGS) ? ProHeights::None : ProHeights::Normal;
 		if (target->ValidTarget(GA_BIGBAD)) {
 			heightmod = ProHeights::Dragon;
 		}
 		Point offset = Projectile::GetStartOffset(target);
 		sca->XOffset += offset.x;
 		sca->YOffset += offset.y;
-		sca->ZOffset = heightmod;
+		sca->ZOffset = int(heightmod);
 		sca->SetBlend();
 		if (fx->Duration) {
 			sca->SetDefaultDuration(fx->Duration-core->GetGame()->GameTime);
@@ -6688,10 +6688,10 @@ int fx_wing_buffet (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	switch(fx->Parameter2) {
 		case 2: // away
 		default:
-			dir = GetOrient(target->Pos, fx->Source);
+			dir = GetOrient(fx->Source, target->Pos);
 			break;
 		case 4: // towards
-			dir = GetOrient(fx->Source, target->Pos);
+			dir = GetOrient(target->Pos, fx->Source);
 			break;
 		case 5: // fixed direction
 			dir = ClampToOrientation(fx->Parameter3);

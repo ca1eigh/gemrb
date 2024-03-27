@@ -215,7 +215,7 @@ static ResRef damageSparks[DAMAGE_LEVELS] = {
 	"","",""
 };
 
-static bool damageBlendFlags[DAMAGE_LEVELS] = {0};
+static bool damageBlendFlags[DAMAGE_LEVELS] = { false };
 
 #define BLOOD_GRADIENT 19
 #define FIRE_GRADIENT 19
@@ -545,7 +545,7 @@ void Actor::SetCircleSize()
 		return;
 
 	const GameControl *gc = core->GetGameControl();
-	float oscillationFactor = 1.0f;
+	float_t oscillationFactor = 1.0f;
 	Color color;
 	int normalIdx;
 	if (UnselectableTimer) {
@@ -563,7 +563,7 @@ void Actor::SetCircleSize()
 			 * Approximation: pulsating at about 2Hz over a notable radius growth.
 			 * Maybe check this relation for dragons and rats, too.
 			 */
-			oscillationFactor = 1.1F + float(std::sin(double(remainingTalkSoundTime) * (4 * M_PI) / 1000)) * 0.1F;
+			oscillationFactor = 1.1F + std::sin(double(remainingTalkSoundTime) * (4 * M_PI) / 1000) * 0.1F;
 		}
 	} else {
 		switch (Modified[IE_EA]) {
@@ -2380,7 +2380,7 @@ void Actor::PlayCritDamageAnimation(int type)
 void Actor::PlayDamageAnimation(int type, bool hit)
 {
 	if (!anims) return;
-	int i;
+
 	int flags = AA_PLAYONCE;
 	int height = 22;
 	if (pstflags) {
@@ -2393,6 +2393,8 @@ void Actor::PlayDamageAnimation(int type, bool hit)
 
 	Log(COMBAT, "Actor", "Damage animation type: {}", type);
 	const Effect* fx;
+	int sparkType = 0;
+	int gradientType = damageGradients[type];
 	switch(type&255) {
 		case 0:
 			//PST specific personal criticals
@@ -2402,55 +2404,36 @@ void Actor::PlayDamageAnimation(int type, bool hit)
 			}
 			//fall through
 		case 1: case 2: case 3: //blood
-			i = anims->GetBloodColor();
-			if (!i) i = damageGradients[type];
+			gradientType = anims->GetBloodColor();
+			if (!gradientType) gradientType = damageGradients[type];
 			fx = fxqueue.HasEffectWithParam(fx_animation_override_data_ref, 2);
 			if (fx) {
-				i = fx->Parameter1;
-			}
-			if (hit) {
-				AddAnimation(damageMainResources[type], i, height, flags);
+				gradientType = fx->Parameter1;
 			}
 			break;
 		case 4: case 5: case 6: //fire
-			if(hit) {
-				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
-			}
-			for(i=DL_FIRE;i<=type;i++) {
-				AddAnimation(damageSparks[i], damageGradients[i], height, flags);
-			}
+			sparkType = DL_FIRE;
 			break;
 		case 7: case 8: case 9: //electricity
-			if (hit) {
-				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
-			}
-			for(i=DL_ELECTRICITY;i<=type;i++) {
-				AddAnimation(damageSparks[i], damageGradients[i], height, flags);
-			}
+			sparkType = DL_ELECTRICITY;
 			break;
 		case 10: case 11: case 12://cold
-			if (hit) {
-				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
-			}
-
-			for (i = DL_COLD; i <= type; i++) {
-				AddAnimation(damageSparks[i], damageGradients[i], height, flags);
-			}
+			sparkType = DL_COLD;
 			break;
 		case 13: case 14: case 15://acid
-			if (hit) {
-				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
-			}
+			sparkType = DL_ACID;
+			break;
+		case 16:
+		case 17:
+		case 18: //disintegrate
+			break;
+	}
 
-			for (i = DL_ACID; i <= type; i++) {
-				AddAnimation(damageSparks[i], damageGradients[i], height, flags);
-			}
-			break;
-		case 16: case 17: case 18://disintegrate
-			if (hit) {
-				AddAnimation(damageMainResources[type], damageGradients[type], height, flags);
-			}
-			break;
+	if (hit) {
+		AddAnimation(damageMainResources[type], gradientType, height, flags);
+	}
+	for (int i = sparkType; i && i <= type; i++) {
+		AddAnimation(damageSparks[i], gradientType, height, flags);
 	}
 }
 
@@ -4138,6 +4121,7 @@ static void ChunkActor(Actor* actor)
 	ieDword gore = core->GetDictionary().Get("Gore", 0);
 	if (!gore) return;
 
+	actor->ClearCurrentStanceAnims(); // perhaps this should be done on all SetAnimationID calls instead
 	// TODO: play chunky animation / particles #128
 	actor->SetAnimationID(0x230); // EXPLODING_TORSO
 }
@@ -4417,11 +4401,11 @@ void Actor::DisplayCombatFeedback(unsigned int damage, int resisted, int damaget
 			HCStrings strref;
 			if (resisted < 0) {
 				//Takes <AMOUNT> <TYPE> damage from <DAMAGER> (<RESISTED> damage bonus)
-				SetTokenAsString("RESISTED", abs(resisted));
+				SetTokenAsString("RESISTED", std::abs(resisted));
 				strref = HCStrings::DamageDetail3;
 			} else if (resisted > 0) {
 				//Takes <AMOUNT> <TYPE> damage from <DAMAGER> (<RESISTED> damage resisted)
-				SetTokenAsString("RESISTED", abs(resisted));
+				SetTokenAsString("RESISTED", std::abs(resisted));
 				strref = HCStrings::DamageDetail2;
 			} else {
 				//Takes <AMOUNT> <TYPE> damage from <DAMAGER>
@@ -4625,7 +4609,7 @@ void Actor::PlaySwingSound(const WeaponInfo &wi) const
 	// this extra ATTACK in 2das was always played, together with anything else
 	ResRef sound;
 	GetSoundFrom2DA(sound, Verbal::Attack0);
-	if (!IsStar(sound)) core->GetAudioDrv()->Play(sound, SFX_CHAN_SWINGS, Pos, GEM_SND_SPATIAL);
+	core->GetAudioDrv()->Play(sound, SFX_CHAN_SWINGS, Pos, GEM_SND_SPATIAL);
 
 	// the CRE attack was played only if the itemtype was 0/misc to avoid clashes with the hardcoded exceptions
 	// TobExAL and Infinity Sounds prefer both to be played, so we match that, giving more choice to modders
@@ -4929,7 +4913,7 @@ int Actor::GetWildMod(int level)
 	static int modRange = int(wmLevelMods.size());
 	WMLevelMod = wmLevelMods[core->Roll(1, modRange, -1)][level - 1];
 
-	SetTokenAsString("LEVELDIF", abs(WMLevelMod));
+	SetTokenAsString("LEVELDIF", std::abs(WMLevelMod));
 	if (core->HasFeedback(FT_STATES)) {
 		if (WMLevelMod > 0) {
 			displaymsg->DisplayConstantStringName(HCStrings::CasterLvlInc, GUIColors::WHITE, this);
@@ -5214,7 +5198,7 @@ void Actor::SendDiedTrigger() const
 		} else if (OfType(this, neighbour)) {
 			neighbour->SetBase(IE_MORALE, neighbour->GetBase(IE_MORALE) - 1);
 		// are we an enemy of neighbour, regardless if we're good or evil?
-		} else if (abs(ea - pea) > 30) {
+		} else if (std::abs(ea - pea) > 30) {
 			neighbour->NewBase(IE_MORALE, 2, MOD_ADDITIVE);
 		}
 	}
@@ -6248,7 +6232,7 @@ void Actor::AttackedBy(const Actor *attacker)
 void Actor::FaceTarget(const Scriptable *target)
 {
 	if (!target) return;
-	SetOrientation(target->Pos, Pos, false);
+	SetOrientation(Pos, target->Pos, false);
 }
 
 //in case of LastTarget = 0
@@ -7144,7 +7128,7 @@ void Actor::PerformAttack(ieDword gameTime)
 		} else {
 			hitMiss = core->GetString(DisplayMessage::GetStringReference(HCStrings::Miss));
 		}
-		String rollLog = fmt::format(u"{} {} {} {} = {} : {}", leftRight, roll, (rollMod >= 0) ? u"+" : u"-", abs(rollMod), roll + rollMod, hitMiss);
+		String rollLog = fmt::format(u"{} {} {} {} = {} : {}", leftRight, roll, (rollMod >= 0) ? u"+" : u"-", std::abs(rollMod), roll + rollMod, hitMiss);
 		displaymsg->DisplayStringName(std::move(rollLog), GUIColors::WHITE, this);
 	}
 
@@ -7343,7 +7327,7 @@ void Actor::ModifyDamage(Scriptable *hitter, int &damage, int &resisted, int dam
 			} else {
 				int resistance = (signed)GetSafeStat(it->second.resist_stat);
 				// avoid buggy data
-				if ((unsigned)abs(resistance) > maximum_values[it->second.resist_stat]) {
+				if ((unsigned)std::abs(resistance) > maximum_values[it->second.resist_stat]) {
 					resistance = 0;
 					Log(DEBUG, "ModifyDamage", "Ignoring bad damage resistance value ({}).", resistance);
 				}
@@ -8430,6 +8414,7 @@ bool Actor::GetSoundFrom2DA(ResRef& sound, Verbal index) const
 	Log(MESSAGE, "Actor", "Getting sound 2da {} entry: {}", prefix, tab->GetRowName(idx));
 	TableMgr::index_t col = RAND<TableMgr::index_t>(0, tab->GetColumnCount(idx) - 1);
 	sound = tab->QueryField(idx, col);
+	if (IsStar(sound) || sound == "nosound") sound.Reset();
 	return true;
 }
 
@@ -8500,6 +8485,8 @@ bool Actor::GetSoundFromINI(ResRef& sound, Verbal index) const
 
 	int choice = core->Roll(1, int(count), -1);
 	sound = elements[choice];
+	// highly unlikely, but this way we match the expectations from GetSoundFrom2DA
+	if (IsStar(sound) || sound == "nosound") sound.Reset();
 
 	return true;
 }
@@ -8545,11 +8532,6 @@ void Actor::GetVerbalConstantSound(ResRef& Sound, Verbal index, bool resolved) c
 		GetSoundFromINI(Sound, Verbal(idx));
 	} else {
 		GetSoundFrom2DA(Sound, Verbal(idx));
-	}
-
-	//Empty resrefs
-	if (IsStar(Sound) || Sound == "nosound") {
-		Sound.Reset();
 	}
 }
 
@@ -9014,7 +8996,7 @@ bool Actor::UseItemPoint(ieDword slot, ieDword header, const Point &target, ieDw
 	ResetCommentTime();
 	if (pro) {
 		pro->SetCaster(GetGlobalID(), gamedata->GetMiscRule("ITEM_CASTERLEVEL"));
-		SetOrientation(target, Pos, false);
+		SetOrientation(Pos, target, false);
 		GetCurrentArea()->AddProjectile(pro, Pos, target);
 		return true;
 	}
@@ -9399,7 +9381,7 @@ bool Actor::UseItem(ieDword slot, ieDword header, const Scriptable* target, ieDw
 		attackProjectile = pro;
 		attackProjectile->SFlags &= ~PSF_FLYING;
 	} else { // launch it now as we are not attacking
-		SetOrientation(target->Pos, Pos, false);
+		SetOrientation(Pos, target->Pos, false);
 		GetCurrentArea()->AddProjectile(pro, Pos, tar->GetGlobalID(), false);
 	}
 	return true;
@@ -10325,8 +10307,8 @@ int Actor::LuckyRoll(int dice, int size, int add, ieDword flags, const Actor* op
 
 	if (dice > 100) {
 		int bonus;
-		if (abs(luck) > size) {
-			bonus = luck/abs(luck) * size;
+		if (std::abs(luck) > size) {
+			bonus = luck / std::abs(luck) * size;
 		} else {
 			bonus = luck;
 		}
@@ -10409,7 +10391,7 @@ bool Actor::IsBehind(const Actor* target) const
 {
 	orient_t tarOrient = target->GetOrientation();
 	// computed, since we don't care where we face
-	orient_t myOrient = GetOrient(target->Pos, Pos);
+	orient_t myOrient = GetOrient(Pos, target->Pos);
 
 	for (int i = -2; i <= 2; i++) {
 		orient_t side = NextOrientation(myOrient, i);

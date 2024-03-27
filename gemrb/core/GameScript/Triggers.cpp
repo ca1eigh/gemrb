@@ -1564,17 +1564,17 @@ int GameScript::InLine(Scriptable *Sender, const Trigger *parameters)
 		return 0;
 	}
 
-	double fdm1 = SquaredDistance(Sender, scr1);
-	double fdm2 = SquaredDistance(Sender, scr2);
-	double fd12 = SquaredDistance(scr1, scr2);
-	double dm1 = sqrt(fdm1);
-	double dm2 = sqrt(fdm2);
+	float_t fdm1 = SquaredDistance(Sender, scr1);
+	float_t fdm2 = SquaredDistance(Sender, scr2);
+	float_t fd12 = SquaredDistance(scr1, scr2);
+	float_t dm1 = std::sqrt(fdm1);
+	float_t dm2 = std::sqrt(fdm2);
 
 	if (fdm1>fdm2 || fd12>fdm2) {
 		return 0;
 	}
-	double angle = acos(( fdm2 + fdm1 - fd12 ) / (2*dm1*dm2));
-	if (angle*180.0*M_PI<30.0) return 1;
+	float_t angle = std::acos((fdm2 + fdm1 - fd12) / (2 * dm1 * dm2));
+	if (angle * (180.0 / M_PI) < 30.0) return 1;
 	return 0;
 }
 
@@ -3326,7 +3326,7 @@ int GameScript::IsFacingObject(Scriptable *Sender, const Trigger *parameters)
 		return 0;
 	}
 
-	if (actor->GetOrientation() == GetOrient(target->Pos, actor->Pos)) {
+	if (actor->GetOrientation() == GetOrient(actor->Pos, target->Pos)) {
 		return 1;
 	}
 	return 0;
@@ -3885,14 +3885,15 @@ int GameScript::Delay( Scriptable *Sender, const Trigger *parameters)
 	return (Sender->ScriptTicks % delay) <= Sender->IdleTicks;
 }
 
-#define TIMEOFDAY_DAY		0	/* 7-21 */
-#define TIMEOFDAY_DUSK		1	/* 21-22 */
-#define TIMEOFDAY_NIGHT		2	/* 22-6 */
-#define TIMEOFDAY_MORNING	3	/* 6-7 */
-
 int GameScript::TimeOfDay(Scriptable */*Sender*/, const Trigger *parameters)
 {
 	int hour = core->Time.GetHour(core->GetGame()->GameTime);
+	enum {
+		TIMEOFDAY_DAY, /* 7-21 */
+		TIMEOFDAY_DUSK, /* 21-22 */
+		TIMEOFDAY_NIGHT, /* 22-6 */
+		TIMEOFDAY_MORNING, /* 6-7 */
+	};
 
 	if ((parameters->int0Parameter == TIMEOFDAY_DAY && hour >= 7 && hour < 21)
 		|| (parameters->int0Parameter == TIMEOFDAY_DUSK && hour == 21)

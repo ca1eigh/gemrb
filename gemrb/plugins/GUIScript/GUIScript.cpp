@@ -5197,7 +5197,7 @@ static PyObject* GemRB_SetJournalEntry(PyObject * /*self*/, PyObject * args)
 		if (chapter == ieDword(-1)) {
 			chapter = game->GetGlobal("CHAPTER", -1);
 		}
-		game->AddJournalEntry(strref, (ieByte) section, (ieByte) chapter, msg2);
+		game->AddJournalEntry(strref, (JournalSection) section, (ieByte) chapter, msg2);
 	}
 
 	Py_RETURN_NONE;
@@ -11877,7 +11877,7 @@ static PyObject* GemRB_RestParty(PyObject * /*self*/, PyObject* args)
 	// - resting in inns: popup a GUISTORE error window with the reason
 	PyObject* dict = PyDict_New();
 	ieStrRef err = ieStrRef::INVALID;
-	bool cannotRest = !game->CanPartyRest(flags, &err);
+	bool cannotRest = !game->CanPartyRest((RestChecks) flags, &err);
 	// fall back to the generic: you may not rest at this time
 	if (err == ieStrRef::INVALID) {
 		if (core->HasFeature(GFFlags::AREA_OVERRIDE)) {
@@ -11893,7 +11893,7 @@ static PyObject* GemRB_RestParty(PyObject * /*self*/, PyObject* args)
 	} else {
 		PyDict_SetItemString(dict, "ErrorMsg", PyLong_FromLong(-1));
 		// all is well, so do the actual resting
-		PyDict_SetItemString(dict, "Cutscene", PyBool_FromLong(game->RestParty(flags & REST_AREA, dream, hp)));
+		PyDict_SetItemString(dict, "Cutscene", PyBool_FromLong(game->RestParty((RestChecks) flags & RestChecks::Area, dream, hp)));
 	}
 
 	return dict;

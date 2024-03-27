@@ -416,15 +416,6 @@ const Color& MapNote::GetColor() const
 	return colors[color];
 }
 
-void MapNote::swap(MapNote& mn) noexcept
-{
-	if (&mn == this) return;
-	std::swap(strref, mn.strref);
-	std::swap(color, mn.color);
-	std::swap(text, mn.text);
-	std::swap(Pos, mn.Pos);
-}
-
 //returns true if creature must be embedded in the area
 //npcs in saved game shouldn't be embedded either
 static inline bool MustSave(const Actor *actor)
@@ -2392,14 +2383,23 @@ void Map::PlayAreaSong(int SongType, bool restart, bool hard) const
 {
 	size_t pl = SongList[SongType];
 	const ieVariable* poi = &core->GetMusicPlaylist(pl);
-	// for subareas fall back to the main list
-	// needed eg. in bg1 ar2607 (intro candlekeep ambush south)
-	// it's not the correct music, perhaps it needs the one from the master area
-	// it would match for ar2607 and ar2600, but very annoying (see GetMasterArea)
-	// ... but this is also definitely wrong for iwd
+	Game* game = core->GetGame();
+
+	// Some subareas don't have their own songlist. It is currently unclear
+	// how the different games handle this situation and which music GemRB
+	// should play, if any. Further research is needed.
+	// At least for the battle music in BG1, e.g. AR2607 (intro candlekeep
+	// ambush south), there is a strong assumption to play the music from
+	// the masterarea's songlist.
+	// This assumption is definitely wrong for IWD, see #1476! Therefore we
+	// use a preliminary flag test to restrict it to BG1 for now.
 	if (IsStar(*poi) && !MasterArea && SongType == SONG_BATTLE && core->HasFeature(GFFlags::BREAKABLE_WEAPONS)) {
-		poi = &core->GetMusicPlaylist(SongType);
-		pl = SongType;
+		static constexpr int bc1Idx = 19; // fallback to first BG1 battle music
+
+		const Map* lastMasterArea = game->GetMap(game->LastMasterArea, false);
+
+		pl = lastMasterArea ? lastMasterArea->SongList[SongType] : bc1Idx;
+		poi = &core->GetMusicPlaylist(pl);
 	}
 
 	if (IsStar(*poi)) return;
@@ -2413,7 +2413,7 @@ void Map::PlayAreaSong(int SongType, bool restart, bool hard) const
 		return;
 	}
 	if (SongType == SONG_BATTLE) {
-		core->GetGame()->CombatCounter = 150;
+		game->CombatCounter = 150;
 	}
 }
 
@@ -2524,10 +2524,10 @@ PathMapFlags Map::GetBlockedInLine(const Point &s, const Point &d, bool stopOnIm
 	PathMapFlags ret = PathMapFlags::IMPASSABLE;
 	Point p = s;
 	const SearchmapPoint sms = ConvertCoordToTile(s);
-	double factor = caller && caller->GetSpeed() ? double(gamedata->GetStepTime()) / double(caller->GetSpeed()) : 1;
+	float_t factor = caller && caller->GetSpeed() ? float_t(gamedata->GetStepTime()) / float_t(caller->GetSpeed()) : 1;
 	while (p != d) {
-		double dx = d.x - p.x;
-		double dy = d.y - p.y;
+		float_t dx = d.x - p.x;
+		float_t dy = d.y - p.y;
 		NormalizeDeltas(dx, dy, factor);
 		p.x += dx;
 		p.y += dy;
@@ -2721,6 +2721,7 @@ void Map::AddProjectile(Projectile* pro)
 void Map::AddProjectile(Projectile *pro, const Point &source, ieDword actorID, bool fake)
 {
 	pro->MoveTo(this, source);
+	pro->SetupZPos();
 	pro->SetTarget(actorID, fake);
 	AddProjectile(pro);
 }
@@ -2728,6 +2729,7 @@ void Map::AddProjectile(Projectile *pro, const Point &source, ieDword actorID, b
 void Map::AddProjectile(Projectile* pro, const Point &source, const Point &dest)
 {
 	pro->MoveTo(this, source);
+	pro->SetupZPos();
 	pro->SetTarget(dest);
 	AddProjectile(pro);
 }
@@ -2739,10 +2741,8 @@ ieDword Map::HasVVCCell(const ResRef &resource, const Point &p) const
 	ieDword ret = 0;
 
 	for (const VEFObject *vvc: vvcCells) {
-		if (!p.IsInvalid()) {
-			if (vvc->Pos.x != p.x) continue;
-			if (vvc->Pos.y != p.y) continue;
-		}
+		if (!p.IsInvalid() && vvc->Pos != p) continue;
+
 		if (resource != vvc->ResName) continue;
 		const ScriptedAnimation *sca = vvc->GetSingleObject();
 		if (sca) {
@@ -2893,7 +2893,7 @@ std::string Map::dump(bool show_actors) const
 	AppendFormat(buffer, "Extended night: {}\n", YesNo(AreaType & AT_EXTENDED_NIGHT));
 	AppendFormat(buffer, "Weather: {}\n", YesNo(AreaType & AT_WEATHER));
 	AppendFormat(buffer, "Area Type: {}\n", AreaType & (AT_CITY | AT_FOREST | AT_DUNGEON));
-	AppendFormat(buffer, "Can rest: {}\n", YesNo(core->GetGame()->CanPartyRest(REST_AREA)));
+	AppendFormat(buffer, "Can rest: {}\n", YesNo(core->GetGame()->CanPartyRest(RestChecks::Area)));
 
 	if (show_actors) {
 		buffer.append("\n");
@@ -3260,27 +3260,46 @@ least one creature is summoned, regardless the difficulty cap.
 */
 int Map::CheckRestInterruptsAndPassTime(const Point &pos, int hours, int day)
 {
+	Game* game = core->GetGame();
 	if (!RestHeader.CreatureNum || !RestHeader.Enabled || !RestHeader.Maximum) {
-		core->GetGame()->AdvanceTime(hours * core->Time.hour_size);
+		game->AdvanceTime(hours * core->Time.hour_size);
 		return 0;
 	}
-
-	// TODO: it appears there was a limit on how many rest encounters can
-	// be triggered in a row (or area?), since HOFMode should increase it
-	// by 1. It doesn't look like it was stored in the header, so perhaps
-	// it was just a hardcoded limit to make the game more forgiving
-	// OR did it increase the number of spawned creatures by 1, 2?
 
 	//based on ingame timer
 	int chance=day?RestHeader.DayChance:RestHeader.NightChance;
 	bool interrupt = RAND(0, 99) < chance;
 	if (!interrupt) {
-		core->GetGame()->AdvanceTime(hours * core->Time.hour_size);
+		game->AdvanceTime(hours * core->Time.hour_size);
 		return 0;
 	}
 
+	// slightly different behaviour in iwd1, with heart of fury increasing spawn rate,
+	// no level adjustments and less randomness
+	if (core->HasFeature(GFFlags::IWD_REST_SPAWNS)) {
+		// time was actually randomly advanced between 0 and 450 seconds, ie. 0-1.5h
+		// ... but that would require some refactoring, since we use hours everywhere else
+		int step = 1;
+		game->AdvanceTime(step * core->Time.hour_size);
+
+		int idx = RAND(0, RestHeader.CreatureNum - 1);
+		const Actor* creature = gamedata->GetCreature(RestHeader.CreResRef[idx]);
+		if (!creature) return 0;
+
+		displaymsg->DisplayString(RestHeader.Strref[idx], GUIColors::GOLD, STRING_FLAGS::SOUND);
+		// the HoF bonus is potentially interesting for externalization
+		int attempts = std::max(1, RestHeader.Maximum + RAND(-2, 2)) + (game->HOFMode ? 1 : 0);
+		for (int i = 0; i < attempts; i++) {
+			if (!SpawnCreature(pos, RestHeader.CreResRef[idx], Size(20, 20), RestHeader.RandomWalkDistance)) {
+				break;
+			}
+		}
+
+		return hours - step;
+	}
+
 	unsigned int spawncount = 0;
-	int spawnamount = core->GetGame()->GetTotalPartyLevel(true) * RestHeader.Difficulty;
+	int spawnamount = game->GetTotalPartyLevel(true) * RestHeader.Difficulty;
 	if (spawnamount < 1) spawnamount = 1;
 	// this loop is a bit odd, since we only check the interrupt chance once
 	// the only way this not to return immediately at hour 0 is from a data error
@@ -3288,13 +3307,13 @@ int Map::CheckRestInterruptsAndPassTime(const Point &pos, int hours, int day)
 		int idx = RAND(0, RestHeader.CreatureNum - 1);
 		const Actor* creature = gamedata->GetCreature(RestHeader.CreResRef[idx]);
 		if (!creature) {
-			core->GetGame()->AdvanceTime(core->Time.hour_size);
+			game->AdvanceTime(core->Time.hour_size);
 			continue;
 		}
 
 		displaymsg->DisplayString(RestHeader.Strref[idx], GUIColors::GOLD, STRING_FLAGS::SOUND);
 		while (spawnamount > 0 && spawncount < RestHeader.Maximum) {
-			if (!SpawnCreature(pos, RestHeader.CreResRef[idx], Size(20, 20), RestHeader.rwdist, &spawnamount, &spawncount)) {
+			if (!SpawnCreature(pos, RestHeader.CreResRef[idx], Size(20, 20), RestHeader.RandomWalkDistance, &spawnamount, &spawncount)) {
 				break;
 			}
 		}
@@ -3346,25 +3365,28 @@ void Map::ExploreMapChunk(const Point &Pos, int range, int los)
 			Tile.x = Pos.x + explore.VisibilityMasks[i][p].x;
 			Tile.y = Pos.y + explore.VisibilityMasks[i][p].y;
 
-			if (los) {
-				if (!block) {
-					PathMapFlags type = GetBlocked(Tile);
-					if (bool(type & PathMapFlags::NO_SEE)) {
-						block=true;
-					} else if (bool(type & PathMapFlags::SIDEWALL)) {
-						sidewall = true;
-					} else if (sidewall) {
-						block = true;
-					// outdoor doors are automatically transparent (DOOR_TRANSPARENT)
-					// as a heuristic, exclude cities to avoid unnecessary shrouding
-					} else if (bool(type & PathMapFlags::DOOR_IMPASSABLE) && AreaType & AT_OUTDOOR && !(AreaType & AT_CITY)) {
-						fogOnly = true;
-					}
+			if (!los) {
+				ExploreTile(Tile, fogOnly);
+				continue;
+			}
+
+			if (!block) {
+				PathMapFlags type = GetBlocked(Tile);
+				if (bool(type & PathMapFlags::NO_SEE)) {
+					block=true;
+				} else if (bool(type & PathMapFlags::SIDEWALL)) {
+					sidewall = true;
+				} else if (sidewall) {
+					block = true;
+				// outdoor doors are automatically transparent (DOOR_TRANSPARENT)
+				// as a heuristic, exclude cities to avoid unnecessary shrouding
+				} else if (bool(type & PathMapFlags::DOOR_IMPASSABLE) && AreaType & AT_OUTDOOR && !(AreaType & AT_CITY)) {
+					fogOnly = true;
 				}
-				if (block) {
-					Pass--;
-					if (!Pass) break;
-				}
+			}
+			if (block) {
+				Pass--;
+				if (!Pass) break;
 			}
 			ExploreTile(Tile, fogOnly);
 		}
@@ -3513,18 +3535,19 @@ void Map::MoveVisibleGroundPiles(const Point &Pos)
 Container *Map::GetPile(Point position)
 {
 	//converting to search square
-	position = ConvertCoordToTile(position);
+	Point smPos = ConvertCoordToTile(position);
 	ieVariable pileName;
-	pileName.Format("heap_{}.{}", position.x, position.y);
+	pileName.Format("heap_{}.{}", smPos.x, smPos.y);
 	//pixel position is centered on search square
-	position.x=position.x*16+8;
-	position.y=position.y*12+6;
+	Point upperLeft = position;
+	position.x += 8;
+	position.y += 6;
 	Container *container = TMap->GetContainer(position,IE_CONTAINER_PILE);
 	if (!container) {
 		container = AddContainer(pileName, IE_CONTAINER_PILE, nullptr);
 		container->Pos=position;
 		//bounding box covers the search square
-		container->BBox = Region::RegionFromPoints(Point(position.x-8, position.y-6), Point(position.x+8,position.y+6));
+		container->BBox = Region::RegionFromPoints(upperLeft, Point(position.x + 8, position.y + 6));
 	}
 	return container;
 }

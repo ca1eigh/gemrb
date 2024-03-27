@@ -54,20 +54,20 @@ constexpr std::array<char, DEGREES_OF_FREEDOM> dxAdjacent{{1, 0, -1, 0}};
 constexpr std::array<char, DEGREES_OF_FREEDOM> dyAdjacent{{0, 1, 0, -1}};
 
 // Cosines
-constexpr std::array<double, RAND_DEGREES_OF_FREEDOM> dxRand{{0.000, -0.383, -0.707, -0.924, -1.000, -0.924, -0.707, -0.383, 0.000, 0.383, 0.707, 0.924, 1.000, 0.924, 0.707, 0.383}};
+constexpr std::array<float_t, RAND_DEGREES_OF_FREEDOM> dxRand{{0.000, -0.383, -0.707, -0.924, -1.000, -0.924, -0.707, -0.383, 0.000, 0.383, 0.707, 0.924, 1.000, 0.924, 0.707, 0.383}};
 // Sines
-constexpr std::array<double, RAND_DEGREES_OF_FREEDOM> dyRand{{1.000, 0.924, 0.707, 0.383, 0.000, -0.383, -0.707, -0.924, -1.000, -0.924, -0.707, -0.383, 0.000, 0.383, 0.707, 0.924}};
+constexpr std::array<float_t, RAND_DEGREES_OF_FREEDOM> dyRand{{1.000, 0.924, 0.707, 0.383, 0.000, -0.383, -0.707, -0.924, -1.000, -0.924, -0.707, -0.383, 0.000, 0.383, 0.707, 0.924}};
 
 // Find the best path of limited length that brings us the farthest from d
 PathListNode *Map::RunAway(const Point &s, const Point &d, unsigned int size, int maxPathLength, bool backAway, const Actor *caller) const
 {
 	if (!caller || !caller->GetSpeed()) return nullptr;
 	Point p = s;
-	double dx = s.x - d.x;
-	double dy = s.y - d.y;
+	float_t dx = s.x - d.x;
+	float_t dy = s.y - d.y;
 	char xSign = 1, ySign = 1;
 	size_t tries = 0;
-	NormalizeDeltas(dx, dy, double(gamedata->GetStepTime()) / caller->GetSpeed());
+	NormalizeDeltas(dx, dy, float_t(gamedata->GetStepTime()) / caller->GetSpeed());
 	if (std::abs(dx) <= 0.333 && std::abs(dy) <= 0.333) return nullptr;
 	while (SquaredDistance(p, s) < unsigned(maxPathLength * maxPathLength * SEARCHMAP_SQUARE_DIAGONAL * SEARCHMAP_SQUARE_DIAGONAL)) {
 		Point rad(std::lround(p.x + 3 * xSign * dx), std::lround(p.y + 3 * ySign * dy));
@@ -94,10 +94,10 @@ PathListNode *Map::RandomWalk(const Point &s, int size, int radius, const Actor 
 	if (!caller || !caller->GetSpeed()) return nullptr;
 	NavmapPoint p = s;
 	size_t i = RAND<size_t>(0, RAND_DEGREES_OF_FREEDOM - 1);
-	double dx = 3 * dxRand[i];
-	double dy = 3 * dyRand[i];
+	float_t dx = 3 * dxRand[i];
+	float_t dy = 3 * dyRand[i];
 
-	NormalizeDeltas(dx, dy, double(gamedata->GetStepTime()) / caller->GetSpeed());
+	NormalizeDeltas(dx, dy, float_t(gamedata->GetStepTime()) / caller->GetSpeed());
 	size_t tries = 0;
 	while (SquaredDistance(p, s) < unsigned(radius * radius * SEARCHMAP_SQUARE_DIAGONAL * SEARCHMAP_SQUARE_DIAGONAL)) {
 		if (!(GetBlockedInRadius(p + Point(dx, dy), size) & PathMapFlags::PASSABLE)) {
@@ -110,7 +110,7 @@ PathListNode *Map::RandomWalk(const Point &s, int size, int radius, const Actor 
 			i = RAND<size_t>(0, RAND_DEGREES_OF_FREEDOM - 1);
 			dx = 3 * dxRand[i];
 			dy = 3 * dyRand[i];
-			NormalizeDeltas(dx, dy, double(gamedata->GetStepTime()) / caller->GetSpeed());
+			NormalizeDeltas(dx, dy, float_t(gamedata->GetStepTime()) / caller->GetSpeed());
 			p = s;
 		} else {
 			p.x += dx;
@@ -124,7 +124,7 @@ PathListNode *Map::RandomWalk(const Point &s, int size, int radius, const Actor 
 	PathListNode *step = new PathListNode;
 	const Size& mapSize = PropsSize();
 	step->point = Clamp(p, Point(1, 1), Point((mapSize.w - 1) * 16, (mapSize.h - 1) * 12));
-	step->orient = GetOrient(p, s);
+	step->orient = GetOrient(s, p);
 	return step;
 }
 
@@ -145,18 +145,11 @@ bool Map::TargetUnreachable(const Point &s, const Point &d, unsigned int size, b
 	return targetUnreachable;
 }
 
-// Use this function when you target something by a straight line projectile (like a lightning bolt, arrow, etc)
-PathListNode *Map::GetLine(const Point &start, const Point &dest, int flags) const
-{
-	orient_t Orientation = GetOrient(start, dest);
-	return GetLine(start, dest, 1, Orientation, flags);
-}
-
 PathListNode *Map::GetLine(const Point &start, int Steps, orient_t Orientation, int flags) const
 {
 	Point dest = start;
 
-	double xoff, yoff, mult;
+	float_t xoff, yoff, mult;
 	if (Orientation <= 4) {
 		xoff = -Orientation / 4.0;
 	} else if (Orientation <= 12) {
@@ -236,14 +229,15 @@ Path Map::GetLinePath(const Point &start, const Point &dest, int Speed, orient_t
 {
 	int Count = 0;
 	int Max = Distance(start, dest);
+	Point diff = dest - start;
 	Path path;
 	path.reserve(Max);
 	path.push_back(PathNode {start, Orientation});
 	auto StartNode = path.begin();
 	for (int Steps = 0; Steps < Max; Steps++) {
 		Point p;
-		p.x = start.x + ((dest.x - start.x) * Steps / Max);
-		p.y = start.y + ((dest.y - start.y) * Steps / Max);
+		p.x = start.x + (diff.x * Steps / Max);
+		p.y = start.y + (diff.y * Steps / Max);
 
 		//the path ends here as it would go off the screen, causing problems
 		//maybe there is a better way, but i needed a quick hack to fix
@@ -289,7 +283,7 @@ PathListNode *Map::GetLine(const Point &p, int steps, orient_t orient) const
 	step->point.y = p.y + steps * SEARCHMAP_SQUARE_DIAGONAL * dyRand[orient];
 	const Size& mapSize = PropsSize();
 	step->point = Clamp(step->point, Point(1, 1), Point((mapSize.w - 1) * 16, (mapSize.h - 1) * 12));
-	step->orient = GetOrient(step->point, p);
+	step->orient = GetOrient(p, step->point);
 	return step;
 }
 
@@ -382,7 +376,7 @@ PathListNode *Map::FindPath(const Point &s, const Point &d, unsigned int size, u
 			if (childBlocked) continue;
 
 			// Weighted heuristic. Finds sub-optimal paths but should be quite a bit faster
-			const float HEURISTIC_WEIGHT = 1.5;
+			const float_t HEURISTIC_WEIGHT = 1.5;
 			SearchmapPoint smptCurrent2 = Map::ConvertCoordToTile(nmptCurrent);
 			NavmapPoint nmptParent = parents[smptCurrent2.y * mapSize.w + smptCurrent2.x];
 			unsigned short oldDist = distFromStart[smptChild.y * mapSize.w + smptChild.x];
@@ -411,9 +405,9 @@ PathListNode *Map::FindPath(const Point &s, const Point &d, unsigned int size, u
 				int dxCross = smptDest.x - smptSource.x;
 				int dyCross = smptDest.y - smptSource.y;
 				int crossProduct = std::abs(xDist * dyCross - yDist * dxCross) >> 3;
-				double distance = std::hypot(xDist, yDist);
-				double heuristic = HEURISTIC_WEIGHT * (distance + crossProduct);
-				double estDist = distFromStart[smptChild.y * mapSize.w + smptChild.x] + heuristic;
+				float_t distance = std::hypot(xDist, yDist);
+				float_t heuristic = HEURISTIC_WEIGHT * (distance + crossProduct);
+				float_t estDist = distFromStart[smptChild.y * mapSize.w + smptChild.x] + heuristic;
 				PQNode newNode(nmptChild, estDist);
 				open.emplace(newNode);
 			}
@@ -436,9 +430,9 @@ PathListNode *Map::FindPath(const Point &s, const Point &d, unsigned int size, u
 			// we approximate that with a relaxed collinearity check and intentionally
 			// skip the first step, otherwise it doesn't help with iwd beetles in ar1015
 			if (flags & PF_BACKAWAY && resultPath && std::abs(area2(nmptCurrent, resultPath->point, nmptParent)) < 300) {
-				newStep->orient = GetOrient(nmptParent, nmptCurrent);
-			} else {
 				newStep->orient = GetOrient(nmptCurrent, nmptParent);
+			} else {
+				newStep->orient = GetOrient(nmptParent, nmptCurrent);
 			}
 			if (resultPath) {
 				resultPath->Parent = newStep;
@@ -460,22 +454,22 @@ PathListNode *Map::FindPath(const Point &s, const Point &d, unsigned int size, u
 	return nullptr;
 }
 
-void Map::NormalizeDeltas(double &dx, double &dy, double factor)
+void Map::NormalizeDeltas(float_t &dx, float_t &dy, float_t factor)
 {
-	constexpr double STEP_RADIUS = 2.0;
+	constexpr float_t STEP_RADIUS = 2.0;
 
-	double ySign = std::copysign(1.0, dy);
-	double xSign = std::copysign(1.0, dx);
+	float_t ySign = std::copysign(1.0, dy);
+	float_t xSign = std::copysign(1.0, dx);
 	dx = std::fabs(dx);
 	dy = std::fabs(dy);
-	double dxOrig = dx;
-	double dyOrig = dy;
+	float_t dxOrig = dx;
+	float_t dyOrig = dy;
 	if (dx == 0.0) {
 		dy = STEP_RADIUS;
 	} else if (dy == 0.0) {
 		dx = STEP_RADIUS;
 	} else {
-		double q = STEP_RADIUS / std::hypot(dx, dy);
+		float_t q = STEP_RADIUS / std::hypot(dx, dy);
 		dx = dx * q;
 		dy = dy * q * 0.75f;
 	}

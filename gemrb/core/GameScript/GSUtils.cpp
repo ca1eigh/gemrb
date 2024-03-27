@@ -1290,7 +1290,7 @@ void BeginDialog(Scriptable* Sender, const Action* parameters, int Flags)
 			// might not be equal to speaker anymore due to swapping
 			Actor *talker = (Actor *) scr;
 			if (!talker->Immobile() && !(talker->GetStat(IE_STATE_ID) & STATE_SLEEP) && !(talker->AppearanceFlags&APP_NOTURN)) {
-				talker->SetOrientation(tar->Pos, scr->Pos, true);
+				talker->SetOrientation(scr->Pos, tar->Pos, true);
 				if (talker->InParty) {
 					talker->SetStance(IE_ANI_READY);
 				}
@@ -1300,7 +1300,7 @@ void BeginDialog(Scriptable* Sender, const Action* parameters, int Flags)
 			// might not be equal to target anymore due to swapping
 			Actor *talkee = static_cast<Actor*>(tar);
 			if (!talkee->Immobile() && !(talkee->GetStat(IE_STATE_ID) & STATE_SLEEP) && !(talkee->AppearanceFlags&APP_NOTURN)) {
-				talkee->SetOrientation(scr->Pos, tar->Pos, true);
+				talkee->SetOrientation(tar->Pos, scr->Pos, true);
 				if (talkee->InParty) {
 					talkee->SetStance(IE_ANI_READY);
 				}
@@ -1534,7 +1534,7 @@ void AttackCore(Scriptable *Sender, Scriptable *target, int flags)
 		}
 	}
 
-	double angle = AngleFromPoints(attacker->Pos, target->Pos);
+	float_t angle = AngleFromPoints(attacker->Pos, target->Pos);
 	if (attacker->GetCurrentArea() != target->GetCurrentArea() ||
 		!WithinPersonalRange(attacker, target, weaponRange) ||
 		!attacker->GetCurrentArea()->IsVisibleLOS(attacker->Pos, target->Pos) ||
@@ -2450,7 +2450,7 @@ unsigned int GetSpellDistance(const ResRef& spellRes, Scriptable* Sender, const 
 	}
 
 	if (!target.IsZero()) {
-		double angle = AngleFromPoints(Sender->Pos, target);
+		float_t angle = AngleFromPoints(Sender->Pos, target);
 		return Feet2Pixels(dist, angle);
 	}
 
@@ -2460,7 +2460,7 @@ unsigned int GetSpellDistance(const ResRef& spellRes, Scriptable* Sender, const 
 
 /* returns an item's casting distance, it depends on the used header, and targeting mode too
  the used header is explicitly given */
-unsigned int GetItemDistance(const ResRef& itemres, int header, double angle)
+unsigned int GetItemDistance(const ResRef& itemres, int header, float_t angle)
 {
 	const Item* itm = gamedata->GetItem(itemres);
 	if (!itm) {
@@ -2749,7 +2749,7 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 
 		//face target
 		if (tar != Sender) {
-			act->SetOrientation(tar->Pos, act->Pos, false);
+			act->SetOrientation(act->Pos, tar->Pos, false);
 		}
 
 		//stop doing anything else
@@ -2872,7 +2872,7 @@ void SpellPointCore(Scriptable *Sender, Action *parameters, int flags)
 		}
 
 		//face target
-		act->SetOrientation(parameters->pointParameter, act->Pos, false);
+		act->SetOrientation(act->Pos, parameters->pointParameter, false);
 		//stop doing anything else
 		act->SetModal(Modal::None);
 	}
@@ -3065,7 +3065,7 @@ void RunAwayFromCore(Scriptable* Sender, const Action* parameters, int flags)
 	}
 
 	// estimate max distance with time and actor speed
-	double speed = actor->GetSpeed();
+	float_t speed = actor->GetSpeed();
 	int maxDistance = parameters->int0Parameter;
 	if (speed) {
 		maxDistance = static_cast<int>(maxDistance * gamedata->GetStepTime() / speed);
