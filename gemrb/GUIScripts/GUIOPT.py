@@ -35,6 +35,7 @@ import GUICommonWindows
 import GUISAVE
 import GUIOPTControls
 from GUIDefines import *
+from ie_sounds import GEM_SND_VOL_MUSIC, GEM_SND_VOL_AMBIENTS
 
 ###################################################
 
@@ -99,8 +100,8 @@ def InitOptionsWindow (Window):
 
 	return
 
-ToggleOptionsWindow = GUICommonWindows.CreateTopWinLoader(2, "GUIOPT", GUICommonWindows.ToggleWindow, InitOptionsWindow, None, GUICommonWindows.DefaultWinPos, True)
-OpenOptionsWindow = GUICommonWindows.CreateTopWinLoader(2, "GUIOPT", GUICommonWindows.OpenWindowOnce, InitOptionsWindow, None, GUICommonWindows.DefaultWinPos, True)
+ToggleOptionsWindow = GUICommonWindows.CreateTopWinLoader(2, "GUIOPT", GUICommonWindows.ToggleWindow, InitOptionsWindow, None, True)
+OpenOptionsWindow = GUICommonWindows.CreateTopWinLoader(2, "GUIOPT", GUICommonWindows.OpenWindowOnce, InitOptionsWindow, None, True)
 
 def TrySavingConfiguration():
 	if not GemRB.SaveConfig():
@@ -223,11 +224,11 @@ def OpenAudioOptionsWindow ():
 
 def DisplayHelpAmbientVolume ():
 	GemRB.GetView ("OPTHELP").SetText (18008)
-	GemRB.UpdateAmbientsVolume ()
+	GemRB.UpdateVolume (GEM_SND_VOL_AMBIENTS)
 
 def DisplayHelpMusicVolume ():
 	GemRB.GetView ("OPTHELP").SetText (18011)
-	GemRB.UpdateMusicVolume ()
+	GemRB.UpdateVolume (GEM_SND_VOL_MUSIC)
 
 ###################################################
 

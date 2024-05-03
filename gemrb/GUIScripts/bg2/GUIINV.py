@@ -129,8 +129,8 @@ def UpdateInventoryWindow (Window):
 		InventoryCommon.UpdateSlot (pc, i)
 	return
 
-ToggleInventoryWindow = GUICommonWindows.CreateTopWinLoader(2, "GUIINV", GUICommonWindows.ToggleWindow, InitInventoryWindow, UpdateInventoryWindow, GUICommonWindows.DefaultWinPos, True)
-OpenInventoryWindow = GUICommonWindows.CreateTopWinLoader(2, "GUIINV", GUICommonWindows.OpenWindowOnce, InitInventoryWindow, UpdateInventoryWindow, GUICommonWindows.DefaultWinPos, True)
+ToggleInventoryWindow = GUICommonWindows.CreateTopWinLoader(2, "GUIINV", GUICommonWindows.ToggleWindow, InitInventoryWindow, UpdateInventoryWindow, True)
+OpenInventoryWindow = GUICommonWindows.CreateTopWinLoader(2, "GUIINV", GUICommonWindows.OpenWindowOnce, InitInventoryWindow, UpdateInventoryWindow, True)
 
 def RefreshInventoryWindow (Window):
 	"""Partial redraw without resetting TopIndex."""

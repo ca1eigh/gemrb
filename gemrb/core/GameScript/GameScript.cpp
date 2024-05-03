@@ -1188,16 +1188,16 @@ static const ObjectLink objectnames[] = {
 	{"ninthnearestenemyoftype", GameScript::NinthNearestEnemyOfType},
 	{"ninthnearestmygroupoftype", GameScript::NinthNearestMyGroupOfType},
 	{"nothing", GameScript::Nothing},
-	{"partyslot1", GameScript::Player1Fill},
-	{"partyslot2", GameScript::Player2Fill},
-	{"partyslot3", GameScript::Player3Fill},
-	{"partyslot4", GameScript::Player4Fill},
-	{"partyslot5", GameScript::Player5Fill},
-	{"partyslot6", GameScript::Player6Fill},
-	{"partyslot7", GameScript::Player7Fill},
-	{"partyslot8", GameScript::Player8Fill},
-	{"partyslot9", GameScript::Player9Fill},
-	{"partyslot10", GameScript::Player10Fill},
+	{ "partyslot1", GameScript::PartySlot1 },
+	{ "partyslot2", GameScript::PartySlot2 },
+	{ "partyslot3", GameScript::PartySlot3 },
+	{ "partyslot4", GameScript::PartySlot4 },
+	{ "partyslot5", GameScript::PartySlot5 },
+	{ "partyslot6", GameScript::PartySlot6 },
+	{ "partyslot7", GameScript::PartySlot7 },
+	{ "partyslot8", GameScript::PartySlot8 },
+	{ "partyslot9", GameScript::PartySlot9 },
+	{ "partyslot10", GameScript::PartySlot10 },
 	{"player1", GameScript::Player1},
 	{"player1fill", GameScript::Player1Fill},
 	{"player2", GameScript::Player2},
@@ -1312,134 +1312,6 @@ static const IDSLink* FindIdentifier(const std::string& idsname)
 	
 	Log(WARNING, "GameScript", "Couldn't assign ids target: {}", idsname);
 	return nullptr;
-}
-
-/********************** Targets **********************************/
-
-int Targets::Count() const
-{
-	return (int)objects.size();
-}
-
-targettype *Targets::RemoveTargetAt(targetlist::iterator &m)
-{
-	m=objects.erase(m);
-	if (m!=objects.end() ) {
-		return &(*m);
-	}
-	return NULL;
-}
-
-const targettype *Targets::GetLastTarget(int Type)
-{
-	targetlist::const_iterator m = objects.end();
-	while (m--!=objects.begin() ) {
-		if (Type == -1 || (*m).actor->Type == Type) {
-			return &(*m);
-		}
-	}
-	return nullptr;
-}
-
-const targettype *Targets::GetFirstTarget(targetlist::iterator &m, int Type)
-{
-	m=objects.begin();
-	while (m!=objects.end() ) {
-		if (Type != -1 && (*m).actor->Type != Type) {
-			m++;
-			continue;
-		}
-		return &(*m);
-	}
-	return NULL;
-}
-
-const targettype *Targets::GetNextTarget(targetlist::iterator &m, int Type)
-{
-	m++;
-	while (m!=objects.end() ) {
-		if (Type != -1 && (*m).actor->Type != Type) {
-			m++;
-			continue;
-		}
-		return &(*m);
-	}
-	return NULL;
-}
-
-Scriptable *Targets::GetTarget(unsigned int index, int Type)
-{
-	targetlist::iterator m = objects.begin();
-	while(m!=objects.end() ) {
-		if (Type == -1 || (*m).actor->Type == Type) {
-			if (!index) {
-				return (*m).actor;
-			}
-			index--;
-		}
-		++m;
-	}
-	return NULL;
-}
-
-//this stuff should be refined, dead actors are sometimes targetable by script?
-void Targets::AddTarget(Scriptable* target, unsigned int distance, int ga_flags)
-{
-	if (!target) {
-		return;
-	}
-
-	switch (target->Type) {
-	case ST_ACTOR:
-		//i don't know if unselectable actors are targetable by script
-		//if yes, then remove GA_SELECT
-		if (ga_flags && !((Actor *) target)->ValidTarget(ga_flags)) {
-			return;
-		}
-		break;
-	case ST_GLOBAL:
-		// this doesn't seem a good idea to allow
-		return;
-	default:
-		break;
-	}
-	targettype Target = {target, distance};
-	for (auto m = objects.begin(); m != objects.end(); ++m) {
-		if ( (*m).distance>distance) {
-			objects.insert( m, Target);
-			return;
-		}
-	}
-	objects.push_back( Target );
-}
-
-void Targets::Clear()
-{
-	objects.clear();
-}
-
-void Targets::dump() const
-{
-	Log(DEBUG, "GameScript", "Target dump (actors only):");
-	for (const auto& object : objects) {
-		if (object.actor->Type == ST_ACTOR) {
-			Log(DEBUG, "GameScript", "{}", fmt::WideToChar{object.actor->GetName()});
-		}
-	}
-}
-
-void Targets::FilterObjectRect(const Object *oC)
-{
-	// can't match anything if the second pair of coordinates (or all of them) are unset
-	if (oC->objectRect.w <= 0 || oC->objectRect.h <= 0) return;
-
-	for (auto m = objects.begin(); m != objects.end();) {
-		if (!IsInObjectRect((*m).actor->Pos, oC->objectRect)) {
-			m = objects.erase(m);
-		} else {
-			++m;
-		}
-	}
 }
 
 /** releasing global memory */

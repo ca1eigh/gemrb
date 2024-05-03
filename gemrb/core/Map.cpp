@@ -2381,32 +2381,45 @@ bool Map::SpawnsAlive() const
 
 void Map::PlayAreaSong(int SongType, bool restart, bool hard) const
 {
+	// Some subareas don't have their own songlist. IWDs do nothing about it,
+	// while other games support continuation values:
+	// * -1 for last master area's song of the same entry,
+	// * -2 for current area's day/night song
+	// Eg. bg1 AR2607 (intro candlekeep ambush south), AR2302 (friendly arm inn 2nd floor)
+	if (SongType == 0xffff || SongList[SongType] == ieDword(-2)) {
+		// select SONG_DAY or SONG_NIGHT
+		Trigger parameters;
+		parameters.int0Parameter = 0; // TIMEOFDAY_DAY, while dusk, dawn and night we treat as night
+		SongType = int(GameScript::TimeOfDay(nullptr, &parameters) != 1);
+	}
 	size_t pl = SongList[SongType];
-	const ieVariable* poi = &core->GetMusicPlaylist(pl);
-	Game* game = core->GetGame();
 
-	// Some subareas don't have their own songlist. It is currently unclear
-	// how the different games handle this situation and which music GemRB
-	// should play, if any. Further research is needed.
-	// At least for the battle music in BG1, e.g. AR2607 (intro candlekeep
-	// ambush south), there is a strong assumption to play the music from
-	// the masterarea's songlist.
-	// This assumption is definitely wrong for IWD, see #1476! Therefore we
-	// use a preliminary flag test to restrict it to BG1 for now.
-	if (IsStar(*poi) && !MasterArea && SongType == SONG_BATTLE && core->HasFeature(GFFlags::BREAKABLE_WEAPONS)) {
-		static constexpr int bc1Idx = 19; // fallback to first BG1 battle music
+	bool hasContinuation = core->HasFeature(GFFlags::HAS_CONTINUATION);
+	Game* game = core->GetGame();
+	const PluginHolder<MusicMgr>& musicMgr = core->GetMusicMgr();
+
+	// handle -1
+	// Test for non-zero pl in order to keep subareas quiet which disable
+	// music explicitely with pl=0.
+	ieVariable poi = core->GetMusicPlaylist(pl);
+	if (IsStar(poi) && pl && !MasterArea && hasContinuation) {
+		static constexpr int bc1Idx = 19; // fallback to first BG1 battle music, should never be hit
 
 		const Map* lastMasterArea = game->GetMap(game->LastMasterArea, false);
-
 		pl = lastMasterArea ? lastMasterArea->SongList[SongType] : bc1Idx;
-		poi = &core->GetMusicPlaylist(pl);
+		poi = core->GetMusicPlaylist(pl);
 	}
 
-	if (IsStar(*poi)) return;
+	if (IsStar(poi)) {
+		// ease off the music if possible
+		// playlists without the exit segment will be forcefully ended
+		musicMgr->End();
+		return;
+	}
 
 	//check if restart needed (either forced or the current song is different)
-	if (!restart && core->GetMusicMgr()->IsCurrentPlayList(*poi)) return;
-	int ret = core->GetMusicMgr()->SwitchPlayList(*poi, hard);
+	if (!restart && musicMgr->IsCurrentPlayList(poi)) return;
+	int ret = musicMgr->SwitchPlayList(poi, hard);
 	if (ret) {
 		//Here we disable the faulty musiclist entry
 		core->DisableMusicPlaylist(pl);
@@ -3678,7 +3691,7 @@ void Map::Sparkle(ieDword duration, ieDword color, ieDword type, const Point &po
 		style = SP_TYPE_POINT;
 	}
 	sparkles->SetType(style, path, grow);
-	sparkles->SetColor(color);
+	sparkles->SetColorIndex(color);
 	sparkles->SetPhase(P_GROW);
 
 	spaIterator iter;

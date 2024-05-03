@@ -361,9 +361,7 @@ int Game::LeaveParty(Actor* actor, bool returnCriticalItems)
 		SelectActor(PCs[0], true, SELECT_NORMAL);
 	}
 
-	ieDword id = actor->GetGlobalID();
 	for (const auto& pc : PCs) {
-		pc->PCStats->LastLeft = id;
 		if (pc->InParty>actor->InParty) {
 			pc->InParty--;
 		}
@@ -474,14 +472,7 @@ int Game::JoinParty(Actor* actor, int join)
 			}
 		}
 
-		//set the lastjoined trigger
-		if (size) {
-			ieDword id = actor->GetGlobalID();
-			for (size_t i=0;i<size; i++) {
-				Actor *a = GetPC(i, false);
-				a->PCStats->LastJoined = id;
-			}
-		} else {
+		if (!size) {
 			Reputation = actor->GetStat(IE_REPUTATION);
 		}
 		AddTrigger(TriggerEntry(trigger_joins, actor->GetGlobalID()));
@@ -1060,7 +1051,7 @@ bool Game::AddJournalEntry(ieStrRef strRef, JournalSection section, ieByte group
 		if (core->HasFeature(GFFlags::ONSCREEN_TEXT)) {
 			core->GetGameControl()->SetDisplayText(HCStrings::JournalChange, 30);
 		} else {
-			displaymsg->DisplayMarkupString(msg);
+			displaymsg->DisplayMarkupString(std::move(msg));
 		}
 	}
 	// pst/bg2 also has a sound attached to the base string, so play it manually
@@ -1540,8 +1531,30 @@ bool Game::EveryoneDead() const
 	return true;
 }
 
-//runs all area scripts
+// determine if we should start some music
+static bool ShouldChangeSong(bool combatChange)
+{
+	bool doChangeSong = false;
+	if (combatChange) {
+		doChangeSong = true;
+	} else if (!core->GetMusicMgr()->IsPlaying()) {
+		// perhaps a StartMusic action stopped the area music?
+		// (we should probably find a less silly way to handle this,
+		// because nothing can ever stop area music now...)
 
+		// Call ChangeSong only once per round in order to prevent spam
+		// calls every tick in areas without music.
+		static unsigned int ticks = 0;
+		ticks++;
+		doChangeSong = ticks >= core->Time.round_size;
+		if (doChangeSong) {
+			ticks = 0;
+		}
+	} // else nothing to change
+	return doChangeSong;
+}
+
+// runs all area scripts
 void Game::UpdateScripts()
 {
 	Update();
@@ -1552,18 +1565,19 @@ void Game::UpdateScripts()
 		Maps[idx]->UpdateScripts();
 	}
 
+	bool combatEnded = false;
 	if (PartyAttack) {
 		//ChangeSong will set the battlesong only if CombatCounter is nonzero
-		CombatCounter=150;
-		ChangeSong(false, true);
-	} else {
-		if (CombatCounter) {
-			CombatCounter--;
-			//Change song if combatcounter went down to 0
-			if (!CombatCounter) {
-				ChangeSong(false, false);
-			}
-		}
+		CombatCounter = 150;
+	} else if (CombatCounter) {
+		CombatCounter--;
+		if (!CombatCounter) combatEnded = true;
+	}
+
+	// change song if we got attacked, combat stopped or perhaps if nothing is playing
+	// hard switch only at combat start
+	if (ShouldChangeSong(PartyAttack || combatEnded)) {
+		ChangeSong(false, PartyAttack);
 	}
 
 	if (StateOverrideTime)
@@ -1578,13 +1592,6 @@ void Game::UpdateScripts()
 		for(unsigned int i=0;i<idx;i++) {
 			DelMap(i, false);
 		}
-	}
-
-	// perhaps a StartMusic action stopped the area music?
-	// (we should probably find a less silly way to handle this,
-	// because nothing can ever stop area music now..)
-	if (!core->GetMusicMgr()->IsPlaying()) {
-		ChangeSong(false,false);
 	}
 
 	//this is used only for the death delay so far
@@ -2157,11 +2164,7 @@ void Game::ChangeSong(bool always, bool force) const
 		Song = SONG_BATTLE;
 		BattleSong++;
 	} else {
-		//will select SONG_DAY or SONG_NIGHT
-		Trigger* parameters = new Trigger;
-		parameters->int0Parameter = 0; // TIMEOFDAY_DAY, while dusk, dawn and night we treat as night
-		Song = int(GameScript::TimeOfDay(nullptr, parameters) != 1);
-		delete parameters;
+		Song = 0xffff; // will select SONG_DAY or SONG_NIGHT
 		BattleSong = 0;
 	}
 	//area may override the song played (stick in battlemusic)
@@ -2233,14 +2236,23 @@ void Game::StartRainOrSnow(bool conditional, ieWord w)
 		core->PlaySound(DS_SNOW, SFX_CHAN_AREA_AMB);
 		weather->SetType(SP_TYPE_POINT, SP_PATH_FLIT, SP_SPAWN_SOME);
 		weather->SetPhase(P_GROW);
-		weather->SetColor(SPARK_COLOR_WHITE);
+		weather->SetColorIndex(SPARK_COLOR_WHITE);
 		return;
 	}
 	if (w&WB_RAIN) {
 		core->PlaySound(DS_RAIN, SFX_CHAN_AREA_AMB);
 		weather->SetType(SP_TYPE_LINE, SP_PATH_RAIN, SP_SPAWN_SOME);
 		weather->SetPhase(P_GROW);
-		weather->SetColor(SPARK_COLOR_STONE);
+		// colors re-d from iwd2
+		// during lightning it's pure white
+		Color rainColor(110, 110, 110, 0xff); // default and day, 7-20
+		int hour = core->Time.GetHour(GameTime);
+		if (hour == 6 || hour == 21) { // same for dusk and dawn
+			rainColor = Color(90, 90, 100, 0xff);
+		} else if (hour < 6 || hour > 21) {
+			rainColor = Color(70, 70, 90, 0xff);
+		}
+		weather->SetColor(rainColor);
 		return;
 	}
 	weather->SetPhase(P_FADE);
@@ -2488,6 +2500,19 @@ void Game::MoveFamiliars(const ResRef& targetArea, const Point& targetPoint, int
 			MoveBetweenAreasCore(npc, targetArea, targetPoint, orientation, true);
 		}
 	}
+}
+
+bool Game::IsTargeted(ieDword gid) const
+{
+	for (const auto& pc : PCs) {
+		if (pc->objects.LastTarget == gid) return true;
+	}
+	// check also familiars and summons
+	for (const auto& npc : NPCs) {
+		if (npc->GetStat(IE_EA) > EA_CONTROLLABLE) continue;
+		if (npc->objects.LastTarget == gid) return true;
+	}
+	return false;
 }
 
 }

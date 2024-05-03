@@ -333,7 +333,9 @@ void Scriptable::ExecuteScript(int scriptCount)
 		GameScript* script = Scripts[scriptLevel];
 		if (script) {
 			changed |= script->Update(&continuing, &done);
-			if (script->dead) delete script;
+			if (script->dead) {
+				delete script;
+			}
 		}
 
 		/* scripts are not concurrent, see WAITPC override script for example */
@@ -1240,11 +1242,13 @@ int Scriptable::CastSpellPoint(const Point& target, bool deplete, bool instant, 
 	if(!CheckWildSurge()) {
 		return -1;
 	}
-	if (!instant) {
+
+	int duration = SpellCast(instant, nullptr, level);
+	if (!instant && duration) {
 		SpellcraftCheck(actor, SpellResRef);
 		if (actor) actor->CureInvisibility();
 	}
-	return SpellCast(instant, nullptr, level);
+	return duration;
 }
 
 //set target as actor (if target isn't actor, use its position)
@@ -1282,12 +1286,13 @@ int Scriptable::CastSpell(Scriptable* target, bool deplete, bool instant, bool n
 		return -1;
 	}
 
-	if (!instant) {
+	int duration = SpellCast(instant, target, level);
+	if (!instant && duration) {
 		SpellcraftCheck(actor, SpellResRef);
 		// self-targeted spells that are not hostile maintain invisibility
 		if (actor && target != this) actor->CureInvisibility();
 	}
-	return SpellCast(instant, target, level);
+	return duration;
 }
 
 static EffectRef fx_force_surge_modifier_ref = { "ForceSurgeModifier", -1 };
@@ -1644,7 +1649,8 @@ void Selectable::DrawCircle(const Point& p) const
 		mix = GlobalColorCycle.Blend(overColor, selectedColor);
 		col = &mix;
 	} else if (IsPC()) {
-		col = &overColor;
+		// don't dim white
+		if (*col != ColorWhite) col = &overColor;
 	}
 
 	if (sprite) {

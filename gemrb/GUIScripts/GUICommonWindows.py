@@ -1230,7 +1230,7 @@ def UpdateAnimation ():
 	AnimTable = GemRB.LoadTable ("ANIMS")
 	if animid=="":
 		animid="*"
-	value = AnimTable.GetValue (animid, AvatarName)
+	value = AnimTable.GetValue (animid, AvatarName, GTV_INT)
 	if value<0:
 		return
 	GemRB.SetPlayerStat (pc, IE_ANIMATION_ID, value)
@@ -1256,7 +1256,7 @@ def GetKitIndex (actor, ClassIndex):
 	for ci in range (KitOffset, CommonTables.Classes.GetRowCount ()):
 		RowName = CommonTables.Classes.GetRowName (ci)
 		BaseClass = CommonTables.Classes.GetValue (RowName, "CLASS")
-		if BaseClass == ClassID and Kit & CommonTables.Classes.GetValue (RowName, "ID"):
+		if BaseClass == ClassID and Kit & CommonTables.Classes.GetValue (RowName, "ID", GTV_INT):
 			#FIXME: this will return the last kit only, check if proper multikit return values are needed
 			KitIndex = ci
 
@@ -1340,10 +1340,12 @@ def TopWindowClosed(window):
 
 if GameCheck.IsIWD2():
 	DefaultWinPos = WINDOW_TOP|WINDOW_HCENTER
+elif GameCheck.IsPST () and GemRB.GetSystemVariable (SV_HEIGHT) < 480 + 73:
+	DefaultWinPos = WINDOW_TOP | WINDOW_HCENTER
 else:
 	DefaultWinPos = WINDOW_CENTER
 
-def CreateTopWinLoader(id, pack, loader, initer = None, selectionHandler = None, pos = DefaultWinPos, pause = False):
+def CreateTopWinLoader(id, pack, loader, initer = None, selectionHandler = None, pause = False, pos = DefaultWinPos):
 	def ret (btn = None):
 		topwin = GemRB.GetView("WIN_TOP")
 		if topwin and topwin.HasFocus == False:

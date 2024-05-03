@@ -425,7 +425,7 @@ void Actor::SetAnimationID(unsigned int AnimID)
 	//if the palette is locked, then it will be transferred to the new animation
 	Holder<Palette> recover = nullptr;
 	ResRef paletteResRef;
-
+	ClearCurrentStanceAnims();
 	if (anims) {
 		if (anims->lockPalette) {
 			recover = anims->PartPalettes[PAL_MAIN];
@@ -3186,12 +3186,8 @@ static const std::array<int, 5> savingThrows = { IE_SAVEVSSPELL, IE_SAVEVSBREATH
 bool Actor::GetSavingThrow(ieDword type, int modifier, const Effect *fx)
 {
 	assert(type < savingThrows.size());
-	static int saveDiceSides = gamedata->GetMiscRule("SAVING_THROW_DICE_SIDES");
 	InternalFlags|=IF_USEDSAVE;
 	int ret = lastSave.savingThrow[type];
-	// NOTE: assuming criticals apply to iwd2 too
-	if (ret == 1) return false;
-	if (ret == saveDiceSides) return true;
 	if (Modified[IE_STATE_ID] & STATE_DEAD) return false; // just to shut some errant feedback, should be fine
 	const Effect* sfx = fxqueue.HasEffect(fx_save_vs_school_bonus_ref);
 
@@ -3209,8 +3205,9 @@ bool Actor::GetSavingThrow(ieDword type, int modifier, const Effect *fx)
 			ret -= CheckVariable(nullptr, "Morte_Taunt", "GLOBAL");
 		}
 
+		bool success = ret >= (int) GetStat(savingThrows[type]);
 		// potentially display feedback, but do some rate limiting, since each effect in a spell ends up here
-		if (core->HasFeedback(FT_COMBAT) && (lastSave.prevType != type || lastSave.prevRoll != ret)) {
+		if (core->HasFeedback(FT_COMBAT) && success && (lastSave.prevType != type || lastSave.prevRoll != ret)) {
 			// "Save Vs Death" in all games except pst: "Save Vs. Death:"
 			String msg = core->GetString(DisplayMessage::GetStringReference(HCStrings(ieDword(HCStrings::SaveSpell) + type)));
 			msg += fmt::format(u" {}", ret);
@@ -3218,7 +3215,7 @@ bool Actor::GetSavingThrow(ieDword type, int modifier, const Effect *fx)
 		}
 		lastSave.prevType = type;
 		lastSave.prevRoll = ret;
-		return ret > (int) GetStat(savingThrows[type]);
+		return success;
 	}
 
 	int roll = ret;
@@ -3297,7 +3294,7 @@ bool Actor::GetSavingThrow(ieDword type, int modifier, const Effect *fx)
 
 	ret = AdjustSaveVsSchool(ret, fx->PrimaryType, sfx);
 
-	if (ret > saveDC) {
+	if (ret >= saveDC) {
 		// ~Saving throw result: (d20 + save + bonuses) %d + %d  + %d vs. (10 + spellLevel + saveMod)  10 + %d + %d - Success!~
 		displaymsg->DisplayRollStringName(ieStrRef::ROLL22, GUIColors::LIGHTGREY, this, roll, save, modifier, spellLevel, saveBonus);
 		return true;
@@ -4121,9 +4118,29 @@ static void ChunkActor(Actor* actor)
 	ieDword gore = core->GetDictionary().Get("Gore", 0);
 	if (!gore) return;
 
-	actor->ClearCurrentStanceAnims(); // perhaps this should be done on all SetAnimationID calls instead
+	Map* map = actor->GetCurrentArea();
+	if (!map->IsVisible(actor->Pos)) return; // protect against ctrl-shift-y
+
 	// TODO: play chunky animation / particles #128
-	actor->SetAnimationID(0x230); // EXPLODING_TORSO
+	// for now fake a fountain by spawning more actors to explode
+	actor->SetBase(IE_ANIMATION_ID, 0x220);
+	static EffectRef fx_remove_creature_ref = { "RemoveCreature", -1 };
+	constexpr std::array<int, 7> bodyParts = { 0x200, 0x200, 0x210, 0x220, 0x230, 0x240, 0x240 };
+	for (auto animID : bodyParts) {
+		Actor* copy = actor->CopySelf(true);
+		map->ClearSearchMapFor(copy);
+		copy->SetStance(IE_ANI_TWITCH); // force only one loop of the animation
+		copy->SetAnimationID(animID);
+		copy->SetBase(IE_DONOTJUMP, DNJ_UNHINDERED);
+		copy->MoveTo(actor->Pos + OrientedOffset(RandomOrientation(), RAND(5, 40)));
+		copy->SetBase(IE_DONOTJUMP, 0); // revert, so we get occlusion
+		// make it expire
+		copy->SetInternalFlag(IF_REALLYDIED, BitOp::OR);
+		Effect* fx = EffectQueue::CreateEffect(fx_remove_creature_ref, 0, 0, FX_DURATION_DELAY_PERMANENT);
+		fx->Target = FX_TARGET_SELF;
+		fx->Duration = core->GetGame()->GameTime + core->Time.round_size / 2 + RAND(-30, 30);
+		copy->fxqueue.AddEffect(fx, true);
+	}
 }
 
 //returns actual damage
@@ -4210,7 +4227,7 @@ int Actor::Damage(int damage, int damagetype, Scriptable* hitter, int modtype, i
 
 	if (damage > 0) {
 		// instant chunky death if the actor is petrified or frozen
-		bool allowChunking = !Modified[IE_DISABLECHUNKING] && GameDifficulty > DIFF_NORMAL && !Modified[IE_MINHITPOINTS];
+		bool allowChunking = !Modified[IE_DISABLECHUNKING] && (!InParty || GameDifficulty > DIFF_NORMAL) && !Modified[IE_MINHITPOINTS];
 		if (Modified[IE_STATE_ID] & (STATE_FROZEN|STATE_PETRIFIED) && allowChunking) {
 			damage = 123456; // arbitrarily high for death; won't be displayed
 			LastDamageType |= DAMAGE_CHUNKING;
@@ -7336,9 +7353,9 @@ void Actor::ModifyDamage(Scriptable *hitter, int &damage, int &resisted, int dam
 			}
 			Log(COMBAT, "ModifyDamage", "Resisted {} of {} at {}% resistance to {}", resisted, damage + resisted, GetSafeStat(it->second.resist_stat), damagetype);
 			// PST and BG1 may actually heal on negative damage
-			if (!core->HasFeature(GFFlags::HEAL_ON_100PLUS)) {
-				if (damage <= 0) {
-					resisted = DR_IMMUNE;
+			if (damage <= 0) {
+				resisted = DR_IMMUNE;
+				if (!core->HasFeature(GFFlags::HEAL_ON_100PLUS)) {
 					damage = 0;
 				}
 			}
@@ -7986,19 +8003,27 @@ bool Actor::ShouldDrawCircle() const
 
 	if (!(gc->GetDialogueFlags() & DF_FREEZE_SCRIPTS)) {
 		// check marker feedback level
+		// bg2 had one level more, treating 5 differently and adding 6
+		ieDword extraLevel = core->HasFeature(GFFlags::JOURNAL_HAS_SECTIONS);
 		ieDword markerfeedback = core->GetDictionary().Get("GUI Feedback Level", 4);
-		if (Selected) {
+		if (Over) {
+			// hovered creature
+			drawcircle = markerfeedback >= 1;
+		} else if (Selected) {
 			// selected creature
 			drawcircle = markerfeedback >= 2;
 		} else if (IsPC()) {
 			// selectable
 			drawcircle = markerfeedback >= 3;
-		} else if (Modified[IE_EA] >= EA_EVILCUTOFF) {
+		} else if (Modified[IE_EA] >= EA_EVILCUTOFF && core->GetGame()->IsTargeted(GetGlobalID())) {
 			// hostile
 			drawcircle = markerfeedback >= 4;
+		} else if (Modified[IE_EA] >= EA_EVILCUTOFF && extraLevel) {
+			// hostile
+			drawcircle = markerfeedback >= 5;
 		} else {
 			// all
-			drawcircle = markerfeedback >= 5;
+			drawcircle = markerfeedback >= 5 + extraLevel;
 		}
 	}
 	

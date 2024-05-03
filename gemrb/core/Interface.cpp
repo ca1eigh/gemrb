@@ -1376,6 +1376,8 @@ static const EnumArray<GFFlags, StringView> game_flags {
 	"HasWeaponSets", // GFFlags::GF_HAS_WEAPON_SETS
 	"HighlightOutlineOnly", // GFFlags::HIGHLIGHT_OUTLINE_ONLY
 	"IWDRestSpawns", // GFFlags::IWD_REST_SPAWNS
+	"HasContinuation", // GFFlags::HAS_CONTINUATION
+	"SellableCritsNoConv", // GFFlags::SELLABLE_CRITS_NO_CONV
 };
 
 /** Loads gemrb.ini */

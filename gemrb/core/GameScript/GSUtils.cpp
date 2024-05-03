@@ -1052,6 +1052,8 @@ static void GetTalkPositionFromScriptable(Scriptable* scr, Point &position)
 		case ST_DOOR: case ST_CONTAINER:
 			position = static_cast<Highlightable*>(scr)->TrapLaunch;
 			break;
+		default: // ST_ANY
+			break;
 	}
 }
 
@@ -1080,6 +1082,8 @@ void GetPositionFromScriptable(const Scriptable *scr, Point &position, bool dest
 		// intentional fallthrough
 		case ST_DOOR: case ST_CONTAINER:
 			position = static_cast<const Highlightable*>(scr)->TrapLaunch;
+		default: // ST_ANY
+			break;
 	}
 }
 
@@ -1305,7 +1309,10 @@ void BeginDialog(Scriptable* Sender, const Action* parameters, int Flags)
 					talkee->SetStance(IE_ANI_READY);
 				}
 				if (!core->InCutSceneMode()) {
+					// temporarily pretend the dialog already started, so the VB isn't spatial
+					gc->SetDialogueFlags(DF_IN_DIALOG, BitOp::OR);
 					talkee->DialogInterrupt();
+					gc->SetDialogueFlags(DF_IN_DIALOG, BitOp::NAND);
 				}
 			}
 		}
@@ -1349,7 +1356,7 @@ void MoveBetweenAreasCore(Actor* actor, const ResRef &area, const Point &positio
 	Map* map1 = actor->GetCurrentArea();
 	Map* map2;
 	Game* game = core->GetGame();
-	bool newSong = false;
+
 	if (!area.IsEmpty() && (!map1 || area != map1->GetScriptRef())) { //do we need to switch area?
 		//we have to change the pathfinder
 		//to the target area if adjust==true
@@ -1358,7 +1365,6 @@ void MoveBetweenAreasCore(Actor* actor, const ResRef &area, const Point &positio
 			map1->RemoveActor( actor );
 		}
 		map2->AddActor( actor, true );
-		newSong = true;
 
 		// update the worldmap if needed
 		if (actor->InParty) {
@@ -1379,9 +1385,6 @@ void MoveBetweenAreasCore(Actor* actor, const ResRef &area, const Point &positio
 	if (actor->InParty) {
 		GameControl *gc=core->GetGameControl();
 		gc->SetScreenFlags(ScreenFlags::CenterOnActor, BitOp::OR);
-		if (newSong) {
-			game->ChangeSong(false, true);
-		}
 	}
 }
 
@@ -1918,10 +1921,10 @@ void MoveNearerTo(Scriptable *Sender, const Scriptable *target, int distance, in
 
 	// account for PersonalDistance (which caller uses, but pathfinder doesn't)
 	if (distance) {
-		distance += mover->CircleSize2Radius() * 4; // DistanceFactor
+		distance -= mover->CircleSize2Radius() * 4; // DistanceFactor
 	}
 	if (distance && target->Type == ST_ACTOR) {
-		distance += static_cast<const Actor*>(target)->CircleSize2Radius() * 4;
+		distance -= static_cast<const Actor*>(target)->CircleSize2Radius() * 4;
 	}
 
 	MoveNearerTo(Sender, p, distance, dont_release);

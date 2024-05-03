@@ -8,7 +8,7 @@ FUNCTION(ADD_FLAG_IF_SUPPORTED)
 	SET(multiValueArgs "")
 	CMAKE_PARSE_ARGUMENTS("" "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
-	IF(_VALUE)
+	IF(DEFINED _VALUE) # so passing 0 works
 		SET(TEST_FLAG "${_FLAG}=${_VALUE}")
 	ELSE ()
 		SET(TEST_FLAG "${_FLAG}")
@@ -18,7 +18,7 @@ FUNCTION(ADD_FLAG_IF_SUPPORTED)
 	CHECK_CXX_COMPILER_FLAG(${TEST_FLAG} ${HAS_FLAG})
 
 	IF(${HAS_FLAG})
-		IF(_VALUE)
+		IF(DEFINED _VALUE)
 			SET(_FLAG "${_FLAG}=${_VALUE}")
 		ENDIF ()
 		SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${_FLAG}" PARENT_SCOPE)
@@ -71,6 +71,7 @@ FUNCTION(CONFIGURE_COMPILER)
 		# Fast math helps us covering some things that need a little more rework soon
 		ADD_FLAG_IF_SUPPORTED(FLAG "-ffast-math")
 		ADD_FLAG_IF_SUPPORTED(FLAG "-frounding-math")
+		ADD_FLAG_IF_SUPPORTED(FLAG "-fno-strict-aliasing")
 
 		IF(WIN32)
 			# GCC 4.5.0+ has shared libstdc++ without dllimport
@@ -109,6 +110,7 @@ FUNCTION(CONFIGURE_COMPILER)
 		ENDIF ()
 
 		ADD_FLAG_IF_SUPPORTED(FLAG "-Wimplicit-fallthrough" VALUE "2")
+		ADD_FLAG_IF_SUPPORTED(FLAG "-Woverloaded-virtual" VALUE "0")
 	ENDIF ()
 
 	IF(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
