@@ -304,7 +304,7 @@ Holder<Sprite2D> GameData::GetBAMSprite(const ResRef &resRef, int cycle, int fra
 {
 	Holder<Sprite2D> tspr;
 	auto af = GetFactoryResourceAs<const AnimationFactory>(resRef, IE_BAM_CLASS_ID, silent);
-	if (!af) return 0;
+	if (!af) return nullptr;
 	if (cycle == -1)
 		tspr = af->GetFrameWithoutCycle( (unsigned short) frame );
 	else
@@ -316,6 +316,7 @@ Holder<Sprite2D> GameData::GetAnySprite(const ResRef& resRef, int cycle, int fra
 {
 	Holder<Sprite2D> img = GetBAMSprite(resRef, cycle, frame, silent);
 	if (img) return img;
+	if (frame > 0) return nullptr;
 
 	// try static image formats to support PNG
 	ResourceHolder<ImageMgr> im = GetResourceHolder<ImageMgr>(resRef);
@@ -1008,7 +1009,7 @@ int GameData::GetMiscRule(const TableMgr::key_t& rowName)
 	return miscRule->QueryFieldSigned<int>(rowName, "VALUE");
 }
 
-int GameData::GetDifficultyMod(ieDword mod, ieDword difficulty)
+int GameData::GetDifficultyMod(ieDword mod, Difficulty difficulty)
 {
 	static bool ignore = false;
 	if (ignore) {
@@ -1021,7 +1022,7 @@ int GameData::GetDifficultyMod(ieDword mod, ieDword difficulty)
 		return 0;
 	}
 
-	return difficultyLevels->QueryFieldSigned<int>(mod, difficulty);
+	return difficultyLevels->QueryFieldSigned<int>(mod, UnderType(difficulty));
 }
 
 int GameData::GetXPBonus(ieDword bonusType, ieDword level)

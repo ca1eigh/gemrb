@@ -552,13 +552,13 @@ void Map::MoveToNewArea(const ResRef &area, const ieVariable& entrance, unsigned
 		// (north first, then south) but it doesn't seem to matter
 		if (direction & ADIRF_NORTH) {
 			X = map->TMap->XCellCount * 32;
-			Y = 0;
+			Y = 64;
 		} else if (direction & ADIRF_EAST) {
 			X = map->TMap->XCellCount * 64;
 			Y = map->TMap->YCellCount * 32;
 		} else if (direction & ADIRF_SOUTH) {
 			X = map->TMap->XCellCount * 32;
-			Y = map->TMap->YCellCount * 64;
+			Y = map->TMap->YCellCount * 64 - 64;
 		} else if (direction & ADIRF_WEST) {
 			X = 0;
 			Y = map->TMap->YCellCount * 32;
@@ -779,8 +779,8 @@ void Map::UpdateScripts()
 		} else if (actor->GetStep() && actor->GetSpeed()) {
 			// Make actors pathfind if there are others nearby
 			// in order to avoid bumping when possible
-			const Actor* nearActor = GetActorInRadius(actor->Pos, GA_NO_DEAD|GA_NO_UNSCHEDULED, actor->GetAnims()->GetCircleSize());
-			if (nearActor && nearActor != actor) {
+			const Actor* nearActor = GetActorInRadius(actor->Pos, GA_NO_DEAD | GA_NO_UNSCHEDULED | GA_NO_SELF, actor->GetAnims()->GetCircleSize(), actor);
+			if (nearActor) {
 				actor->NewPath();
 			}
 			DoStepForActor(actor, time);
@@ -869,8 +869,7 @@ void Map::UpdateScripts()
 
 		// Play the PST specific enter sound
 		if (wasActive & _TRAP_USEPOINT) {
-			core->GetAudioDrv()->Play(ip->EnterWav, SFX_CHAN_ACTIONS,
-				ip->TrapLaunch);
+			core->GetAudioDrv()->Play(ip->EnterWav, SFXChannel::Actions, ip->TrapLaunch);
 		}
 		ip->Update();
 	}
@@ -1285,22 +1284,20 @@ void Map::DrawMap(const Region& viewport, FogRenderer& fogRenderer, uint32_t dFl
 		case AOT_PILE:
 			// draw piles
 			if (!bgoverride) {
-				const Container* c = TMap->GetContainer(pileIdx - 1);
-				
-				BlitFlags flags = SetDrawingStencilForScriptable(c, viewport);
+				BlitFlags flags = SetDrawingStencilForScriptable(pile, viewport);
 				flags |= BlitFlags::COLOR_MOD | BlitFlags::BLENDED;
 				
 				if (timestop) {
 					flags |= BlitFlags::GREY;
 				}
 				
-				Color tint = GetLighting(c->Pos);
+				Color tint = GetLighting(pile->Pos);
 				game->ApplyGlobalTint(tint, flags);
 
-				if (c->Highlight || (debugFlags & DEBUG_SHOW_CONTAINERS)) {
-					c->Draw(true, viewport, tint, flags);
+				if (pile->Highlight || (debugFlags & DEBUG_SHOW_CONTAINERS)) {
+					pile->Draw(true, viewport, tint, flags);
 				} else {
-					c->Draw(false, viewport, tint, flags);
+					pile->Draw(false, viewport, tint, flags);
 				}
 				pile = GetNextPile(pileIdx);
 			}
@@ -2081,6 +2078,62 @@ Actor* Map::GetActorByGlobalID(ieDword objectID) const
  GA_POINT     64  - not actor specific
  GA_NO_HIDDEN 128 - hidden actors don't play
 */
+Scriptable* Map::GetScriptable(const Point& p, int flags, const Movable* checker) const
+{
+	auto actor = GetActor(p, flags, checker);
+	if (actor) return actor;
+
+	size_t i = TMap->GetDoorCount();
+	while (i--) {
+		Door* door = TMap->GetDoor(i);
+		if (door->IsOver(p)) return door;
+	}
+
+	i = TMap->GetContainerCount();
+	while (i--) {
+		Container* cont = TMap->GetContainer(i);
+		if (cont->IsOver(p)) return cont;
+	}
+
+	i = TMap->GetInfoPointCount();
+	while (i--) {
+		InfoPoint* ip = TMap->GetInfoPoint(i);
+		if (ip->IsOver(p)) return ip;
+	}
+
+	return nullptr;
+}
+
+// deliberately excluding actors
+std::vector<Scriptable*> Map::GetScriptablesInRect(const Point& p, unsigned int radius) const
+{
+	std::vector<Scriptable*> neighbours;
+	Region rect(p, Size());
+	radius = Feet2Pixels(radius, 0);
+	rect.ExpandAllSides(radius);
+	rect.y += radius / 4;
+	rect.h -= radius / 2;
+
+	size_t i = TMap->GetDoorCount();
+	while (i--) {
+		Door* door = TMap->GetDoor(i);
+		if (door->BBox.IntersectsRegion(rect)) neighbours.emplace_back(door);
+	}
+
+	i = TMap->GetContainerCount();
+	while (i--) {
+		Container* cont = TMap->GetContainer(i);
+		if (cont->BBox.IntersectsRegion(rect)) neighbours.emplace_back(cont);
+	}
+
+	i = TMap->GetInfoPointCount();
+	while (i--) {
+		InfoPoint* ip = TMap->GetInfoPoint(i);
+		if (ip->BBox.IntersectsRegion(rect)) neighbours.emplace_back(ip);
+	}
+	return neighbours;
+}
+
 Actor* Map::GetActor(const Point &p, int flags, const Movable *checker) const
 {
 	for (auto actor : actors) {
@@ -2094,12 +2147,12 @@ Actor* Map::GetActor(const Point &p, int flags, const Movable *checker) const
 	return NULL;
 }
 
-Actor* Map::GetActorInRadius(const Point &p, int flags, unsigned int radius) const
+Actor* Map::GetActorInRadius(const Point& p, int flags, unsigned int radius, const Scriptable* checker) const
 {
 	for (auto actor : actors) {
 		if (PersonalDistance( p, actor ) > radius)
 			continue;
-		if (!actor->ValidTarget(flags) ) {
+		if (!actor->ValidTarget(flags, checker)) {
 			continue;
 		}
 		return actor;
@@ -2127,7 +2180,6 @@ std::vector<Actor *> Map::GetAllActorsInRadius(const Point &p, int flags, unsign
 	}
 	return neighbours;
 }
-
 
 Actor* Map::GetActor(const ieVariable& Name, int flags) const
 {
@@ -2197,7 +2249,7 @@ void Map::PurgeArea(bool items)
 				continue;
 			}
 
-			if (ac->RemovalTime > core->GetGame()->GameTime) {
+			if (ac->Timers.removalTime > core->GetGame()->GameTime) {
 				continue;
 			}
 
@@ -2473,6 +2525,9 @@ PathMapFlags Map::GetBlockedTile(const SearchmapPoint& p, int size) const
 PathMapFlags Map::GetBlockedTile(const SearchmapPoint& p) const
 {
 	PathMapFlags ret = tileProps.QuerySearchMap(p);
+	if (bool(ret & PathMapFlags::TRAVEL)) {
+		ret |= PathMapFlags::PASSABLE;
+	}
 	if (bool(ret & (PathMapFlags::DOOR_IMPASSABLE|PathMapFlags::ACTOR))) {
 		ret &= ~PathMapFlags::PASSABLE;
 	}
@@ -2573,7 +2628,7 @@ bool Map::IsVisibleLOS(const Point &s, const Point &d, const Actor *caller) cons
 bool Map::IsWalkableTo(const Point &s, const Point &d, bool actorsAreBlocking, const Actor *caller) const
 {
 	PathMapFlags ret = GetBlockedInLine(s, d, true, caller);
-	PathMapFlags mask = PathMapFlags::PASSABLE | PathMapFlags::TRAVEL | (actorsAreBlocking ? PathMapFlags::UNMARKED : PathMapFlags::ACTOR);
+	PathMapFlags mask = PathMapFlags::PASSABLE | (actorsAreBlocking ? PathMapFlags::UNMARKED : PathMapFlags::ACTOR);
 	return bool(ret & mask);
 }
 
@@ -2853,7 +2908,7 @@ void Map::RemoveActor(Actor* actor)
 
 //returns true if none of the partymembers are on the map
 //and noone is trying to follow the party out
-bool Map::CanFree()
+bool Map::CanFree() const
 {
 	for (const auto& actor : actors) {
 		if (actor->IsPartyMember()) {
@@ -2883,8 +2938,6 @@ bool Map::CanFree()
 			return false;
 		}
 	}
-	//we expect the area to be swapped out, so we simply remove the corpses now
-	PurgeArea(false);
 	return true;
 }
 
@@ -3164,7 +3217,8 @@ bool Map::SpawnCreature(const Point& pos, const ResRef& creResRef, const Size& r
 		}
 	}
 
-	while (count--) {
+	while (count) {
+		--count;
 		Actor* creature = gamedata->GetCreature(sg ? (*sg)[count] : creResRef);
 		if (!creature) {
 			continue;
@@ -3251,13 +3305,13 @@ void Map::UpdateSpawns() const
 	}
 	ieDword time = core->GetGame()->GameTime;
 	for (auto spawn : spawns) {
-		if ((spawn->Method & (SPF_NOSPAWN|SPF_WAIT)) == (SPF_NOSPAWN|SPF_WAIT)) {
-			//only reactivate the spawn point if the party cannot currently see it;
-			//also make sure the party has moved away some
-			if (spawn->NextSpawn < time && !IsVisible(spawn->Pos) &&
-				!GetActorInRadius(spawn->Pos, GA_NO_DEAD|GA_NO_ENEMY|GA_NO_NEUTRAL|GA_NO_UNSCHEDULED, SPAWN_RANGE * 2)) {
-				spawn->Method &= ~SPF_WAIT;
-			}
+		if ((spawn->Method & (SPF_NOSPAWN | SPF_WAIT)) != (SPF_NOSPAWN | SPF_WAIT)) continue;
+
+		// only reactivate the spawn point if the party cannot currently see it;
+		// also make sure the party has moved away some
+		if (spawn->NextSpawn < time && !IsVisible(spawn->Pos) &&
+		    !GetActorInRadius(spawn->Pos, GA_NO_DEAD | GA_NO_ENEMY | GA_NO_NEUTRAL | GA_NO_UNSCHEDULED, SPAWN_RANGE * 2)) {
+			spawn->Method &= ~SPF_WAIT;
 		}
 	}
 }
@@ -3714,9 +3768,9 @@ void Map::ClearTrap(Actor *actor, ieDword InTrap) const
 
 void Map::SetTrackString(ieStrRef strref, int flg, int difficulty)
 {
-	trackString = strref;
-	trackFlag = flg;
-	trackDiff = (ieWord) difficulty;
+	tracking.text = strref;
+	tracking.enabled = flg;
+	tracking.difficulty = difficulty;
 }
 
 bool Map::DisplayTrackString(const Actor *target) const
@@ -3729,21 +3783,21 @@ bool Map::DisplayTrackString(const Actor *target) const
 	if (core->HasFeature(GFFlags::RULES_3ED)) {
 		// ~Wilderness Lore check. Wilderness Lore (skill + D20 roll + WIS modifier) =  %d vs. ((Area difficulty pct / 5) + 10) = %d ( Skill + WIS MOD = %d ).~
 		skill += target->LuckyRoll(1, 20, 0) + target->GetAbilityBonus(IE_WIS);
-		success = skill > (trackDiff/5 + 10);
+		success = skill > (tracking.difficulty / 5 + 10);
 	} else {
 		skill += (target->GetStat(IE_LEVEL)/3)*5 + target->GetStat(IE_WIS)*5;
-		success = core->Roll(1, 100, trackDiff) > skill;
+		success = core->Roll(1, 100, tracking.difficulty) > skill;
 	}
 	if (!success) {
 		displaymsg->DisplayConstantStringName(HCStrings::TrackingFailed, GUIColors::LIGHTGREY, target);
 		return true;
 	}
-	if (trackFlag) {
-			core->GetTokenDictionary()["CREATURE"] = core->GetString(trackString);
-			displaymsg->DisplayConstantStringName(HCStrings::Tracking, GUIColors::LIGHTGREY, target);
-			return false;
+	if (tracking.enabled) {
+		core->GetTokenDictionary()["CREATURE"] = core->GetString(tracking.text);
+		displaymsg->DisplayConstantStringName(HCStrings::Tracking, GUIColors::LIGHTGREY, target);
+		return false;
 	}
-	displaymsg->DisplayStringName(trackString, GUIColors::LIGHTGREY, target, STRING_FLAGS::NONE);
+	displaymsg->DisplayStringName(tracking.text, GUIColors::LIGHTGREY, target, STRING_FLAGS::NONE);
 	return false;
 }
 
@@ -3961,8 +4015,8 @@ void Map::SetBackground(const ResRef &bgResRef, ieDword duration)
 
 Actor* Map::GetRandomEnemySeen(const Actor* origin) const
 {
-	int type = GetGroup(origin);
-	if (type == 2) {
+	GroupType type = GetGroup(origin);
+	if (type == GroupType::Neutral) {
 		return nullptr; //no enemies
 	}
 
@@ -3970,11 +4024,11 @@ Actor* Map::GetRandomEnemySeen(const Actor* origin) const
 	std::vector<Actor*> neighbours = GetAllActorsInRadius(origin->Pos, flags, origin->GetBase(IE_VISUALRANGE), origin);
 	Actor* victim = neighbours[RAND<size_t>(0, neighbours.size() - 1)];
 
-	if (type) { // origin is PC
+	if (type == GroupType::PC) {
 		if (victim->GetStat(IE_EA) >= EA_EVILCUTOFF) {
 			return victim;
 		}
-	} else {
+	} else { // GroupType::Enemy
 		if (victim->GetStat(IE_EA) <= EA_GOODCUTOFF) {
 			return victim;
 		}

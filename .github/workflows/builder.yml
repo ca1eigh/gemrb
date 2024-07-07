@@ -68,7 +68,7 @@ jobs:
       run: |
         # NOTE: only do it on clang builds if we ever add more compilers
         filepath=Apple/OSX
-        tarpath=/Applications/GemRB.app
+        tarpath=/Applications/gemrb.app
 
         # there are no tags, so improvise
         version=$({ date +%F; git describe --always; } | tr -d '\n') || exit 14
@@ -76,8 +76,8 @@ jobs:
         tar cjf $file $tarpath || exit 15
 
         filepath="$filepath/$file"
-        scp $file \
-        gemrb-travisbot@frs.sourceforge.net:/home/frs/project/gemrb/Buildbot\\\ Binaries/$filepath
+        scp -v "$file" \
+        "gemrb-travisbot@frs.sourceforge.net:/home/frs/project/gemrb/botbins/$filepath"
 
   linux:
     name: Linux AppImage build

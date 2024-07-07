@@ -46,10 +46,10 @@
 #include "Scriptable/Container.h"
 #include "Scriptable/Door.h"
 #include "Scriptable/InfoPoint.h"
+#include "fmt/ranges.h"
 
 #include <array>
 #include <cmath>
-#include <fmt/ranges.h>
 
 namespace GemRB {
 
@@ -217,7 +217,7 @@ Point GameControl::GetFormationPoint(const Point& origin, size_t pos, float_t an
 	while (step < maxStep) {
 		auto it = std::find_if(exclude.begin(), exclude.end(), [&](const Point& p) {
 			// look for points within some radius
-			return p.isWithinRadius(radius, dest);
+			return p.IsWithinRadius(radius, dest);
 		});
 
 		if (it != exclude.end()) {
@@ -1887,6 +1887,7 @@ void GameControl::HandleContainer(Container *container, Actor *actor)
 
 	if ((targetMode == TargetMode::Cast) && spellCount) {
 		//we'll get the container back from the coordinates
+		target_types |= GA_POINT;
 		TryToCast(actor, container->Pos);
 		//Do not reset target_mode, TryToCast does it for us!!
 		return;
@@ -2193,8 +2194,8 @@ bool GameControl::OnMouseUp(const MouseEvent& me, unsigned short Mod)
 		if (overMe && (overMe->Type == ST_DOOR || overMe->Type == ST_CONTAINER || (overMe->Type == ST_TRAVEL && targetMode == TargetMode::None))) {
 			// move to the object before trying to interact with it
 			Actor* mainActor = GetMainSelectedActor();
-			if (mainActor && overMe->Type == ST_CONTAINER) {
-				CreateMovement(mainActor, p, false, tryToRun); // let one actor handle loot and containers
+			if (mainActor && overMe->Type != ST_TRAVEL) {
+				CreateMovement(mainActor, p, false, tryToRun); // let one actor handle doors, loot and containers
 			} else {
 				CommandSelectedMovement(p, true, false, tryToRun);
 			}
@@ -2242,6 +2243,7 @@ void GameControl::PerformSelectedAction(const Point& p)
 	//add a check if you don't want some random monster handle doors and such
 	if (targetMode == TargetMode::Cast && !(gamedata->GetSpecialSpell(spellName) & SPEC_AREA)) {
 		//the player is using an item or spell on the ground
+		target_types |= GA_POINT;
 		TryToCast(selectedActor, p);
 	} else if (!overMe) {
 		return;

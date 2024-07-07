@@ -226,7 +226,6 @@ ScriptedAnimation::ScriptedAnimation(DataStream* stream)
 		return;
 	}
 	ResRef Anim1ResRef;
-	int seq1, seq2, seq3;
 	stream->ReadResRef( Anim1ResRef );
 	// unused second resref; m_cShadowVidCellRef in the original
 	stream->Seek( 8, GEM_CURRENT_POS );
@@ -261,10 +260,11 @@ ScriptedAnimation::ScriptedAnimation(DataStream* stream)
 	stream->ReadDword(Duration);
 	// m_cVVCResRes in the original, supposedly a self-reference
 	stream->Seek( 8, GEM_CURRENT_POS );
+
 	stream->ReadDword(tmp); // 1 indexed, m_nStartSequence
-	seq1 = ((signed) tmp) - 1;
+	int seq1 = ((signed) tmp) - 1;
 	stream->ReadDword(tmp); // 1 indexed; 0 or less for none, m_nLoopSequence
-	seq2 = ((signed) tmp) - 1;
+	int seq2 = ((signed) tmp) - 1;
 	// original
 	//   LONG    m_nCurrentSequence; //1 indexed
 	//   DWORD   m_sequenceFlags; // only bit0 for continuous playback known
@@ -275,7 +275,7 @@ ScriptedAnimation::ScriptedAnimation(DataStream* stream)
 	// original: CResRef   m_cAlphaBamRef;
 	stream->Seek( 8, GEM_CURRENT_POS );
 	stream->ReadDword(tmp); // m_nEndSequence
-	seq3 = ((signed) tmp) - 1;
+	int seq3 = ((signed) tmp) - 1;
 	stream->ReadResRef( sounds[P_RELEASE] );
 	// original bg2 has 4*84 of reserved space here
 
@@ -304,17 +304,17 @@ ScriptedAnimation::ScriptedAnimation(DataStream* stream)
 			return;
 		}
 		for (AnimationFactory::index_t i = 0; i < MAX_ORIENT; i++) {
-			AnimationFactory::index_t phaseHold = P_HOLD * MAX_ORIENT + i;
+			AnimationFactory::index_t phaseHold = static_cast<AnimationFactory::index_t>(P_HOLD * MAX_ORIENT) + i;
 
 			if (seq1 >= 0) {
-				AnimationFactory::index_t phaseOnset = P_ONSET * MAX_ORIENT + i;
+				AnimationFactory::index_t phaseOnset = static_cast<AnimationFactory::index_t>(P_ONSET * MAX_ORIENT) + i;
 				anims[phaseOnset] = PrepareAnimation(*af, static_cast<Animation::index_t>(seq1), i);
 			}
 
 			anims[phaseHold] = PrepareAnimation(*af, static_cast<Animation::index_t>(seq2), i, SequenceFlags & IE_VVC_LOOP);
 
 			if (seq3 >= 0) {
-				AnimationFactory::index_t phaseRelease = P_RELEASE * MAX_ORIENT + i;
+				AnimationFactory::index_t phaseRelease = static_cast<AnimationFactory::index_t>(P_RELEASE * MAX_ORIENT) + i;
 				anims[phaseRelease] = PrepareAnimation(*af, static_cast<Animation::index_t>(seq3), i);
 			}
 		}
@@ -564,7 +564,7 @@ void ScriptedAnimation::UpdateSound()
 		if (SoundPhase <= P_RELEASE) {
 			bool loop = SoundPhase == P_HOLD && (SequenceFlags & IE_VVC_LOOP);
 			unsigned int flags = GEM_SND_SPATIAL | (loop ? GEM_SND_LOOPING : 0);
-			sound_handle = core->GetAudioDrv()->Play(sounds[SoundPhase], SFX_CHAN_HITS, soundpos, flags);
+			sound_handle = core->GetAudioDrv()->Play(sounds[SoundPhase], SFXChannel::Hits, soundpos, flags);
 			SoundPhase++;
 		}
 	} else {

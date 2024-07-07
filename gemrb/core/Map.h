@@ -297,6 +297,13 @@ enum MAP_DEBUG_FLAGS : uint32_t {
 	DEBUG_SHOW_FOG_ALL			= (DEBUG_SHOW_FOG_UNEXPLORED|DEBUG_SHOW_FOG_INVISIBLE),
 };
 
+struct TrackingData {
+	ResRef areaName;
+	ieStrRef text = ieStrRef::INVALID;
+	bool enabled = false;
+	int difficulty = 0;
+};
+
 using aniIterator = std::list<AreaAnimation>::iterator;
 using scaIterator = std::list<VEFObject*>::const_iterator;
 using proIterator = std::list<Projectile*>::const_iterator;
@@ -379,9 +386,7 @@ public:
 
 private:
 	uint32_t debugFlags = 0;
-	ieStrRef trackString = ieStrRef::INVALID;
-	int trackFlag = 0;
-	ieWord trackDiff = 0;
+	TrackingData tracking;
 
 	std::list<AreaAnimation> animations;
 	std::vector< Actor*> actors;
@@ -511,14 +516,16 @@ public:
 	Container *GetContainerByGlobalID(ieDword objectID) const;
 	InfoPoint *GetInfoPointByGlobalID(ieDword objectID) const;
 	Actor* GetActorByGlobalID(ieDword objectID) const;
-	Actor* GetActorInRadius(const Point &p, int flags, unsigned int radius) const;
+	Actor* GetActorInRadius(const Point& p, int flags, unsigned int radius, const Scriptable* checker = nullptr) const;
 	std::vector<Actor *> GetAllActorsInRadius(const Point &p, int flags, unsigned int radius, const Scriptable *see = NULL) const;
 	const std::vector<Actor *> &GetAllActors() const { return actors; }
 	std::vector<Actor*> GetActorsInRect(const Region& rgn, int excludeFlags) const;
 	Actor* GetActor(const ieVariable& Name, int flags) const;
 	Actor* GetActor(int i, bool any) const;
 	Actor* GetActor(const Point &p, int flags, const Movable *checker = NULL) const;
+	Scriptable* GetScriptable(const Point& p, int flags, const Movable* checker = nullptr) const;
 	Scriptable *GetScriptableByDialog(const ResRef& resref) const;
+	std::vector<Scriptable*> GetScriptablesInRect(const Point& p, unsigned int radius) const;
 	Actor *GetItemByDialog(const ResRef& resref) const;
 	Actor *GetActorByResource(const ResRef& resref) const;
 	Actor *GetActorByScriptName(const ieVariable& name) const;
@@ -555,7 +562,7 @@ public:
 	ieDword HasVVCCell(const ResRef &resource, const Point &p) const;
 	void AddVVCell(VEFObject* vvc);
 	void AddVVCell(ScriptedAnimation* vvc);
-	bool CanFree();
+	bool CanFree() const;
 	int GetCursor(const Point &p) const;
 	//adds a sparkle puff of colour to a point in the area
 	//FragAnimID is an optional avatar animation ID (see avatars.2da) for
@@ -592,10 +599,8 @@ public:
 	void AdjustPosition(Point& goal, const Size& startingRadius = ZeroSize, int size = -1) const;
 	void AdjustPositionNavmap(Point& goal, const Size& radius = ZeroSize) const;
 	/* Finds the path which leads the farthest from d */
-	PathListNode* RunAway(const Point &s, const Point &d, unsigned int size, int maxPathLength, bool backAway, const Actor *caller) const;
+	PathListNode* RunAway(const Point& s, const Point& d, int maxPathLength, bool backAway, const Actor* caller) const;
 	PathListNode* RandomWalk(const Point &s, int size, int radius, const Actor *caller) const;
-	/* Returns true if there is no path to d */
-	bool TargetUnreachable(const Point &s, const Point &d, unsigned int size, bool actorsAreBlocking = false) const;
 	/* returns true if there is enemy visible */
 	bool AnyPCSeesEnemy() const;
 	/* Finds straight path from s, length l and orientation o, f=1 passes wall, f=2 rebounds from wall*/

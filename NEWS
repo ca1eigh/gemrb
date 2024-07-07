@@ -1,12 +1,16 @@
-GemRB git (f69ab16):
+GemRB git (e46fb65e):
   New features:
     - 
     - full i18n (language) support, custom journal entries
+    - BMP v3 and v5 support
+    - chunking approximation
     - small test suite, tracy support
     - iwd2 identification variants and speed data
+    - nwn-for-bg2 compatibility
 
   Improved features:
     - 
+    - area music
     - colored logging, pathfinding, drawing
     - switched to c++14, build system
     - ee compat, effects, modals, projectiles, familiars

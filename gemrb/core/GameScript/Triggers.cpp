@@ -3337,7 +3337,7 @@ int GameScript::AttackedBy(Scriptable *Sender, const Trigger *parameters)
 {
 	bool match = Sender->MatchTriggerWithObject(trigger_attackedby, parameters->objectParameter, parameters->int0Parameter);
 	const Scriptable* target = GetScriptableFromObject(Sender, parameters->objectParameter);
-	if (match && target && Sender->Type == ST_ACTOR) {
+	if (match && target && target != Sender && Sender->Type == ST_ACTOR) {
 		Sender->objects.LastMarked = target->GetGlobalID();
 	}
 	return match;
@@ -3527,22 +3527,20 @@ int GameScript::DifficultyLT(Scriptable */*Sender*/, const Trigger *parameters)
 	return diff+1<(ieDword) parameters->int0Parameter;
 }
 
+// supposedly returns true only if the area is about to be unloaded because
+// no player characters were present in the last script round
 int GameScript::Vacant(Scriptable *Sender, const Trigger */*parameters*/)
 {
 	if (Sender->Type!=ST_AREA) {
 		return 0;
 	}
 	const Map *map = static_cast<Map*>(Sender);
-	// map->CanFree() has side effects, don't use it here! Would make some loot and corpses disappear immediately
+
 	int i = map->GetActorCount(true);
 	while (i--) {
 		const Actor *actor = map->GetActor(i, true);
 		bool usedExit = actor->GetInternalFlag() & IF_USEEXIT;
-		if (actor->IsPartyMember()) {
-			if (!usedExit) {
-				return 0;
-			}
-		} else if (usedExit) {
+		if (!usedExit && actor->IsPartyMember()) {
 			return 0;
 		}
 	}

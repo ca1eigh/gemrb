@@ -193,7 +193,6 @@ static Targets *EvaluateObject(const Map *map, const Scriptable *Sender, const O
 		if (!ac) continue; // is this check really needed?
 		// don't return Sender in IDS targeting!
 		// unless it's pst, which relies on it in 3012cut2-3012cut7.bcs
-		// FIXME: do we need more fine-grained control?
 		// FIXME: stop abusing old GF flags
 		if (!core->HasFeature(GFFlags::AREA_OVERRIDE) && ac == Sender) continue;
 
@@ -203,7 +202,6 @@ static Targets *EvaluateObject(const Map *map, const Scriptable *Sender, const O
 		}
 
 		// this is needed so eg. Range trigger gets a good object
-		// HACK: our parsing of Attack([0]) is broken
 		if (!filtered) {
 			// if no filters were applied..
 			assert(!tgts);
@@ -219,13 +217,35 @@ static Targets *EvaluateObject(const Map *map, const Scriptable *Sender, const O
 	return tgts;
 }
 
+static bool IsTargetingAnyone(const Object* oC)
+{
+	// make sure no other targeting/matching is at play
+	if (oC->objectFields[0] == -1) return false;
+	if (!oC->objectNameRef.IsEmpty()) return false;
+	for (int i = 0; i < MaxObjectNesting; i++) {
+		if (oC->objectFilters[i] > 0) return false;
+	}
+
+	int sum = 0;
+	for (int j = 0; j < ObjectIDSCount; j++) {
+		sum += oC->objectFields[j];
+	}
+	return sum == 0;
+}
+
 Targets *GetAllObjects(const Map *map, Scriptable *Sender, const Object *oC, int ga_flags)
 {
 	if (!oC) {
 		//return all objects
 		return GetAllActors(Sender, ga_flags);
 	}
-	Targets* tgts = EvaluateObject(map, Sender, oC, ga_flags);
+	Targets* tgts;
+	if (IsTargetingAnyone(oC)) { // handle [ANYONE]/[0] directly
+		tgts = GetAllActors(Sender, ga_flags);
+		if (tgts) tgts->Pop(); // remove self
+	} else {
+		tgts = EvaluateObject(map, Sender, oC, ga_flags);
+	}
 	//if we couldn't find an endpoint by name or object qualifiers
 	//it is not an Actor, but could still be a Door or Container (scriptable)
 	if (!tgts && oC->objectName[0]) {
@@ -480,6 +500,9 @@ Targets *GetMyTarget(const Scriptable *Sender, const Actor *actor, Targets *para
 	}
 	parameters->Clear();
 	if (actor) {
+		// NOTE: bgs just checked a separate variable, only set in Attack actions when
+		// the target changed, so this is potentially wrong (spell actions could change LastTarget)
+		// in vanilla games it's only used once, in iwd2
 		Actor* target = actor->GetCurrentArea()->GetActorByGlobalID(actor->objects.LastTarget);
 		if (target) {
 			parameters->AddTarget(target, 0, ga_flags);
@@ -586,9 +609,9 @@ Targets *ClosestEnemySummoned(const Scriptable *origin, Targets *parameters, int
 	}
 	const Actor *sender = static_cast<const Actor*>(origin);
 	//determining the allegiance of the origin
-	int type = GetGroup(sender);
+	GroupType type = GetGroup(sender);
 
-	if (type==2) {
+	if (type == GroupType::Neutral) {
 		parameters->Clear();
 		return parameters;
 	}
@@ -605,12 +628,12 @@ Targets *ClosestEnemySummoned(const Scriptable *origin, Targets *parameters, int
 			t = parameters->GetNextTarget(m, ST_ACTOR);
 			continue;
 		}
-		if (type) { //origin is PC
+		if (type == GroupType::PC) {
 			if (tmp->GetStat(IE_EA) <= EA_GOODCUTOFF) {
 				t = parameters->GetNextTarget(m, ST_ACTOR);
 				continue;
 			}
-		} else {
+		} else { // GroupType::Enemy
 			if (tmp->GetStat(IE_EA) >= EA_EVILCUTOFF) {
 				t = parameters->GetNextTarget(m, ST_ACTOR);
 				continue;
@@ -638,9 +661,9 @@ Targets *XthNearestEnemyOfType(const Scriptable *origin, Targets *parameters, un
 	}
 	const Actor *actor = static_cast<const Actor*>(origin);
 	//determining the allegiance of the origin
-	int type = GetGroup(actor);
+	GroupType type = GetGroup(actor);
 
-	if (type==2) {
+	if (type == GroupType::Neutral) {
 		parameters->Clear();
 		return parameters;
 	}
@@ -657,7 +680,7 @@ Targets *XthNearestEnemyOfType(const Scriptable *origin, Targets *parameters, un
 			t = parameters->RemoveTargetAt(m);
 			continue;
 		}
-		if (type) { //origin is PC
+		if (type == GroupType::PC) {
 			if (actor->GetStat(IE_EA) <= EA_EVILCUTOFF) {
 				t=parameters->RemoveTargetAt(m);
 				continue;
@@ -681,8 +704,8 @@ Targets* XthNearestEnemyOf(Targets* parameters, int count, int gaFlags, bool far
 		return parameters;
 	}
 	// determining the allegiance of the origin
-	int type = GetGroup(origin);
-	if (type == 2) {
+	GroupType type = GetGroup(origin);
+	if (type == GroupType::Neutral) {
 		return parameters;
 	}
 
@@ -700,11 +723,11 @@ Targets* XthNearestEnemyOf(Targets* parameters, int count, int gaFlags, bool far
 			// deliberately underflow later, so we can reuse the rest of the code
 			distance = -distance;
 		}
-		if (type) { //origin is PC
+		if (type == GroupType::PC) {
 			if (ac->GetStat(IE_EA) >= EA_EVILCUTOFF) {
 				parameters->AddTarget(ac, distance, gaFlags);
 			}
-		} else {
+		} else { // GroupType::Enemy
 			if (ac->GetStat(IE_EA) <= EA_GOODCUTOFF) {
 				parameters->AddTarget(ac, distance, gaFlags);
 			}

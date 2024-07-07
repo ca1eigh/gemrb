@@ -1413,7 +1413,7 @@ If row is specified, it can also append text to existing rows.\n\
 \n\
 **Return value:** N/A\n\
 \n\
-**See also:** [TextArea_Clear](TextArea_Clear.md), [Control_SetText](Control_SetText.md), [Control_QueryText](Control_QueryText.md)"
+**See also:** [Control_SetText](Control_SetText.md), [Control_QueryText](Control_QueryText.md)"
 );
 
 static PyObject* GemRB_TextArea_Append(PyObject* self, PyObject* args)
@@ -3453,7 +3453,7 @@ static PyObject* GemRB_Button_SetPictureClipping(PyObject* self, PyObject* args)
 PyDoc_STRVAR( GemRB_Button_SetPicture__doc,
 "===== Button_SetPicture =====\n\
 \n\
-**Metaclass Prototype:** SetPicture (PictureResRef, DefaultResRef)\n\
+**Metaclass Prototype:** SetPicture (PictureResRef[, DefaultResRef])\n\
 \n\
 **Description:** Sets the Picture of a Button Control from a BMP file or a Sprite2D.\n\
 \n\
@@ -3792,7 +3792,6 @@ static PyObject* GemRB_VerbalConstant(PyObject * /*self*/, PyObject* args)
 {
 	int globalID;
 	Verbal str;
-	unsigned int channel;
 
 	if (!PyArg_ParseTuple(args, "iI", &globalID, &str)) {
 		return AttributeError( GemRB_VerbalConstant__doc );
@@ -3807,7 +3806,7 @@ static PyObject* GemRB_VerbalConstant(PyObject * /*self*/, PyObject* args)
 
 	//get soundset based string constant
 	std::string sound = fmt::format("{}{}{}{:02d}", fmt::WideToChar{actor->PCStats->SoundFolder}, PathDelimiter, actor->PCStats->SoundSet, str);
-	channel = actor->InParty ? SFX_CHAN_CHAR0 + actor->InParty - 1 : SFX_CHAN_DIALOG;
+	SFXChannel channel = actor->InParty ? SFXChannel(ieByte(SFXChannel::Char0) + actor->InParty - 1) : SFXChannel::Dialog;
 	core->GetAudioDrv()->Play(sound, channel, Point(), GEM_SND_SPEECH | GEM_SND_EFX);
 	Py_RETURN_NONE;
 }
@@ -3842,7 +3841,7 @@ static PyObject* GemRB_PlaySound(PyObject * /*self*/, PyObject* args)
 	char *channel_name = NULL;
 	Point pos;
 	unsigned int flags = 0;
-	unsigned int channel = SFX_CHAN_GUI;
+	SFXChannel channel = SFXChannel::GUI;
 	int index;
 
 	if (PyArg_ParseTuple( args, "i|z", &index, &channel_name) ) {
@@ -7020,7 +7019,7 @@ static PyObject* GemRB_ChangeContainerItem(PyObject * /*self*/, PyObject* args)
 	}
 
 	if (Sound && Sound[0]) {
-		core->GetAudioDrv()->Play(Sound, SFX_CHAN_GUI);
+		core->GetAudioDrv()->Play(Sound, SFXChannel::GUI);
 	}
 	Py_RETURN_NONE;
 }
@@ -7553,7 +7552,7 @@ static PyObject* ChangeStoreItem(Store* store, int slot, Actor* actor, StoreActi
 		OverrideSound(itemResRef, SoundItem, IS_DROP);
 		if (!SoundItem.IsEmpty()) {
 			// speech means we'll only play the last sound if multiple items were bought
-			core->GetAudioDrv()->Play(SoundItem, SFX_CHAN_GUI, Point(), GEM_SND_SPEECH);
+			core->GetAudioDrv()->Play(SoundItem, SFXChannel::GUI, Point(), GEM_SND_SPEECH);
 		}
 		res = ASI_SUCCESS;
 		break;
@@ -7989,6 +7988,7 @@ static PyObject* GemRB_ConsoleWindowLog(PyObject * /*self*/, PyObject* args)
 {
 	LogLevel logLevel;
 	PARSE_ARGS(args, "b", &logLevel);
+	if (logLevel >= LogLevel::count) logLevel = LogLevel::DEBUG;
 
 	SetConsoleWindowLogLevel(logLevel);
 	Py_RETURN_NONE;
@@ -9343,7 +9343,7 @@ static PyObject* GemRB_DragItem(PyObject * /*self*/, PyObject* args)
 
 	OverrideSound(si->ItemResRef, Sound, IS_GET);
 	if (!Sound.IsEmpty()) {
-		core->GetAudioDrv()->Play(Sound, SFX_CHAN_GUI);
+		core->GetAudioDrv()->Play(Sound, SFXChannel::GUI);
 	}
 
 	//if res is positive, it is gold!
@@ -9417,7 +9417,7 @@ static PyObject* GemRB_DropDraggedItem(PyObject * /*self*/, PyObject* args)
 		int res = cc->AddItem(si);
 		OverrideSound(si->ItemResRef, Sound, IS_DROP);
 		if (!Sound.IsEmpty()) {
-			core->GetAudioDrv()->Play(Sound, SFX_CHAN_GUI);
+			core->GetAudioDrv()->Play(Sound, SFXChannel::GUI);
 		}
 		if (res == 2) {
 			// Whole amount was placed
@@ -9548,7 +9548,7 @@ static PyObject* GemRB_DropDraggedItem(PyObject * /*self*/, PyObject* args)
 	}
 
 	if (Sound && Sound[0]) {
-		core->GetAudioDrv()->Play(Sound, SFX_CHAN_GUI);
+		core->GetAudioDrv()->Play(Sound, SFXChannel::GUI);
 	}
 	return PyLong_FromLong(res);
 }
@@ -11651,7 +11651,7 @@ static PyObject* GemRB_UseItem(PyObject * /*self*/, PyObject* args)
 			break;
 		case TARGET_NONE:
 			gc->ResetTargetMode();
-			actor->UseItem(itemdata.slot, static_cast<ieDword>(itemdata.headerindex), nullptr, flags);
+			actor->UseItem(itemdata.slot, static_cast<int>(itemdata.headerindex), nullptr, flags);
 			break;
 		case TARGET_AREA:
 			gc->SetupItemUse(itemdata.slot, itemdata.headerindex, actor, GA_POINT, itemdata.TargetNumber);
@@ -11818,7 +11818,7 @@ static PyObject* GemRB_RunRestScripts(PyObject * /*self*/, PyObject* /*args*/)
 			}
 			GameScript* restscript = new GameScript(resRef, tar, 0, false);
 			if (restscript->Update()) {
-				// there could be several steps involved, so we can't reliably check tar->GetLastRested()
+				// there could be several steps involved, so we can't reliably check tar->Timers.lastRested
 				dreamed = 1;
 			}
 			delete restscript;
@@ -12280,7 +12280,7 @@ static PyObject* GemRB_GetCombatDetails(PyObject * /*self*/, PyObject* args)
 	GET_ACTOR_GLOBAL();
 
 	leftorright = leftorright&1;
-	WeaponInfo wi = actor->weaponInfo[leftorright && actor->IsDualWielding()];
+	const WeaponInfo& wi = actor->weaponInfo[leftorright && actor->IsDualWielding()];
 	const ITMExtHeader* hittingheader = wi.extHeader; // same header, except for ranged weapons it is the ammo header
 	int tohit=20;
 	int DamageBonus=0;

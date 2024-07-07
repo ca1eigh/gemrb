@@ -19,7 +19,6 @@
  */
 
 #include "GameScript/GSUtils.h"
-#include "GameScript/Matching.h"
 
 #include "strrefs.h"
 #include "defsounds.h"
@@ -528,13 +527,13 @@ void DisplayStringCore(Scriptable* const Sender, ieStrRef Strref, int flags, con
 		}
 
 		if (flags&DS_QUEUE) soundFlags |= GEM_SND_QUEUE;
-		
-		unsigned int channel = SFX_CHAN_DIALOG;
+
+		SFXChannel channel = SFXChannel::Dialog;
 		if (flags & DS_CONST && actor) {
 			if (actor->InParty > 0) {
-				channel = SFX_CHAN_CHAR0 + actor->InParty - 1;
+				channel = SFXChannel(ieByte(SFXChannel::Char0) + actor->InParty - 1);
 			} else if (actor->GetStat(IE_EA) >= EA_EVILCUTOFF) {
-				channel = SFX_CHAN_MONSTER;
+				channel = SFXChannel::Monster;
 			}
 		}
 		
@@ -1481,7 +1480,7 @@ void AttackCore(Scriptable *Sender, Scriptable *target, int flags)
 
 	// if held or disabled, etc, then cannot start or continue attacking
 	if (attacker->Immobile()) {
-		attacker->roundTime = 0;
+		attacker->Timers.roundStart = 0;
 		Sender->ReleaseCurrentAction();
 		return;
 	}
@@ -1502,7 +1501,12 @@ void AttackCore(Scriptable *Sender, Scriptable *target, int flags)
 
 	if (tar) {
 		// release if target is invisible to sender (because of death or invisbility spell)
-		if (tar->IsInvisibleTo(Sender) || (tar->GetSafeStat(IE_STATE_ID) & STATE_DEAD)){
+		// the original didn't check for dead directly, but it did check area match (we move instead, below)
+		// only for Attack, AttackNoSound, AttackOneRound, maybe not AttackReevaluate
+		if (tar->IsInvisibleTo(Sender) ||
+		    (tar->GetSafeStat(IE_STATE_ID) & STATE_DEAD) ||
+		    (tar->GetInternalFlag() & (IF_ACTIVE | IF_VISIBLE)) != (IF_ACTIVE | IF_VISIBLE) ||
+		    tar->GetStat(IE_AVATARREMOVAL)) {
 			attacker->StopAttack();
 			Sender->ReleaseCurrentAction();
 			attacker->AddTrigger(TriggerEntry(trigger_targetunreachable, tar->GetGlobalID()));
@@ -1603,6 +1607,7 @@ static int GetIdsValue(const char *&symbol, const ResRef& idsname)
 		symbolName[x] = *symbol;
 		symbol++;
 	}
+	if (symbolName.substr(0, 6) == "anyone") return 0;
 	return valHook->GetValue(symbolName);
 }
 
@@ -1661,9 +1666,8 @@ static void ParseObject(const char *&str,const char *&src, Object *&object)
 	case '"':
 		//Scriptable Name
 		src++;
-		int i;
-		for (i=0;i<(int) sizeof(object->objectName)-1 && *src && *src!='"';i++)
-		{
+		uint8_t i;
+		for (i = 0; i < static_cast<uint8_t>(sizeof(object->objectName) - 1) && *src && *src != '"'; i++) {
 			object->objectName[i] = *src;
 			src++;
 		}
@@ -2333,14 +2337,13 @@ bool DiffCore(ieDword a, ieDword b, int diffMode)
 	}
 }
 
-int GetGroup(const Actor *actor)
+GroupType GetGroup(const Actor* actor)
 {
-	int type = 2; //neutral, has no enemies
+	GroupType type = GroupType::Neutral;
 	if (actor->GetStat(IE_EA) <= EA_GOODCUTOFF) {
-		type = 1; //PC
-	}
-	else if (actor->GetStat(IE_EA) >= EA_EVILCUTOFF) {
-		type = 0;
+		type = GroupType::PC;
+	} else if (actor->GetStat(IE_EA) >= EA_EVILCUTOFF) {
+		type = GroupType::Enemy;
 	}
 	return type;
 }
@@ -2348,11 +2351,11 @@ int GetGroup(const Actor *actor)
 Actor *GetNearestEnemyOf(const Map *map, const Actor *origin, int whoseeswho)
 {
 	//determining the allegiance of the origin
-	int type = GetGroup(origin);
+	GroupType type = GetGroup(origin);
 
 	//neutral has no enemies
-	if (type==2) {
-		return NULL;
+	if (type == GroupType::Neutral) {
+		return nullptr;
 	}
 
 	Targets *tgts = new Targets();
@@ -2375,12 +2378,11 @@ Actor *GetNearestEnemyOf(const Map *map, const Actor *origin, int whoseeswho)
 		}
 
 		int distance = Distance(ac, origin);
-		if (type) { //origin is PC
+		if (type == GroupType::PC) {
 			if (ac->GetStat(IE_EA) >= EA_EVILCUTOFF) {
 				tgts->AddTarget(ac, distance, GA_NO_DEAD|GA_NO_UNSCHEDULED);
 			}
-		}
-		else {
+		} else { // GroupType::Enemy
 			if (ac->GetStat(IE_EA) <= EA_GOODCUTOFF) {
 				tgts->AddTarget(ac, distance, GA_NO_DEAD|GA_NO_UNSCHEDULED);
 			}
@@ -2720,9 +2722,13 @@ void SpellCore(Scriptable *Sender, Action *parameters, int flags)
 		// make sure we can still see the target
 		const Actor* target = Scriptable::As<const Actor>(tar);
 		const Spell* spl = gamedata->GetSpell(Sender->SpellResRef, true);
-		if (Sender != tar && !(flags & SC_NOINTERRUPT) && !(spl->Flags & SF_TARGETS_INVISIBLE) && target->IsInvisibleTo(Sender)) {
+		if (Sender != tar && target && !(flags & SC_NOINTERRUPT) &&
+		    ((!(spl->Flags & SF_TARGETS_INVISIBLE) && target->IsInvisibleTo(Sender)) ||
+		     (tar->GetInternalFlag() & (IF_ACTIVE | IF_VISIBLE)) != (IF_ACTIVE | IF_VISIBLE) ||
+		     target->GetStat(IE_AVATARREMOVAL))) {
 			Sender->ReleaseCurrentAction();
 			Sender->AddTrigger(TriggerEntry(trigger_targetunreachable, tar->GetGlobalID()));
+			displaymsg->DisplayConstantStringName(HCStrings::NoSeeNoCast, GUIColors::RED, Sender);
 			core->Autopause(AUTOPAUSE::NOTARGET, Sender);
 			gamedata->FreeSpell(spl, Sender->SpellResRef, false);
 			return;
@@ -2954,7 +2960,7 @@ void AddXPCore(const Action *parameters, bool divide)
 		// give xp to everyone
 		core->GetGame()->ShareXP(atoi(xpvalue), 0);
 	}
-	core->PlaySound(DS_GOTXP, SFX_CHAN_ACTIONS);
+	core->PlaySound(DS_GOTXP, SFXChannel::Actions);
 }
 
 int NumItemsCore(Scriptable *Sender, const Trigger *parameters)
@@ -3002,7 +3008,7 @@ unsigned int NumBouncingSpellLevelCore(Scriptable *Sender, const Trigger *parame
 
 static EffectRef fx_level_immunity_ref = { "Protection:Spelllevel", -1 };
 static EffectRef fx_level_immunity_dec_ref = { "Protection:SpellLevelDec", -1 };
-int NumImmuneToSpellLevelCore(Scriptable *Sender, const Trigger *parameters)
+unsigned int NumImmuneToSpellLevelCore(Scriptable* Sender, const Trigger* parameters)
 {
 	const Scriptable* target = GetScriptableFromObject(Sender, parameters->objectParameter);
 	const Actor* actor = Scriptable::As<Actor>(target);

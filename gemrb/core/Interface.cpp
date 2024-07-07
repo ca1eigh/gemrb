@@ -254,7 +254,9 @@ Interface::Interface(CoreSettings&& cfg)
 	if (!config.KeepCache) DelTree(config.CachePath, false);
 	
 	vars = std::move(config.vars);
-	vars.Set("MaxPartySize", config.MaxPartySize); // for simple GUIScript access
+	// for simple GUIScript access
+	vars.Set("MaxPartySize", config.MaxPartySize);
+	vars.Set("GUIEnhancements", config.GUIEnhancements);
 
 	LoadPlugins();
 	InitVideo();
@@ -326,17 +328,6 @@ Interface::Interface(CoreSettings&& cfg)
 		}
 	}
 
-	// most of the old gemrb override files can be found here,
-	// so they have a lower priority than the game files and can more easily be modded
-	path = PathJoin(config.GemRBUnhardcodedPath, "unhardcoded", config.GameType);
-	if (config.GameType == "auto") {
-		gamedata->AddSource(path, "GemRB Unhardcoded data", PLUGIN_RESOURCE_NULL);
-	} else {
-		gamedata->AddSource(path, "GemRB Unhardcoded data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
-	}
-	path = PathJoin(config.GemRBUnhardcodedPath, "unhardcoded", "shared");
-	gamedata->AddSource(path, "shared GemRB Unhardcoded data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
-
 	Log(MESSAGE, "Core", "Initializing KEY Importer...");
 	path_t ChitinPath = PathJoin(config.GamePath, "chitin.key");
 	if (!gamedata->AddSource(ChitinPath, "chitin.key", PLUGIN_RESOURCE_KEY)) {
@@ -347,6 +338,17 @@ Interface::Interface(CoreSettings&& cfg)
 - or the game is running (Windows only).");
 		throw CIE("The path must point to a game directory with a readable chitin.key file.");
 	}
+
+	// most of the old gemrb override files can be found here,
+	// so they have a lower priority than the game files and can more easily be modded
+	path = PathJoin(config.GemRBUnhardcodedPath, "unhardcoded", config.GameType);
+	if (config.GameType == "auto") {
+		gamedata->AddSource(path, "GemRB Unhardcoded data", PLUGIN_RESOURCE_NULL);
+	} else {
+		gamedata->AddSource(path, "GemRB Unhardcoded data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
+	}
+	path = PathJoin(config.GemRBUnhardcodedPath, "unhardcoded", "shared");
+	gamedata->AddSource(path, "shared GemRB Unhardcoded data", PLUGIN_RESOURCE_CACHEDDIRECTORY);
 
 	fogRenderer = std::make_unique<FogRenderer>(config.SpriteFoW);
 
@@ -899,10 +901,13 @@ bool Interface::ReadSoundChannelsTable() const
 		// translate some alternative names for the IWDs
 		if (rowname == "ACTION") rowname = "ACTIONS";
 		else if (rowname == "SWING") rowname = "SWINGS";
-		AudioDriver->SetChannelVolume(rowname, tm->QueryFieldSigned<int>(i, ivol));
+
+		int volume = tm->QueryFieldSigned<int>(i, ivol);
+		float reverb = 0.0f;
 		if (irev != TableMgr::npos) {
-			AudioDriver->SetChannelReverb(rowname, atof(tm->QueryField(i, irev).c_str()));
+			reverb = atof(tm->QueryField(i, irev).c_str());
 		}
+		AudioDriver->UpdateChannel(rowname, i, volume, reverb);
 	}
 	return true;
 }
@@ -1664,22 +1669,20 @@ Actor *Interface::SummonCreature(const ResRef& resource, const ResRef& animRes, 
 			Owner->AddTrigger(TriggerEntry(trigger_summoned, ab->GetGlobalID()));
 		}
 
-		if (!animRes.IsEmpty()) {
-			ScriptedAnimation* vvc = gamedata->GetScriptedAnimation(animRes, false);
-			if (vvc) {
-				//This is the final position of the summoned creature
-				//not the original target point
-				vvc->Pos = ab->Pos;
-				//force vvc to play only once
-				vvc->PlayOnce();
-				map->AddVVCell(vvc);
+		ScriptedAnimation* vvc = gamedata->GetScriptedAnimation(animRes, false);
+		if (vvc) {
+			// This is the final position of the summoned creature
+			// not the original target point
+			vvc->Pos = ab->Pos;
+			// force vvc to play only once
+			vvc->PlayOnce();
+			map->AddVVCell(vvc);
 
-				//set up the summon disable effect
-				Effect *newfx = EffectQueue::CreateEffect(fx_summon_disable_ref, 0, 1, FX_DURATION_ABSOLUTE);
-				if (newfx) {
-					newfx->Duration = vvc->GetSequenceDuration(Time.defaultTicksPerSec) * 9 / 10 + core->GetGame()->GameTime;
-					ApplyEffect(newfx, ab, ab);
-				}
+			// set up the summon disable effect
+			Effect* newfx = EffectQueue::CreateEffect(fx_summon_disable_ref, 0, 1, FX_DURATION_ABSOLUTE);
+			if (newfx) {
+				newfx->Duration = vvc->GetSequenceDuration(Time.defaultTicksPerSec) * 9 / 10 + core->GetGame()->GameTime;
+				ApplyEffect(newfx, ab, ab);
 			}
 		}
 
@@ -2075,7 +2078,7 @@ int Interface::PlayMovie(const ResRef& movieRef)
 
 	Holder<SoundHandle> sound_override;
 	if (!sound_resref.empty()) {
-		sound_override = AudioDriver->Play(sound_resref, SFX_CHAN_NARRATOR);
+		sound_override = AudioDriver->Play(sound_resref, SFXChannel::Narrator);
 	}
 
 	// clear whatever is currently on screen
@@ -3398,12 +3401,12 @@ ieStrRef Interface::GetRumour(const ResRef& dlgref)
 }
 
 //plays stock sound listed in defsound.2da
-Holder<SoundHandle> Interface::PlaySound(size_t index, unsigned int channel) const
+Holder<SoundHandle> Interface::PlaySound(size_t index, SFXChannel channel) const
 {
 	return PlaySound(index, channel, Point(), 0);
 }
 
-Holder<SoundHandle> Interface::PlaySound(size_t index, unsigned int channel, const Point& p, unsigned int flags) const
+Holder<SoundHandle> Interface::PlaySound(size_t index, SFXChannel channel, const Point& p, unsigned int flags) const
 {
 	if (index <= gamedata->defaultSounds.size()) {
 		return AudioDriver->Play(gamedata->defaultSounds[index], channel, p, flags);
@@ -3843,8 +3846,7 @@ int Interface::GetLoreBonus(int column, int value) const
 	//no lorebon in iwd2 - lore is a skill
 	if (HasFeature(GFFlags::RULES_3ED)) return 0;
 
-	if (column<0 || column>0)
-		return -9999;
+	if (column != 0) return -9999;
 
 	return abilityTables->lorebon[value];
 }
@@ -3854,8 +3856,7 @@ int Interface::GetWisdomBonus(int column, int value) const
 	if (abilityTables->wisbon.empty()) return 0;
 
 	// xp bonus
-	if (column<0 || column>0)
-		return -9999;
+	if (column != 0) return -9999;
 
 	return abilityTables->wisbon[value];
 }

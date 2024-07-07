@@ -225,7 +225,7 @@ void GameScript::RemoveFamiliar(Scriptable* Sender, Action* /*parameters*/)
 	actor->SetBase(IE_EA, EA_NEUTRAL);
 }
 
-void GameScript::ChangeAllegiance(Scriptable* Sender, Action* parameters)
+void GameScript::ChangeEnemyAlly(Scriptable* Sender, Action* parameters)
 {
 	Scriptable *scr = Sender;
 	if (parameters->objects[1]) {
@@ -1900,20 +1900,20 @@ void GameScript::SetMusic(Scriptable* Sender, Action* parameters)
 void GameScript::PlaySound(Scriptable* Sender, Action* parameters)
 {
 	Log(MESSAGE, "Actions", "PlaySound({})", parameters->string0Parameter);
-	core->GetAudioDrv()->Play(parameters->string0Parameter, SFX_CHAN_CHAR0, Sender->Pos, parameters->int0Parameter ? GEM_SND_SPEECH : 0);
+	core->GetAudioDrv()->Play(parameters->string0Parameter, SFXChannel::Char0, Sender->Pos, parameters->int0Parameter ? GEM_SND_SPEECH : 0);
 }
 
 void GameScript::PlaySoundPoint(Scriptable* /*Sender*/, Action* parameters)
 {
 	Log(MESSAGE, "Actions", "PlaySound({})", parameters->string0Parameter);
-	core->GetAudioDrv()->Play(parameters->string0Parameter, SFX_CHAN_ACTIONS,
+	core->GetAudioDrv()->Play(parameters->string0Parameter, SFXChannel::Actions,
 		parameters->pointParameter, GEM_SND_SPATIAL);
 }
 
 void GameScript::PlaySoundNotRanged(Scriptable* /*Sender*/, Action* parameters)
 {
 	Log(MESSAGE, "Actions", "PlaySound({})", parameters->string0Parameter);
-	core->GetAudioDrv()->Play(parameters->string0Parameter, SFX_CHAN_ACTIONS);
+	core->GetAudioDrv()->Play(parameters->string0Parameter, SFXChannel::Actions);
 }
 
 void GameScript::Continue(Scriptable* /*Sender*/, Action* /*parameters*/)
@@ -2622,7 +2622,7 @@ void GameScript::ToggleDoor(Scriptable* Sender, Action* /*parameters*/)
 			door->AddTrigger(TriggerEntry(trigger_failedtoopen, actor->GetGlobalID()));
 
 			//playsound unsuccessful opening of door
-			core->PlaySound(door->IsOpen() ? DS_CLOSE_FAIL : DS_OPEN_FAIL, SFX_CHAN_ACTIONS, *otherp, GEM_SND_SPATIAL);
+			core->PlaySound(door->IsOpen() ? DS_CLOSE_FAIL : DS_OPEN_FAIL, SFXChannel::Actions, *otherp, GEM_SND_SPATIAL);
 			Sender->ReleaseCurrentAction();
 			actor->TargetDoor = 0;
 			return; //don't open door
@@ -2945,7 +2945,7 @@ void GameScript::AddXPObject(Scriptable* Sender, Action* parameters)
 
 	//normally the second parameter is 0, but it may be handy to have control over that (See SX_* flags)
 	actor->AddExperience(xp, parameters->int1Parameter);
-	core->PlaySound(DS_GOTXP, SFX_CHAN_ACTIONS);
+	core->PlaySound(DS_GOTXP, SFXChannel::Actions);
 }
 
 void GameScript::AddXP2DA(Scriptable* /*Sender*/, Action* parameters)
@@ -2967,13 +2967,13 @@ void GameScript::AddXPWorth(Scriptable* Sender, Action* parameters)
 	int xp = actor->GetStat(IE_XPVALUE); // I guess
 	if (parameters->int0Parameter) actor->SetBase(IE_XPVALUE, 0);
 	core->GetGame()->ShareXP(xp, SX_DIVIDE);
-	core->PlaySound(DS_GOTXP, SFX_CHAN_ACTIONS);
+	core->PlaySound(DS_GOTXP, SFXChannel::Actions);
 }
 
 void GameScript::AddExperienceParty(Scriptable* /*Sender*/, Action* parameters)
 {
 	core->GetGame()->ShareXP(parameters->int0Parameter, SX_DIVIDE);
-	core->PlaySound(DS_GOTXP, SFX_CHAN_ACTIONS);
+	core->PlaySound(DS_GOTXP, SFXChannel::Actions);
 }
 
 //this needs moncrate.2da, but otherwise independent from GFFlags::CHALLENGERATING
@@ -2986,7 +2986,7 @@ void GameScript::AddExperiencePartyGlobal(Scriptable* Sender, Action* parameters
 {
 	ieDword xp = CheckVariable( Sender, parameters->string0Parameter, parameters->string1Parameter );
 	core->GetGame()->ShareXP(xp, SX_DIVIDE);
-	core->PlaySound(DS_GOTXP, SFX_CHAN_ACTIONS);
+	core->PlaySound(DS_GOTXP, SFXChannel::Actions);
 }
 
 // these two didn't work in the original (bg2, ee) and were unused
@@ -6765,12 +6765,15 @@ void GameScript::UseItem(Scriptable* Sender, Action* parameters)
 		return;
 	}
 	const Scriptable* tar = GetStoredActorFromObject(Sender, parameters->objects[1]);
-	if (!tar) {
+	const Actor* target = Scriptable::As<const Actor>(tar);
+	if (!tar ||
+	    (tar->GetInternalFlag() & (IF_ACTIVE | IF_VISIBLE)) != (IF_ACTIVE | IF_VISIBLE) ||
+	    (target && target->GetStat(IE_AVATARREMOVAL))) {
 		Sender->ReleaseCurrentAction();
 		return;
 	}
 	int Slot;
-	ieDword header;
+	int header;
 	ieDword flags = 0; // aura pollution is on for everyone
 	ResRef itemres;
 
@@ -6809,11 +6812,11 @@ void GameScript::UseItem(Scriptable* Sender, Action* parameters)
 	}
 
 	// make sure we can still see the target
-	const Actor* target = Scriptable::As<const Actor>(tar);
 	const Item* itm = gamedata->GetItem(itemres, true);
-	if (Sender != tar && !(itm->Flags & IE_ITEM_NO_INVIS) && target->IsInvisibleTo(Sender)) {
+	if (Sender != tar && !(itm->Flags & IE_ITEM_NO_INVIS) && target && target->IsInvisibleTo(Sender)) {
 		Sender->ReleaseCurrentAction();
 		Sender->AddTrigger(TriggerEntry(trigger_targetunreachable, tar->GetGlobalID()));
+		displaymsg->DisplayConstantStringName(HCStrings::NoSeeNoCast, GUIColors::RED, Sender);
 		core->Autopause(AUTOPAUSE::NOTARGET, Sender);
 		gamedata->FreeItem(itm, itemres, false);
 		return;
@@ -6844,7 +6847,7 @@ void GameScript::UseItemPoint(Scriptable* Sender, Action* parameters)
 		return;
 	}
 	int Slot;
-	ieDword header;
+	int header;
 	ResRef itemres;
 	ieDword flags;
 
@@ -7351,17 +7354,17 @@ void GameScript::SpellCastEffect(Scriptable* Sender, Action* parameters)
 		return;
 	}
 
-	unsigned int channel = SFX_CHAN_DIALOG;
+	SFXChannel channel = SFXChannel::Dialog;
 	if (actor->InParty > 0) {
-		channel = SFX_CHAN_CHAR0 + actor->InParty - 1;
+		channel = SFXChannel(ieByte(SFXChannel::Char0) + actor->InParty - 1);
 	} else if (actor->GetStat(IE_EA) >= EA_EVILCUTOFF) {
-		channel = SFX_CHAN_MONSTER;
+		channel = SFXChannel::Monster;
 	}
 
 	// voice
 	core->GetAudioDrv()->Play(parameters->string0Parameter, channel, Sender->Pos, GEM_SND_SPEECH | GEM_SND_QUEUE | GEM_SND_SPATIAL);
 	// starting sound, played at the same time, but on a different channel
-	core->GetAudioDrv()->Play(parameters->string1Parameter, SFX_CHAN_CASTING, Sender->Pos, GEM_SND_QUEUE | GEM_SND_SPATIAL);
+	core->GetAudioDrv()->Play(parameters->string1Parameter, SFXChannel::Casting, Sender->Pos, GEM_SND_QUEUE | GEM_SND_SPATIAL);
 	// NOTE: only a few uses have also an ending sound that plays when the effect ends (also stopping Sound1)
 	// but we don't even read all three string parameters, as Action stores just two
 	// seems like a waste of memory to impose it on everyone, just for these few users

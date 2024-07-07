@@ -552,7 +552,7 @@ static const ActionLink actionnames[] = {
 	{"changeaiscript", GameScript::ChangeAIScript, 0},
 	{"changeaitype", GameScript::ChangeAIType, 0},
 	{"changealignment", GameScript::ChangeAlignment, 0},
-	{"changeallegiance", GameScript::ChangeAllegiance, 0},
+	{"changeallegiance", GameScript::ChangeEnemyAlly, 0},
 	{"changeanimation", GameScript::ChangeAnimation, 0},
 	{"changeanimationnoeffect", GameScript::ChangeAnimationNoEffect, 0},
 	{"changeclass", GameScript::ChangeClass, 0},
@@ -563,7 +563,7 @@ static const ActionLink actionnames[] = {
 	{"changedialogue", GameScript::ChangeDialogue, 0},
 	{"changegender", GameScript::ChangeGender, 0},
 	{"changegeneral", GameScript::ChangeGeneral, 0},
-	{"changeenemyally", GameScript::ChangeAllegiance, 0}, //this is the same
+	{"changeenemyally", GameScript::ChangeEnemyAlly, 0},
 	{"changefaction", GameScript::SetFaction, 0}, //pst
 	{"changerace", GameScript::ChangeRace, 0},
 	{"changespecifics", GameScript::ChangeSpecifics, 0},
@@ -1992,15 +1992,18 @@ bool GameScript::Update(bool *continuing, bool *done)
 					return false;
 				}
 
-				if (lastAction == a) {
+				if (lastResponseBlock == a) {
+					// don't interrupt if the already running block still matches
+					// eg. a Wait in the middle of the response would eventually cause a recheck of conditions
 					// we presumably don't want any further execution?
 					// this one is a bit more complicated, due to possible
 					// interactions with Continue() (lastAction here is always
 					// the first block encountered), needs more testing
-					// BG2 needs this, however... (eg. spirit trolls trollsp01 in ar1506)
-					// previously we thought iwd:totlm needed this bit, but it turns out only iwd2 does (bg2 breaks with it)
-					// targos goblins misbehave without it; see https://github.com/gemrb/gemrb/issues/344 for the gory details
-					if (core->HasFeature(GFFlags::RULES_3ED) && done) {
+					// we've had a colorful history with this block (look at GF_SKIPUPDATE_HACK), but:
+					// - bg2 *does* need this (ar1516 irenicus fight doesn't work properly otherwise); spirit trolls (trollsp01 in ar1506) work regardless
+					// - iwd2 targos goblins misbehave without it; see https://github.com/gemrb/gemrb/issues/344 for the gory details
+					// - previously we thought iwd:totlm needed this bit (ar9708 djinni never becoming visible, but that's also fine now)
+					if (done) {
 						*done = true;
 					}
 					return false;
@@ -2012,7 +2015,7 @@ bool GameScript::Update(bool *continuing, bool *done)
 				// yes we must :)
 				MySelf->Stop();
 			}
-			lastAction = a;
+			lastResponseBlock = a;
 		}
 		running = true;
 		continueExecution = rB->responseSet->Execute(MySelf) != 0;
@@ -2079,10 +2082,14 @@ void GameScript::EvaluateAllBlocks(bool testConditions)
 
 		// the original first queued them all similarly to DialogHandler::DialogChoose
 		if (target->Type != ST_ACTOR) {
-			response->actions.insert(response->actions.begin(), GenerateAction("SetInterrupt(FALSE)"));
-			response->actions.push_back(GenerateAction("SetInterrupt(TRUE)"));
+			Action* interrupt = GenerateAction("SetInterrupt(FALSE)");
+			interrupt->IncRef(); // SetInterrupt is an instant, so we need to ensure StartCutScene can safely delete it
+			response->actions.insert(response->actions.begin(), interrupt);
+			interrupt = GenerateAction("SetInterrupt(TRUE)");
+			interrupt->IncRef();
+			response->actions.push_back(interrupt);
 		}
-		rS->responses[0]->Execute(target);
+		response->Execute(target);
 
 		// NOTE: this will break blocking instants, if there are any
 		target->ReleaseCurrentAction();

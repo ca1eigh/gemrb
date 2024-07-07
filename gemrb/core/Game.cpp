@@ -768,10 +768,19 @@ int Game::DelMap(unsigned int index, int forced)
 
 	// if a familiar isn't executing EscapeArea, it warps to the protagonist
 	for (auto& npc : NPCs) {
+		if (!npc->GetCurrentArea()) continue;
 		if (npc->GetBase(IE_EA) == EA_FAMILIAR && (!npc->GetCurrentAction() || npc->GetCurrentAction()->actionID != 108)) {
 			npc->SetPosition(PCs[0]->Pos, true);
 		}
 	}
+
+	// one last script execution, so the Vacant trigger is more likely to run (pst ar0109)
+	if (core->HasFeature(GFFlags::PST_STATE_FLAGS)) {
+		map->ExecuteScript(MAX_SCRIPTS);
+		map->ProcessActions();
+	}
+
+	map->PurgeArea(false);
 
 	// if there are still selected actors on the map (e.g. summons)
 	// unselect them now before they get axed
@@ -1057,7 +1066,7 @@ bool Game::AddJournalEntry(ieStrRef strRef, JournalSection section, ieByte group
 	// pst/bg2 also has a sound attached to the base string, so play it manually
 	StringBlock sb = core->strings->GetStringBlock(strJournalChange);
 	if (sb.Sound.IsEmpty()) return true;
-	core->GetAudioDrv()->Play(StringView(sb.Sound), SFX_CHAN_DIALOG);
+	core->GetAudioDrv()->Play(StringView(sb.Sound), SFXChannel::Dialog);
 
 	return true;
 }
@@ -1273,7 +1282,8 @@ bool Game::EveryoneNearPoint(const Map *area, const Point &p, int flags) const
 			}
 		}
 
-		if (pc->GetCurrentArea() != area) {
+		const Map* map = pc->GetCurrentArea();
+		if (map && map != area) {
 			return false;
 		}
 		if (Distance(p, pc) > MAX_TRAVELING_DISTANCE) {
@@ -1449,7 +1459,8 @@ void Game::AdvanceTime(ieDword add, bool fatigue)
 		// update everyone in party, so they think no time has passed
 		// nobody else, including familiars, gets luck penalties from fatigue
 		for (const auto& pc : PCs) {
-			pc->IncreaseLastRested(add);
+			pc->Timers.lastRested += add;
+			pc->Timers.lastFatigueCheck += add;
 		}
 	}
 
@@ -2223,24 +2234,24 @@ void Game::StartRainOrSnow(bool conditional, ieWord w)
 		if (WeatherBits&WB_INCREASESTORM) {
 			//already raining
 			if (GameTime&1) {
-				core->PlaySound(DS_LIGHTNING1, SFX_CHAN_AREA_AMB);
+				core->PlaySound(DS_LIGHTNING1, SFXChannel::MainAmbient);
 			} else {
-				core->PlaySound(DS_LIGHTNING2, SFX_CHAN_AREA_AMB);
+				core->PlaySound(DS_LIGHTNING2, SFXChannel::MainAmbient);
 			}
 		} else {
 			//start raining (far)
-			core->PlaySound(DS_LIGHTNING3, SFX_CHAN_AREA_AMB);
+			core->PlaySound(DS_LIGHTNING3, SFXChannel::MainAmbient);
 		}
 	}
 	if (w&WB_SNOW) {
-		core->PlaySound(DS_SNOW, SFX_CHAN_AREA_AMB);
+		core->PlaySound(DS_SNOW, SFXChannel::MainAmbient);
 		weather->SetType(SP_TYPE_POINT, SP_PATH_FLIT, SP_SPAWN_SOME);
 		weather->SetPhase(P_GROW);
 		weather->SetColorIndex(SPARK_COLOR_WHITE);
 		return;
 	}
 	if (w&WB_RAIN) {
-		core->PlaySound(DS_RAIN, SFX_CHAN_AREA_AMB);
+		core->PlaySound(DS_RAIN, SFXChannel::MainAmbient);
 		weather->SetType(SP_TYPE_LINE, SP_PATH_RAIN, SP_SPAWN_SOME);
 		weather->SetPhase(P_GROW);
 		// colors re-d from iwd2
@@ -2447,6 +2458,7 @@ bool Game::CheckPartyBanter() const
 void Game::CheckAreaComment()
 {
 	if (CombatCounter) return;
+	if (core->InCutSceneMode()) return;
 	if (GameTime % 600 != 0) return;
 	if (RAND(1, 100) > 16) return; // yep, the original used 16 %
 

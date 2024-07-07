@@ -889,6 +889,12 @@ void Scriptable::SendTriggerToAll(TriggerEntry entry, int extraFlags)
 	for (const auto& neighbour : nearActors) {
 		neighbour->AddTrigger(entry);
 	}
+
+	std::vector<Scriptable*> nearOthers = area->GetScriptablesInRect(Pos, 15);
+	for (const auto& neighbour : nearOthers) {
+		neighbour->AddTrigger(entry);
+	}
+
 	area->AddTrigger(entry);
 }
 
@@ -950,7 +956,7 @@ void Scriptable::CastSpellPointEnd(int level, bool keepStance)
 
 	if (!keepStance) {
 		// yep, the original didn't use the casting channel for this!
-		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
+		core->GetAudioDrv()->Play(spl->CompletionSound, SFXChannel::Missile, Pos, GEM_SND_SPATIAL);
 	}
 
 	CreateProjectile(SpellResRef, 0, level, false);
@@ -970,7 +976,7 @@ void Scriptable::CastSpellPointEnd(int level, bool keepStance)
 		break;
 	}
 
-	Actor* target = area->GetActor(objects.LastTargetPos, GA_NO_UNSCHEDULED | GA_NO_HIDDEN);
+	Scriptable* target = area->GetScriptable(objects.LastTargetPos, GA_NO_UNSCHEDULED | GA_NO_HIDDEN);
 	if (target) {
 		target->AddTrigger(TriggerEntry(trigger_spellcastonme, GetGlobalID(), spellID));
 		target->objects.LastSpellOnMe = spellID;
@@ -1023,7 +1029,7 @@ void Scriptable::CastSpellEnd(int level, bool keepStance)
 	}
 
 	if (!keepStance) {
-		core->GetAudioDrv()->Play(spl->CompletionSound, SFX_CHAN_MISSILE, Pos, GEM_SND_SPATIAL);
+		core->GetAudioDrv()->Play(spl->CompletionSound, SFXChannel::Missile, Pos, GEM_SND_SPATIAL);
 	}
 
 	//if the projectile doesn't need to follow the target, then use the target position
@@ -1044,7 +1050,7 @@ void Scriptable::CastSpellEnd(int level, bool keepStance)
 		break;
 	}
 
-	Actor* target = area->GetActorByGlobalID(objects.LastSpellTarget);
+	Scriptable* target = area->GetScriptableByGlobalID(objects.LastSpellTarget);
 	if (target) {
 		target->AddTrigger(TriggerEntry(trigger_spellcastonme, GetGlobalID(), spellID));
 		target->objects.LastSpellOnMe = spellID;
@@ -1278,7 +1284,7 @@ int Scriptable::CastSpell(Scriptable* target, bool deplete, bool instant, bool n
 	}
 
 	objects.LastTargetPos = target->Pos;
-	if (target->Type==ST_ACTOR) {
+	if (target->Type == ST_ACTOR || target->Type == ST_CONTAINER || target->Type == ST_DOOR) {
 		objects.LastSpellTarget = target->GetGlobalID();
 	}
 
@@ -1667,19 +1673,14 @@ void Selectable::DrawCircle(const Point& p) const
 bool Selectable::IsOver(const Point &P) const
 {
 	int csize = circleSize;
-	if (csize < 2) csize = 2;
-
-	int dx = P.x - Pos.x;
-	int dy = P.y - Pos.y;
-
-	// check rectangle first
-	if (dx < -(csize-1)*16 || dx > (csize-1)*16) return false;
-	if (dy < -(csize-1)*12 || dy > (csize-1)*12) return false;
-
-	// then check ellipse
-	int r = 9*dx*dx + 16*dy*dy; // 48^2 * ( (dx/16)^2 + (dy/12)^2 )
-
-	return (r <= 48*48*(csize-1)*(csize-1));
+	if (csize < 2) {
+		Point d = P - Pos;
+		if (d.x < -16 || d.x > 16) return false;
+		if (d.y < -12 || d.y > 12) return false;
+		return true;
+	}
+	// TODO: make sure to match the actual blocking shape; use GetEllipseSize/GetEllipseOffset instead?
+	return P.IsWithinEllipse(csize - 1, Pos);
 }
 
 bool Selectable::IsSelected() const
@@ -2099,9 +2100,10 @@ void Movable::DoStep(unsigned int walkScale, ieDword time) {
 		// We can't use GetActorInRadius because we want to only check directly along the way
 		// and not be blocked by actors who are on the sides
 		int collisionLookaheadRadius = ((circleSize < 3 ? 3 : circleSize) - 1) * 3;
-		for (int r = collisionLookaheadRadius; r > 0 && !actorInTheWay; r--) {
+		int r = collisionLookaheadRadius;
+		for (; r > 0 && !actorInTheWay; r--) {
 			auto xCollision = Pos.x + dx * r;
-			auto yCollision = Pos.y + dy * r * 0.75;
+			auto yCollision = Pos.y + dy * r * 0.75; // FIXME: should this really be skewed?
 			Point nmptCollision(xCollision, yCollision);
 			actorInTheWay = area->GetActor(nmptCollision, GA_NO_DEAD|GA_NO_UNSCHEDULED|GA_NO_SELF, this);
 		}
@@ -2121,7 +2123,9 @@ void Movable::DoStep(unsigned int walkScale, ieDword time) {
 			}
 			if (actor && actor->ValidTarget(GA_CAN_BUMP) && actorInTheWay->ValidTarget(GA_ONLY_BUMPABLE)) {
 				actorInTheWay->BumpAway();
-			} else {
+			} else if (r == 1 || actorInTheWay->GetPath()) {
+				// only back off if the immediate step is blocked or if the blocker is moving
+				// it's better to make a single step if possible, to avoid backoff loops
 				Backoff();
 				return;
 			}
@@ -2244,7 +2248,7 @@ void Movable::RunAwayFrom(const Point &Source, int PathLength, bool noBackAway)
 {
 	ClearPath(true);
 	area->ClearSearchMapFor(this);
-	path = area->RunAway(Pos, Source, circleSize, PathLength, !noBackAway, As<Actor>());
+	path = area->RunAway(Pos, Source, PathLength, !noBackAway, As<Actor>());
 	HandleAnkhegStance(false);
 }
 

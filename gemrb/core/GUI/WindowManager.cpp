@@ -157,7 +157,7 @@ bool WindowManager::PresentModalWindow(Window* win)
 	win->SetFlags(Window::Modal, BitOp::OR);
 
 	if (win->Flags() & Window::Borderless && !(win->Flags() & Window::NoSounds)) {
-		core->PlaySound(DS_WINDOW_OPEN, SFX_CHAN_GUI);
+		core->PlaySound(DS_WINDOW_OPEN, SFXChannel::GUI);
 	}
 
 	return true;
@@ -280,7 +280,7 @@ void WindowManager::CloseWindow(Window* win)
 
 	if (win == ModalWindow()) {
 		if (win->Flags() & Window::Borderless && !(win->Flags() & Window::NoSounds)) {
-			core->PlaySound(DS_WINDOW_CLOSE, SFX_CHAN_GUI);
+			core->PlaySound(DS_WINDOW_CLOSE, SFXChannel::GUI);
 		}
 
 		win->SetFlags(Window::Modal, BitOp::NAND);
@@ -544,7 +544,7 @@ void WindowManager::DrawTooltip(Point pos) const
 				tooltip.tooltip_sound.reset();
 			}
 			if (text.length()) {
-				tooltip.tooltip_sound = core->PlaySound(DS_TOOLTIP, SFX_CHAN_GUI);
+				tooltip.tooltip_sound = core->PlaySound(DS_TOOLTIP, SFXChannel::GUI);
 			}
 			tooltip.reset = false;
 		}

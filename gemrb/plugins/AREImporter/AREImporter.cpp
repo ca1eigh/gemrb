@@ -20,8 +20,8 @@
 
 #include "AREImporter.h"
 
-#include "strrefs.h"
 #include "ie_cursors.h"
+#include "strrefs.h"
 
 #include "ActorMgr.h"
 #include "Ambient.h"
@@ -33,13 +33,12 @@
 #include "GameData.h"
 #include "ImageMgr.h"
 #include "Interface.h"
-#include "PathFinder.h"
-#include "Palette.h"
 #include "PluginMgr.h"
 #include "ProjectileServer.h"
 #include "RNG.h"
-#include "Plugins/TileMapMgr.h"
+
 #include "GameScript/GameScript.h"
+#include "Plugins/TileMapMgr.h"
 #include "Scriptable/Container.h"
 #include "Scriptable/Door.h"
 #include "Scriptable/InfoPoint.h"
@@ -59,14 +58,7 @@ using namespace GemRB;
 //something non signed, non ascii
 #define UNINITIALIZED_BYTE  0x11
 
-struct ResRefToStrRef {
-	ResRef areaName;
-	ieStrRef text;
-	bool trackFlag;
-	int difficulty;
-};
-
-static std::vector<ResRefToStrRef> tracks;
+static std::vector<TrackingData> tracks;
 PluginHolder<DataFileMgr> INInote;
 
 static void ReadAutonoteINI()
@@ -145,10 +137,10 @@ static int GetTrackString(const ResRef &areaName)
 		for (TableMgr::index_t i = 0; i < trackcount; i++) {
 			const char *poi = tm->QueryField(i,0).c_str();
 			if (poi[0]=='O' && poi[1]=='_') {
-				tracks[i].trackFlag=false;
+				tracks[i].enabled = false;
 				poi+=2;
 			} else {
-				tracks[i].trackFlag = trackFlag;
+				tracks[i].enabled = trackFlag;
 			}
 			tracks[i].text = ieStrRef(atoi(poi));
 			tracks[i].difficulty = tm->QueryFieldSigned<int>(i,1);
@@ -671,7 +663,9 @@ void AREImporter::GetInfoPoint(DataStream* str, int idx, Map* map) const
 		for (int x = 0; x < vertexCount; x++) {
 			str->ReadPoint(points[x]);
 		}
-		auto poly = std::make_shared<Gem_Polygon>(std::move(points), &bbox);
+		// recalculate the bbox if it was not provided
+		auto poly = std::make_shared<Gem_Polygon>(std::move(points), bbox.size.IsInvalid() ? nullptr : &bbox);
+		bbox = poly->BBox;
 		ip = map->TMap->AddInfoPoint(ipName, ipType, poly);
 	}
 
@@ -1173,7 +1167,7 @@ bool AREImporter::GetActor(DataStream* str, PluginHolder<ActorMgr> actorMgr, Map
 	}
 	act->SetOrientation(ClampToOrientation(orientation), false);
 	act->TalkCount = talkCount;
-	act->RemovalTime = removalTime;
+	act->Timers.removalTime = removalTime;
 	act->RefreshEffects();
 	return true;
 }
@@ -1479,7 +1473,7 @@ Map* AREImporter::GetMap(const ResRef& resRef, bool day_or_night)
 	map->MasterArea = core->GetGame()->MasterArea(map->GetScriptRef());
 	int idx = GetTrackString(resRef);
 	if (idx>=0) {
-		map->SetTrackString(tracks[idx].text, tracks[idx].trackFlag, tracks[idx].difficulty);
+		map->SetTrackString(tracks[idx].text, tracks[idx].enabled, tracks[idx].difficulty);
 	} else {
 		map->SetTrackString(ieStrRef(-1), false, 0);
 	}
@@ -2188,7 +2182,7 @@ int AREImporter::PutActors(DataStream *stream, const Map *map) const
 		stream->WriteDword(0); //actor animation, unused
 		stream->WriteWord(ac->GetOrientation());
 		stream->WriteWord(0); //unknown
-		stream->WriteDword(ac->RemovalTime);
+		stream->WriteDword(ac->Timers.removalTime);
 		stream->WriteWord(ac->maxWalkDistance);
 		stream->WriteWord(0); //more unknowns
 		stream->WriteDword(ac->appearance);
