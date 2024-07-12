@@ -1293,6 +1293,7 @@ void GameControl::UpdateCursor()
 	
 	overMe = overDoor = area->TMap->GetDoor(gameMousePos);
 	// ignore infopoints and containers beneath doors
+	// pst mortuary door right above the starting position is a good test
 	if (overDoor) {
 		if (overDoor->Visible()) {
 			nextCursor = overDoor->GetCursor(targetMode, lastCursor);
@@ -1317,8 +1318,12 @@ void GameControl::UpdateCursor()
 			return;
 		}
 
-		if (!overMe) {
-			overMe = overContainer = area->TMap->GetContainer(gameMousePos);
+		// let containers override infopoints if at the same location
+		// needed in bg2 ar0809 or you can't get the loot on the altar
+		// how ar3201 and a bunch in the pst mortuary (eg. near Ei-vene) show it as a usability win as well
+		overContainer = area->TMap->GetContainer(gameMousePos);
+		if (overContainer) {
+			overMe = overContainer;
 		}
 	}
 
@@ -1811,7 +1816,7 @@ void GameControl::TryToCast(Actor *source, const Actor *tgt)
 
 	// cannot target spells on invisible or sanctuaried creatures
 	// invisible actors are invisible, so this is usually impossible by itself, but improved invisibility changes that
-	if (source != tgt && tgt->Untargetable(spellName)) {
+	if (source != tgt && tgt->Untargetable(spellName, source)) {
 		displaymsg->DisplayConstantStringName(HCStrings::NoSeeNoCast, GUIColors::RED, source);
 		ResetTargetMode();
 		return;
@@ -1946,9 +1951,10 @@ void GameControl::HandleDoor(Door *door, Actor *actor)
 	}
 
 	door->AddTrigger(TriggerEntry(trigger_clicked, actor->GetGlobalID()));
-	actor->TargetDoor = door->GetGlobalID();
 	// internal gemrb toggle door action hack - should we use UseDoor instead?
-	actor->CommandActor(GenerateAction("NIDSpecial9()"));
+	Action* toggle = GenerateAction("NIDSpecial9()");
+	toggle->int0Parameter = door->GetGlobalID();
+	actor->CommandActor(toggle);
 }
 
 //generate action code for actor appropriate for the target mode when the target is an active region (infopoint, trap or travel)

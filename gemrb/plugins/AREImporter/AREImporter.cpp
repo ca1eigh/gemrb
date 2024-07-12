@@ -274,7 +274,7 @@ static TileProps MakeTileProps(const TileMap* tm, const ResRef& wedref, bool day
 		propit.WriteRGBA(r, g, b, a);
 	}
 
-	return TileProps(propImg);
+	return TileProps(std::move(propImg));
 }
 
 bool AREImporter::Import(DataStream* str)
@@ -934,7 +934,7 @@ void AREImporter::GetDoor(DataStream* str, int idx, Map* map, PluginHolder<TileM
 	auto closedPolys = tmm->ClosedDoorPolygons();
 	auto openPolys = tmm->OpenDoorPolygons();
 
-	DoorTrigger dt(open, std::move(openPolys), closed, std::move(closedPolys));
+	DoorTrigger dt(std::move(open), std::move(openPolys), std::move(closed), std::move(closedPolys));
 	Door* door = map->TMap->AddDoor(shortName, longName, doorFlags, baseClosed, std::move(indices), std::move(dt));
 	door->OpenBBox = openedBBox;
 	door->ClosedBBox = closedBBox;
@@ -1155,7 +1155,7 @@ bool AREImporter::GetActor(DataStream* str, PluginHolder<ActorMgr> actorMgr, Map
 			}
 		}
 	}
-	act->DifficultyMargin = difficultyMargin;
+	act->ignoredFields.difficultyMargin = difficultyMargin;
 
 	if (!dialog.IsEmpty()) {
 		act->SetDialog(dialog);
@@ -2178,7 +2178,7 @@ int AREImporter::PutActors(DataStream *stream, const Map *map) const
 		stream->WriteDword(0); //used fields flag always 0 for saved areas
 		stream->WriteWord(ac->Spawned);
 		stream->WriteFilling(1); // letter
-		stream->WriteScalar(ac->DifficultyMargin);
+		stream->WriteScalar(ac->ignoredFields.difficultyMargin);
 		stream->WriteDword(0); //actor animation, unused
 		stream->WriteWord(ac->GetOrientation());
 		stream->WriteWord(0); //unknown

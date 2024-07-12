@@ -610,7 +610,7 @@ static PyObject* GemRB_LoadTable(PyObject * /*self*/, PyObject* args)
 		}
 	}
 
-	return PyObject_FromHolder<TableMgr>(tab);
+	return PyObject_FromHolder<TableMgr>(std::move(tab));
 }
 
 PyDoc_STRVAR( GemRB_Table_GetValue__doc,
@@ -1623,7 +1623,7 @@ static PyObject* GemRB_SetTimedEvent(PyObject * /*self*/, PyObject* args)
 	}
 	Game *game = core->GetGame();
 	if (game) {
-		game->SetTimedEvent(handler, rounds);
+		game->SetTimedEvent(std::move(handler), rounds);
 	}
 	Py_RETURN_NONE;
 }
@@ -1664,7 +1664,7 @@ static PyObject* GemRB_Window_SetAction(PyObject* self, PyObject* args)
 	if (PyCallable_Check(func)) {
 		handler = PythonWindowCallback(func);
 	}
-	win->SetAction(handler, static_cast<Window::Action>(key));
+	win->SetAction(std::move(handler), static_cast<Window::Action>(key));
 	Py_RETURN_NONE;
 }
 
@@ -1715,7 +1715,7 @@ static PyObject* GemRB_Control_SetAction(PyObject* self, PyObject* args)
 		if (PyCallable_Check(func)) {
 			handler = PythonControlCallback(func);
 		}
-		ctrl->SetAction(handler, type, button, mod, count);
+		ctrl->SetAction(std::move(handler), type, button, mod, count);
 
 		Py_RETURN_NONE;
 	}
@@ -2125,9 +2125,9 @@ static PyObject* GemRB_CreateView(PyObject * /*self*/, PyObject* args)
 			auto font = fontname ? core->GetFont(ResRefFromPy(fontname)) : nullptr;
 			WorldMapControl* wmap = nullptr;
 			if (pyColorNormal) {
-				wmap = new WorldMapControl(rgn, font, ColorFromPy(pyColorNormal), ColorFromPy(pyColorSelected), ColorFromPy(pyColorNotVisited));
+				wmap = new WorldMapControl(rgn, std::move(font), ColorFromPy(pyColorNormal), ColorFromPy(pyColorSelected), ColorFromPy(pyColorNotVisited));
 			} else {
-				wmap = new WorldMapControl(rgn, font);
+				wmap = new WorldMapControl(rgn, std::move(font));
 			}
 			
 			auto bam = gamedata->GetFactoryResourceAs<AnimationFactory>(ResRefFromPy(anim), IE_BAM_CLASS_ID);
@@ -2321,7 +2321,7 @@ static PyObject* GemRB_View_SetBackground(PyObject* self, PyObject* args)
 		if (!pic) {
 			return RuntimeError("Failed to acquire the picture!\n");
 		}
-		view->SetBackground(pic);
+		view->SetBackground(std::move(pic));
 	}
 
 	Py_RETURN_NONE;
@@ -2471,13 +2471,13 @@ static PyObject* GemRB_Button_SetSprites(PyObject* self, PyObject* args)
 		}
 		Holder<Sprite2D> tspr;
 		tspr = af->GetFrame((AnimationFactory::index_t) unpressed, (unsigned char) cycle);
-		btn->SetImage(ButtonImage::Unpressed, tspr);
+		btn->SetImage(ButtonImage::Unpressed, std::move(tspr));
 		tspr = af->GetFrame((AnimationFactory::index_t) pressed, (unsigned char) cycle);
-		btn->SetImage(ButtonImage::Pressed, tspr);
+		btn->SetImage(ButtonImage::Pressed, std::move(tspr));
 		tspr = af->GetFrame((AnimationFactory::index_t) selected, (unsigned char) cycle);
-		btn->SetImage(ButtonImage::Selected, tspr);
+		btn->SetImage(ButtonImage::Selected, std::move(tspr));
 		tspr = af->GetFrame((AnimationFactory::index_t) disabled, (unsigned char) cycle);
-		btn->SetImage(ButtonImage::Disabled, tspr);
+		btn->SetImage(ButtonImage::Disabled, std::move(tspr));
 
 		Py_RETURN_NONE;
 	}
@@ -3490,7 +3490,7 @@ static PyObject* GemRB_Button_SetPicture(PyObject* self, PyObject* args)
 			return RuntimeError("Picture resource not found!\n");
 		}
 
-		btn->SetPicture(pic);
+		btn->SetPicture(std::move(pic));
 	}
 
 	Py_RETURN_NONE;
@@ -4512,7 +4512,7 @@ static PyObject* GemRB_SaveGame_GetName(PyObject * /*self*/, PyObject* args)
 	PARSE_ARGS(args, "O", &Slot);
 
 	Holder<SaveGame> save = CObject<SaveGame>(Slot);
-	auto name = save->GetName();
+	const auto& name = save->GetName();
 
 	return PyString_FromStringObj(name);
 }
@@ -6371,8 +6371,8 @@ static PyObject* GemRB_FillPlayerInfo(PyObject * /*self*/, PyObject* args)
 		newstats.Happiness = oldstats.Happiness;
 		newstats.SoundFolder = oldstats.SoundFolder;
 		newstats.States = oldstats.States;
-		
-		oldstats = newstats;
+
+		oldstats = std::move(newstats);
 	}
 
 	actor->SetOver( false );
@@ -6580,8 +6580,7 @@ static PyObject *SetItemIcon(Button* btn, const ResRef& ItemResRef, int Which, i
 			}
 	}
 
-	if (setpicture)
-		btn->SetPicture( Picture );
+	if (setpicture) btn->SetPicture(std::move(Picture));
 	if (tooltip) {
 		//later getitemname could also return tooltip stuff
 		SetViewTooltipFromRef(btn, item->GetItemName(tooltip==2));
@@ -8124,7 +8123,7 @@ static PyObject* GemRB_SetMemorizableSpellsCount(PyObject* /*self*/, PyObject* a
 PyDoc_STRVAR( GemRB_CountSpells__doc,
 "===== CountSpells =====\n\
 \n\
-**Prototype:** GemRB.CountSpells (PartyID, SpellName[, SpellType, Flag])\n\
+**Prototype:** GemRB.CountSpells (PartyID, SpellName[, SpellType=-1, Flag=0])\n\
 \n\
 **Description:** Returns number of memorized spells of given name and type \n\
 in PC's spellbook. If flag is set then spent spells are also count.\n\
@@ -8132,7 +8131,11 @@ in PC's spellbook. If flag is set then spent spells are also count.\n\
 **Parameters:**\n\
   * PartyID   - the PC's position in the party\n\
   * SpellName - spell to count\n\
-  * SpellType - 0 - priest, 1 - wizard, 2 - innate\n\
+  * SpellType:\n\
+    - -1 - any\n\
+    - 0 - priest\n\
+    - 1 - wizard\n\
+    - 2 - innate\n\
   * Flag      - count depleted spells too?\n\
 \n\
 **Return value:** integer\n\
@@ -9779,7 +9782,7 @@ static PyObject* GemRB_SetMapnote(PyObject * /*self*/, PyObject* args)
 	}
 
 	if (text.length() > 0) {
-		map->AddMapNote(point, MapNote(text, color, false));
+		map->AddMapNote(point, MapNote(std::move(text), color, false));
 	} else {
 		map->RemoveMapNote(point);
 	}
@@ -10463,7 +10466,7 @@ static PyObject* SetActionIcon(Button* btn, PyObject *dict, int Index, int Funct
 	SetButtonCycle(bam, btn, (char) row.bytes[0], ButtonImage::Unpressed);
 	SetButtonCycle(bam, btn, (char) row.bytes[1], ButtonImage::Pressed);
 	SetButtonCycle(bam, btn, (char) row.bytes[2], ButtonImage::Selected);
-	SetButtonCycle(bam, btn, (char) row.bytes[3], ButtonImage::Disabled);
+	SetButtonCycle(std::move(bam), btn, (char) row.bytes[3], ButtonImage::Disabled);
 	btn->SetFlags(IE_GUI_BUTTON_NO_IMAGE|IE_GUI_BUTTON_PICTURE, BitOp::NAND);
 	PyObject *Event = PyUnicode_FromFormat("Action%sPressed", GUIEvent[Index].c_str());
 	PyObject *func = PyDict_GetItem(dict, Event);
@@ -10613,7 +10616,7 @@ static PyObject* GemRB_Window_SetupEquipmentIcons(PyObject* self, PyObject* args
 			SetButtonCycle(bam, btn, 1, ButtonImage::Pressed);
 			SetButtonCycle(bam, btn, 2, ButtonImage::Selected);
 			SetButtonCycle(bam, btn, 3, ButtonImage::Disabled);
-			btn->SetPicture( Picture );
+			btn->SetPicture(std::move(Picture));
 			btn->SetState(Button::UNPRESSED);
 			btn->SetFlags(IE_GUI_BUTTON_PICTURE|IE_GUI_BUTTON_ALIGN_BOTTOM|IE_GUI_BUTTON_ALIGN_RIGHT, BitOp::SET);
 
@@ -11537,7 +11540,7 @@ This function can be used to add abilities that are stored as spells \n\
 **Parameters:**\n\
   * globalID - party ID or global ID of the actor to use\n\
   * resref   - spell resource reference\n\
-  * casterID - global id of the desired caster\n\
+  * casterID - global id of the desired caster or the index in the party\n\
 \n\
 **Return value:** N/A\n\
 \n\
@@ -11556,7 +11559,11 @@ static PyObject* GemRB_ApplySpell(PyObject * /*self*/, PyObject* args)
 
 	Actor *caster = NULL;
 	const Map *map = game->GetCurrentArea();
-	if (map) caster = map->GetActorByGlobalID(casterID);
+	if (casterID < 1000) {
+		caster = game->FindPC(casterID);
+	} else if (map) {
+		caster = map->GetActorByGlobalID(casterID);
+	}
 	if (!caster) caster = game->GetActorByGlobalID(casterID);
 	if (!caster) caster = actor;
 
@@ -12020,7 +12027,7 @@ This function cam be used to add stats that are stored in effect blocks.\n\
 \n\
 **Parameters:**\n\
   * globalID - party ID or global ID of the actor to use\n\
-  * opcode   - the effect opcode (for values see effects.ids)\n\
+  * opcode   - the effect opcode name (for values see effects.ids)\n\
   * param1   - parameter 1 for the opcode\n\
   * param2   - parameter 2 for the opcode\n\
   * resref   - (optional) resource reference to set in effect\n\
@@ -12087,23 +12094,25 @@ static PyObject* GemRB_ApplyEffect(PyObject * /*self*/, PyObject* args)
 PyDoc_STRVAR( GemRB_CountEffects__doc,
 "===== CountEffects =====\n\
 \n\
-**Prototype:** GemRB.CountEffects (globalID, opcode, param1, param2[, resref])\n\
+**Prototype:** GemRB.CountEffects (globalID, opcode, param1, param2[, resref='', source=''])\n\
 \n\
 **Description:** Counts how many matching effects are applied on the actor. \n\
 If a parameter is set to -1, it will be ignored.\n\
+If a opcode is set to '', any opcode will be matched.\n\
 \n\
 **Parameters:**\n\
   * globalID - party ID or global ID of the actor to use\n\
-  * opcode   - the effect opcode (for values see effects.ids)\n\
+  * opcode   - the effect opcode name (for values see effects.ids)\n\
   * param1   - parameter 1 for the opcode\n\
   * param2   - parameter 2 for the opcode\n\
   * resref   - optional resource reference to match the effect\n\
+  * source   - optional resource reference to match the effect source\n\
 \n\
 **Return value:** the count\n\
 \n\
 **Examples:**\n\
 \n\
-    res = GemRB.CountEffect (MyChar, 'HLA', -1, -1, AbilityName)\n\
+    res = GemRB.CountEffects (MyChar, 'HLA', -1, -1, AbilityName)\n\
 \n\
 The above example returns how many HLA effects were applied on the character.\n\
 \n\
@@ -12116,13 +12125,14 @@ static PyObject* GemRB_CountEffects(PyObject * /*self*/, PyObject* args)
 	const char *opcodename;
 	int param1, param2;
 	PyObject* resref = nullptr;
-	PARSE_ARGS(args,  "isii|O", &globalID, &opcodename, &param1, &param2, &resref);
+	PyObject* sourceRef = nullptr;
+	PARSE_ARGS(args, "isii|OO", &globalID, &opcodename, &param1, &param2, &resref, &sourceRef);
 	GET_GAME();
 	GET_ACTOR_GLOBAL();
 
 	work_ref.Name=opcodename;
 	work_ref.opcode=-1;
-	ieDword ret = actor->fxqueue.CountEffects(work_ref, param1, param2, ResRefFromPy(resref));
+	ieDword ret = actor->fxqueue.CountEffects(work_ref, param1, param2, ResRefFromPy(resref), ResRefFromPy(sourceRef));
 	return PyLong_FromLong(ret);
 }
 

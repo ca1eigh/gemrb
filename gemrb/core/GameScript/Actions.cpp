@@ -2597,7 +2597,7 @@ void GameScript::CloseDoor(Scriptable* Sender, Action* parameters) {
 	Sender->ReleaseCurrentAction();
 }
 
-void GameScript::ToggleDoor(Scriptable* Sender, Action* /*parameters*/)
+void GameScript::ToggleDoor(Scriptable* Sender, Action* parameters)
 {
 	Actor* actor = Scriptable::As<Actor>(Sender);
 	if (!actor) {
@@ -2606,7 +2606,7 @@ void GameScript::ToggleDoor(Scriptable* Sender, Action* /*parameters*/)
 	}
 	actor->SetModal(Modal::None);
 
-	Door* door = actor->GetCurrentArea()->GetDoorByGlobalID(actor->TargetDoor);
+	Door* door = actor->GetCurrentArea()->GetDoorByGlobalID(parameters->int0Parameter);
 	if (!door) {
 		Sender->ReleaseCurrentAction();
 		return;
@@ -2624,7 +2624,6 @@ void GameScript::ToggleDoor(Scriptable* Sender, Action* /*parameters*/)
 			//playsound unsuccessful opening of door
 			core->PlaySound(door->IsOpen() ? DS_CLOSE_FAIL : DS_OPEN_FAIL, SFXChannel::Actions, *otherp, GEM_SND_SPATIAL);
 			Sender->ReleaseCurrentAction();
-			actor->TargetDoor = 0;
 			return; //don't open door
 		}
 
@@ -2636,7 +2635,6 @@ void GameScript::ToggleDoor(Scriptable* Sender, Action* /*parameters*/)
 	}
 	Sender->SetWait(1);
 	Sender->ReleaseCurrentAction();
-	actor->TargetDoor = 0;
 }
 
 void GameScript::ContainerEnable(Scriptable* Sender, Action* parameters)
@@ -5013,7 +5011,7 @@ void GameScript::Panic(Scriptable* Sender, Action* /*parameters*/)
 	if (!act) {
 		return;
 	}
-	act->Panic(NULL, PANIC_RANDOMWALK);
+	act->Panic(nullptr, PanicMode::RandomWalk);
 }
 
 // All Calm() does is apply op4 on the target as if it was applied by the script runner
@@ -7691,7 +7689,7 @@ void GameScript::SetPCStatsTokens(Scriptable* Sender, Action* parameters)
 			return lhs.second < rhs.second;
 		});
 		if (fav->second != 0) token = StringFromTLK(fav->first);
-		core->GetTokenDictionary()[favtok] = token;
+		core->GetTokenDictionary()[favtok] = std::move(token);
 		SetTokenAsString(cnttok, fav->second);
 	};
 

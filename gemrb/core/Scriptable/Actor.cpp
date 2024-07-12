@@ -880,7 +880,7 @@ static void pcf_morale (Actor *actor, ieDword /*oldValue*/, ieDword /*newValue*/
 	if (lowMorale && actor->Modified[IE_MORALEBREAK] != 0 && !overriding) {
 		int panicMode = RAND(0, 2); // PANIC_RANDOMWALK etc.
 		displaymsg->DisplayConstantStringName(HCStrings(int(HCStrings::MoraleBerserk) + panicMode), GUIColors::WHITE, actor);
-		actor->Panic(game->GetActorByGlobalID(actor->objects.LastAttacker), panicMode + 1);
+		actor->Panic(game->GetActorByGlobalID(actor->objects.LastAttacker), PanicMode(panicMode + 1));
 	} else if (actor->Modified[IE_STATE_ID]&STATE_PANIC) {
 		// recover from panic, since morale has risen again
 		// but only if we have really just recovered, so panic from other
@@ -1154,7 +1154,7 @@ static void pcf_extstate(Actor *actor, ieDword oldValue, ieDword State)
 
 static void pcf_hitpoint(Actor *actor, ieDword oldValue, ieDword hp)
 {
-	if (actor->checkHP == 2) return;
+	if (actor->Timers.checkHP == 2) return;
 	if (actor->GetInternalFlag() & IF_REALLYDIED) return;
 
 	int maxhp = (signed) actor->GetSafeStat(IE_MAXHITPOINTS);
@@ -1186,9 +1186,9 @@ static void pcf_hitpoint(Actor *actor, ieDword oldValue, ieDword hp)
 
 static void pcf_maxhitpoint(Actor *actor, ieDword /*oldValue*/, ieDword /*newValue*/)
 {
-	if (!actor->checkHP) {
-		actor->checkHP = 1;
-		actor->checkHPTime = core->GetGame()->GameTime;
+	if (!actor->Timers.checkHP) {
+		actor->Timers.checkHP = 1;
+		actor->Timers.checkHPTime = core->GetGame()->GameTime;
 	}
 }
 
@@ -1243,7 +1243,7 @@ static void pcf_stat_dex(Actor *actor, ieDword oldValue, ieDword newValue)
 static void pcf_stat_con(Actor *actor, ieDword oldValue, ieDword newValue)
 {
 	pcf_stat(actor, newValue, IE_CON);
-	if (!actor->checkHP) {
+	if (!actor->Timers.checkHP) {
 		pcf_hitpoint(actor, 0, actor->BaseStats[IE_HITPOINTS]);
 	}
 	if (third) {
@@ -2749,11 +2749,11 @@ void Actor::RefreshEffects(bool first, const stats_t& previous)
 
 	//delayed HP adjustment hack (after max HP modification)
 	//as it's triggered by PCFs from the previous tick, it should probably run before current PCFs
-	if (first && checkHP == 2) {
+	if (first && Timers.checkHP == 2) {
 		//could not set this in the constructor
-		checkHPTime = game->GameTime;
-	} else if (checkHP && checkHPTime != game->GameTime) {
-		checkHP = 0;
+		Timers.checkHPTime = game->GameTime;
+	} else if (Timers.checkHP && Timers.checkHPTime != game->GameTime) {
+		Timers.checkHP = 0;
 		if (!(BaseStats[IE_STATE_ID] & STATE_DEAD)) pcf_hitpoint(this, 0, BaseStats[IE_HITPOINTS]);
 	}
 
@@ -2927,7 +2927,7 @@ void Actor::RefreshHP() {
 
 	// temporary con bonuses also modify current HP; this can kill! (EE behavior)
 	// but skip on game load, while old bonuses are still re-applied
-	if (!(BaseStats[IE_STATE_ID] & STATE_DEAD) && checkHP != 2 && bonus != Timers.lastConBonus) {
+	if (!(BaseStats[IE_STATE_ID] & STATE_DEAD) && Timers.checkHP != 2 && bonus != Timers.lastConBonus) {
 		BaseStats[IE_HITPOINTS] += bonus - Timers.lastConBonus;
 	}
 	Timers.lastConBonus = bonus;
@@ -3745,7 +3745,7 @@ void Actor::IdleActions(bool nonidle)
 	const Map *map = GetCurrentArea();
 	if (!map) return;
 	//and not in panic
-	if (panicMode!=PANIC_NONE) return;
+	if (panicMode != PanicMode::None) return;
 
 	const Game *game = core->GetGame();
 	//there is no combat
@@ -3938,7 +3938,7 @@ bool Actor::OverrideActions()
 	return false;
 }
 
-void Actor::Panic(const Scriptable *attacker, int panicmode)
+void Actor::Panic(const Scriptable* attacker, PanicMode mode)
 {
 	auto PanicAction = [](unsigned short actionID) {
 		return actionID == 184 || actionID == 85 || actionID == 124;
@@ -3952,12 +3952,12 @@ void Actor::Panic(const Scriptable *attacker, int panicmode)
 	VerbalConstant(Verbal::Panic, gamedata->GetVBData("SPECIAL_COUNT"));
 
 	Action *action;
-	if (panicmode == PANIC_RUNAWAY && (!attacker || attacker->Type!=ST_ACTOR)) {
-		panicmode = PANIC_RANDOMWALK;
+	if (mode == PanicMode::RunAway && (!attacker || attacker->Type != ST_ACTOR)) {
+		mode = PanicMode::RandomWalk;
 	}
 
-	switch(panicmode) {
-	case PANIC_RUNAWAY:
+	switch (mode) {
+	case PanicMode::RunAway:
 		if (core->HasFeature(GFFlags::IWD_MAP_DIMENSIONS)) { // iwd troll scripts are incompatible with full panic
 			action = GenerateActionDirect("RunAwayFrom([-1],300)", attacker);
 		} else {
@@ -3965,11 +3965,11 @@ void Actor::Panic(const Scriptable *attacker, int panicmode)
 		}
 		SetBaseBit(IE_STATE_ID, STATE_PANIC, true);
 		break;
-	case PANIC_RANDOMWALK:
+	case PanicMode::RandomWalk:
 		action = GenerateAction( "RandomWalk()" );
 		SetBaseBit(IE_STATE_ID, STATE_PANIC, true);
 		break;
-	case PANIC_BERSERK:
+	case PanicMode::Berserk:
 		action = GenerateAction( "Berserk()" );
 		BaseStats[IE_CHECKFORBERSERK]=3;
 		//SetBaseBit(IE_STATE_ID, STATE_BERSERK, true);
@@ -4113,9 +4113,6 @@ void Actor::CheckCleave()
 // NOTE: only does the visual part of chunking
 static void ChunkActor(Actor* actor)
 {
-	ieDword gore = core->GetDictionary().Get("Gore", 0);
-	if (!gore) return;
-
 	Map* map = actor->GetCurrentArea();
 	if (!map->IsVisible(actor->Pos)) return; // protect against ctrl-shift-y
 
@@ -4411,7 +4408,7 @@ void Actor::DisplayCombatFeedback(unsigned int damage, int resisted, int damaget
 		if (detailed) {
 			// 3 choices depending on resistance and boni
 			// iwd2 also has two Tortoise Shell (spell) absorption strings
-			tokens["TYPE"] = type_name;
+			tokens["TYPE"] = std::move(type_name);
 			SetTokenAsString("AMOUNT", damage);
 
 			HCStrings strref;
@@ -4462,7 +4459,7 @@ void Actor::DisplayCombatFeedback(unsigned int damage, int resisted, int damaget
 		if (detailed) {
 			//<DAMAGEE> was immune to my <TYPE> damage
 			tokens["DAMAGEE"] = GetName();
-			tokens["TYPE"] = type_name;
+			tokens["TYPE"] = std::move(type_name);
 			displaymsg->DisplayConstantStringName(HCStrings::DamageImmunity, GUIColors::WHITE, hitter);
 		} else if (DisplayMessage::HasStringReference(HCStrings::DamageImmunity) && DisplayMessage::HasStringReference(HCStrings::Damage1)) {
 			// bg2
@@ -4650,7 +4647,11 @@ void Actor::PlaySwingSound(const WeaponInfo &wi) const
 			break;
 	}
 	if (vb != vb.end()) {
-		bool found = VerbalConstant(*vb);
+		bool found = false;
+		// limit to once per round so high APR actors don't spam
+		if (!InParty || attackcount == attacksperround) {
+			VerbalConstant(*vb);
+		}
 		// retry with 2da for soundsets, since they only checked one thing
 		if (!found) {
 			ResRef sound2;
@@ -4876,11 +4877,31 @@ ieDword Actor::GetXPLevel(int modified) const
 	return ieDword(average);
 }
 
+// iwd2 adds a +1 bonus for cleric kits using/casting their boon innates
+static int GetIWD2BoonBonus(const Actor* act)
+{
+	int bonus = 0;
+	if (!third) return 0;
+	if (!act->GetClericLevel()) return 0;
+
+	// no need to check for kits, since if you don't have it, you don't get the spell
+	// they're SPIN263 - SPIN271
+	if (!act->SpellResRef.BeginsWith("SPIN2")) return 0;
+	int num = atoi(act->SpellResRef.c_str() + 4);
+	if (num >= 263 && num <= 271) {
+		bonus = 1;
+	}
+
+	return bonus;
+}
+
 // returns the guessed caster level by passed spell type
 // FIXME: add more logic for cross-type kits (like avengers)?
 // FIXME: iwd2 does the right thing at least for spells cast from spellbooks;
 //        that is, it takes the correct level, not first or average or min or max.
 //        We need to propagate the spellbook info all through here. :/
+//        ... or do we? iwd2re suggests it does take the max, see link below
+//        https://github.com/alexbatalov/iwd2-re/blob/4fa36bcd6c33e0d35c9e273561aa683aece88490/src/CGameSprite.cpp#L12585
 //        NOTE: this is only problematic for multiclassed actors
 ieDword Actor::GetBaseCasterLevel(int spelltype, int flags) const
 {
@@ -4950,6 +4971,12 @@ int Actor::CastingLevelBonus(int level, int type)
 		break;
 	case IE_SPL_WIZARD:
 		bonus = GetWildMod(level) + GetStat(IE_CASTINGLEVELBONUSMAGE);
+		break;
+	case IE_SPL_INNATE:
+		bonus = GetIWD2BoonBonus(this);
+		break;
+	default:
+		break;
 	}
 
 	return bonus;
@@ -5080,7 +5107,7 @@ void Actor::Turn(Scriptable *cleric, ieDword turnlevel)
 					core->ApplySpell(ResRef("panic"), this, cleric, level);
 				} else {
 					Log(DEBUG, "Actor", "Panic from turning!");
-					Panic(cleric, PANIC_RUNAWAY);
+					Panic(cleric, PanicMode::RunAway);
 				}
 			}
 		}
@@ -5110,7 +5137,7 @@ void Actor::Turn(Scriptable *cleric, ieDword turnlevel)
 		Die(cleric);
 	} else if (turnlevel >= level + turnPanicLevelMod) {
 		Log(DEBUG, "Actor", "Panic from turning!");
-		Panic(cleric, PANIC_RUNAWAY);
+		Panic(cleric, PanicMode::RunAway);
 	}
 }
 
@@ -5285,7 +5312,8 @@ void Actor::Die(Scriptable *killer, bool grantXP)
 	//remove IDLE so the actor gets a chance to die properly
 	InternalFlags&=~IF_IDLE;
 
-	if (LastDamageType & DAMAGE_CHUNKING) {
+	ieDword gore = core->GetDictionary().Get("Gore", 0);
+	if (LastDamageType & DAMAGE_CHUNKING && gore) {
 		ChunkActor(this);
 	} else if (GetStance() != IE_ANI_DIE) {
 		SetStance(IE_ANI_DIE);
@@ -5468,6 +5496,8 @@ bool Actor::CheckOnDeath()
 	}
 	//don't mess with the already deceased
 	if (BaseStats[IE_STATE_ID]&STATE_DEAD) {
+		// delayed cleanup of chunked actors, see below
+		if (LastDamageType & DAMAGE_CHUNKING && Timers.removalTime < core->GetGame()->GameTime) return true;
 		return false;
 	}
 	// don't destroy actors currently in a dialog
@@ -5555,10 +5585,11 @@ bool Actor::CheckOnDeath()
 	if (Modified[IE_MC_FLAGS]&MC_KEEP_CORPSE) return false;
 	Timers.removalTime = time + core->Time.day_size; // keep corpse around for a day
 
-	//if chunked death, then return true
+	// if chunked death, don't return true either, so delayed effects and scripts have more time
+	// bg2 ar0809 bodhi needs this if the pool is cleansed; her replacement to bat form uses a 1s delay
 	if (LastDamageType & DAMAGE_CHUNKING) {
-		Timers.removalTime = time;
-		return true;
+		Timers.removalTime = time + 2 * core->Time.defaultTicksPerSec;
+		return false;
 	}
 	return false;
 }
@@ -5820,17 +5851,6 @@ void Actor::InitStatsOnLoad()
 //most feats are simulated via spells (feat<xx>)
 void Actor::ApplyFeats()
 {
-	ResRef feat;
-
-	for(int i=0;i<MAX_FEATS;i++) {
-		int level = GetFeat(i);
-		feat.Format("FEAT{:02x}", i);
-		if (level) {
-			if (gamedata->Exists(feat, IE_SPL_CLASS_ID, true)) {
-				core->ApplySpell(feat, this, this, level);
-			}
-		}
-	}
 	//apply scripted feats
 	if (InParty) {
 		core->GetGUIScriptEngine()->RunFunction("LUCommon", "ApplyFeats", InParty, true);
@@ -6850,17 +6870,28 @@ int Actor::GetDefense(int DamageType, ieDword wflags, const Actor *attacker) con
 		}
 	}
 
+	if (!attacker) return defense;
+
 	// is the attacker invisible? We don't care if we know the right uncanny dodge
-	if (third && attacker && attacker->GetStat(state_invisible)) {
-		if ((GetStat(IE_UNCANNY_DODGE) & 0x100) == 0) {
-			// oops, we lose the dex bonus (like flatfooted)
-			defense -= AC.GetDexterityBonus();
+	if (attacker->IsInvisibleTo(this, 3)) {
+		if (third) {
+			if ((GetStat(IE_UNCANNY_DODGE) & 0x100) == 0) {
+				// oops, we lose the dex bonus (like flatfooted)
+				defense -= AC.GetDexterityBonus();
+			}
+		} else {
+			if (wflags & WEAPON_MELEE && attacker->GetStat(IE_BACKSTABDAMAGEMULTIPLIER) > 1) {
+				defense -= AC.GetDexterityBonus();
+			}
 		}
 	}
 
-	if (attacker) {
-		defense -= fxqueue.BonusAgainstCreature(fx_ac_vs_creature_type_ref,attacker);
+	// are we invisible? Relevant for improved invisibility, perhaps also in iwd2
+	if (!third && IsInvisibleTo(attacker, 3)) {
+		defense += 4;
 	}
+
+	defense -= fxqueue.BonusAgainstCreature(fx_ac_vs_creature_type_ref,attacker);
 	return defense;
 }
 
@@ -8733,7 +8764,7 @@ String Actor::GetSoundFolder(int full, const ResRef& overrideSet) const
 			soundset = fmt::format(u"{}", PCStats->SoundFolder);
 		}
 	} else {
-		soundset = wSet;
+		soundset = std::move(wSet);
 	}
 
 	return soundset;
@@ -9529,12 +9560,11 @@ void Actor::ClearCurrentStanceAnims()
 void Actor::SetUsedWeapon(AnimRef AnimationType, const std::array<ieWord, 3>& meleeAnimation, unsigned char wt)
 {
 	WeaponRef = AnimationType;
-	if (wt != IE_ANI_WEAPON_INVALID) WeaponType = wt;
 	if (!anims)
 		return;
 		
 	anims->SetWeaponRef(AnimationType);
-	anims->SetWeaponType(WeaponType);
+	anims->SetWeaponType(wt);
 	ClearCurrentStanceAnims();
 	SetAttackMoveChances(meleeAnimation);
 	if (InParty) {
@@ -9561,16 +9591,17 @@ void Actor::SetUsedWeapon(AnimRef AnimationType, const std::array<ieWord, 3>& me
 void Actor::SetUsedShield(AnimRef AnimationType, unsigned char wt)
 {
 	ShieldRef = AnimationType;
-	if (wt != IE_ANI_WEAPON_INVALID) WeaponType = wt;
-	if (AnimationType[0] == ' ' || AnimationType[0] == 0)
-		if (WeaponType == IE_ANI_WEAPON_2W)
-			WeaponType = IE_ANI_WEAPON_1H;
+	if (AnimationType[0] == ' ' || AnimationType[0] == 0) {
+		if (wt == IE_ANI_WEAPON_2W) {
+			wt = IE_ANI_WEAPON_1H;
+		}
+	}
 
 	if (!anims)
 		return;
 	
 	anims->SetOffhandRef(AnimationType);
-	anims->SetWeaponType(WeaponType);
+	anims->SetWeaponType(wt);
 	ClearCurrentStanceAnims();
 	if (InParty) {
 		//update the paperdoll weapon animation
@@ -10266,7 +10297,7 @@ bool Actor::BlocksSearchMap() const
 //return true if the actor doesn't want to use an entrance
 bool Actor::CannotPassEntrance(ieDword exitID) const
 {
-	if (Timers.lastExit != exitID) {
+	if (lastExit != exitID) {
 		return true;
 	}
 
@@ -10288,8 +10319,8 @@ void Actor::UseExit(ieDword exitID) {
 		InternalFlags&=~IF_USEEXIT;
 		LastArea = Area;
 		UsedExit.Reset();
-		if (Timers.lastExit) {
-			const Scriptable* ip = area->GetInfoPointByGlobalID(Timers.lastExit);
+		if (lastExit) {
+			const Scriptable* ip = area->GetInfoPointByGlobalID(lastExit);
 			if (ip) {
 				const ieVariable& ipName = ip->GetScriptName();
 				if (!ipName.IsEmpty()) {
@@ -10298,7 +10329,7 @@ void Actor::UseExit(ieDword exitID) {
 			}
 		}
 	}
-	Timers.lastExit = exitID;
+	lastExit = exitID;
 }
 
 // luck increases the minimum roll per dice, but only up to the number of dice sides;
@@ -10389,6 +10420,21 @@ void Actor::CureInvisibility()
 		//not sure, but better than nothing
 		if (! (Modified[IE_STATE_ID]&state_invisible)) {
 			AddTrigger(TriggerEntry(trigger_becamevisible));
+		}
+	}
+
+	// change improved to weak invisibility once detected
+	if (Modified[IE_STATE_ID] & STATE_INVIS2) {
+		// unfortunately HasEffectWithParam returns const
+		static EffectRef fx_set_invisible_state_ref = { "State:Invisible", -1 };
+		static int invisOpcode = EffectQueue::ResolveEffect(fx_set_invisible_state_ref);
+		auto fxIter = fxqueue.GetFirstEffect();
+		Effect* fx = fxqueue.GetNextEffect(fxIter);
+		while (fx) {
+			if (fx->Opcode == ieDword(invisOpcode) && fx->Parameter2 == 1) {
+				fx->Parameter2 = 2;
+			}
+			fx = fxqueue.GetNextEffect(fxIter);
 		}
 	}
 }
@@ -10675,7 +10721,7 @@ bool Actor::TryToHideIWD2()
 }
 
 //cannot target actor (used by GUI)
-bool Actor::Untargetable(const ResRef& spellRef) const
+bool Actor::Untargetable(const ResRef& spellRef, const Actor* source) const
 {
 	if (!spellRef.IsEmpty()) {
 		const Spell *spl = gamedata->GetSpell(spellRef, true);
@@ -10685,7 +10731,7 @@ bool Actor::Untargetable(const ResRef& spellRef) const
 		}
 		gamedata->FreeSpell(spl, spellRef, false);
 	}
-	return IsInvisibleTo(NULL);
+	return IsInvisibleTo(source, 7);
 }
 
 //it is futile to try to harm target (used by AI scripts)
@@ -10911,7 +10957,11 @@ int Actor::GetArmorFailure(int &armor, int &shield) const
 }
 
 // checks whether the actor is visible to another scriptable
-bool Actor::IsInvisibleTo(const Scriptable *checker) const
+// flags:
+// - 1: normal invisibility
+// - 2: improved or weak invisibility
+// - 4: sanctuary
+bool Actor::IsInvisibleTo(const Scriptable* checker, int flags) const
 {
 	// consider underground ankhegs completely invisible to everyone
 	if (GetStance() == IE_ANI_WALK && GetAnims()->GetAnimType() == IE_ANI_TWO_PIECE) {
@@ -10923,10 +10973,11 @@ bool Actor::IsInvisibleTo(const Scriptable *checker) const
 	if (checker2) {
 		canSeeInvisibles = checker2->GetSafeStat(IE_SEEINVISIBLE);
 	}
-	bool invisible = GetSafeStat(IE_STATE_ID) & state_invisible;
-	if (!canSeeInvisibles && (invisible || HasSpellState(SS_SANCTUARY))) {
-		return true;
-	}
+	if (canSeeInvisibles) return false;
+
+	if (flags & 1 && GetSafeStat(IE_STATE_ID) & state_invisible) return true;
+	if (flags & 2 && GetSafeStat(IE_STATE_ID) & STATE_INVIS2) return true;
+	if (flags & 4 && HasSpellState(SS_SANCTUARY)) return true;
 
 	return false;
 }
