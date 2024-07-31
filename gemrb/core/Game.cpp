@@ -1283,7 +1283,8 @@ bool Game::EveryoneNearPoint(const Map *area, const Point &p, int flags) const
 		}
 
 		const Map* map = pc->GetCurrentArea();
-		if (map && map != area) {
+		if (!map) return true; // ok for familiars
+		if (map != area) {
 			return false;
 		}
 		if (Distance(p, pc) > MAX_TRAVELING_DISTANCE) {
@@ -1725,7 +1726,7 @@ bool Game::CanPartyRest(RestChecks checks, ieStrRef* err) const
 
 	if (checks & RestChecks::InControl) {
 		for (const auto& pc : PCs) {
-			if (pc->GetStat(IE_STATE_ID) & STATE_MINDLESS) {
+			if (pc->GetStat(IE_STATE_ID) & STATE_MINDLESS || pc->GetStat(IE_CHECKFORBERSERK)) {
 				// You cannot rest at this time because you do not have control of all your party members
 				*err = DisplayMessage::GetStringReference(HCStrings::CantRestNoControl);
 				return false;
@@ -2508,7 +2509,7 @@ void Game::MovePCs(const ResRef& targetArea, const Point& targetPoint, int orien
 void Game::MoveFamiliars(const ResRef& targetArea, const Point& targetPoint, int orientation) const
 {
 	for (const auto& npc : NPCs) {
-		if (npc->GetBase(IE_EA) == EA_FAMILIAR) {
+		if (npc->GetBase(IE_EA) == EA_FAMILIAR && npc->GetCurrentArea()) {
 			MoveBetweenAreasCore(npc, targetArea, targetPoint, orientation, true);
 		}
 	}

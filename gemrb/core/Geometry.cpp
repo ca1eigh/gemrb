@@ -37,6 +37,7 @@ static float pseudoAtan2(float y, float x)
 	// Extract the sign bits
 	uint32_t xS = signMask & (uint32_t&) x;
 	uint32_t yS = signMask & (uint32_t&) y;
+	if (xS == 0 && yS == 0) return 0;
 
 	// Determine the quadrant offset
 	float q = float((~xS & yS) >> 29 | xS >> 30);
@@ -60,6 +61,7 @@ float_t AngleFromPoints(const Point& p1, const Point& p2, bool exact)
 {
 	float_t xdiff = p1.x - p2.x;
 	float_t ydiff = p1.y - p2.y;
+	if (xdiff == 0 && ydiff == 0) return 0;
 
 	float_t angle;
 	if (exact) {

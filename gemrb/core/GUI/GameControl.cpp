@@ -288,6 +288,10 @@ void GameControl::CreateMovement(Actor *actor, const Point &p, bool append, bool
 		// check again because GenerateAction can fail (non PST)
 		if (!action) {
 			action = GenerateAction(fmt::format("MoveToPoint([{}.{}])", p.x, p.y));
+			if (overMe && overMe->Type == ST_TRAVEL) {
+				// gemrb extension to make travel through nearly blocked regions less painful
+				action->int0Parameter = MAX_TRAVELING_DISTANCE / 10; // empirical
+			}
 		}
 	}
 
@@ -2203,7 +2207,7 @@ bool GameControl::OnMouseUp(const MouseEvent& me, unsigned short Mod)
 			if (mainActor && overMe->Type != ST_TRAVEL) {
 				CreateMovement(mainActor, p, false, tryToRun); // let one actor handle doors, loot and containers
 			} else {
-				CommandSelectedMovement(p, true, false, tryToRun);
+				CommandSelectedMovement(p, overMe->Type != ST_TRAVEL, false, tryToRun);
 			}
 		}
 
@@ -2271,7 +2275,6 @@ void GameControl::PerformSelectedAction(const Point& p)
 				game->selected[i]->UseExit(exitID);
 			}
 		}
-		CommandSelectedMovement(p, false);
 		if (HandleActiveRegion(Scriptable::As<InfoPoint>(overMe), selectedActor, p)) {
 			core->SetEventFlag(EF_RESETTARGET);
 		}

@@ -226,6 +226,8 @@ static int fx_arterial_strike (Scriptable* Owner, Actor* target, Effect* fx); //
 static int fx_hamstring (Scriptable* Owner, Actor* target, Effect* fx); //456
 static int fx_rapid_shot (Scriptable* Owner, Actor* target, Effect* fx); //457
 
+static int fx_turn_undead3(Scriptable* Owner, Actor* target, Effect* fx); // 511
+
 //No need to make these ordered, they will be ordered by EffectQueue
 static EffectDesc effectnames[] = {
 	EffectDesc("ACVsDamageTypeModifierIWD2", fx_ac_vs_damage_type_modifier_iwd2, 0, -1), //0
@@ -343,7 +345,9 @@ static EffectDesc effectnames[] = {
 	EffectDesc("ArterialStrike", fx_arterial_strike, 0, -1), //455
 	EffectDesc("HamString", fx_hamstring, 0, -1), //456
 	EffectDesc("RapidShot", fx_rapid_shot, 0, -1), //457
-	EffectDesc(NULL, NULL, 0, 0),
+
+	EffectDesc("TurnUndead3", fx_turn_undead3, 0, -1), // 511
+	EffectDesc(nullptr, nullptr, 0, 0),
 };
 
 //effect refs used in this module
@@ -1599,6 +1603,7 @@ int fx_animal_rage (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	//param2==1 sets only the spell state
 	if (fx->Parameter2) {
 		target->SetSpellState( SS_ANIMALRAGE);
+		EXTSTATE_SET(EXTSTATE_ANIMAL_RAGE);
 		return FX_APPLIED;
 	}
 
@@ -1648,26 +1653,66 @@ int fx_animal_rage (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 //0x118 TurnUndead2 iwd2
 int fx_turn_undead2 (Scriptable* Owner, Actor* target, Effect* fx)
 {
-	// print("fx_turn_undead2(%2d): Level: %d Type %d", fx->Opcode, fx->Parameter1, fx->Parameter2);
+	if (fx->FirstApply) {
+		core->GetAudioDrv()->Play("ACT_06", SFXChannel::Monster, target->Pos, GEM_SND_SPATIAL);
+	}
+	target->SetSpellState(SS_TURNED);
+
+	// caster-dependent logic for undead ward, as per original
+	// it poorly redid what we have in fx_turn_undead3, passing bad params
+	if (fx->Parameter2 == 4) {
+		const Actor* turner = GetCasterObject();
+		int check = turner->LuckyRoll(1, 20, 1) + turner->GetAbilityBonus(IE_CHR);
+		int levelMod = check < 10 ? (check - 9) / 3 - 1 : (check - 10) / 3;
+		ieDword maxTurnableLevel = Clamp<ieDword>(turner->GetStat(IE_TURNUNDEADLEVEL) + levelMod, 0, 50);
+		ieDword levelSum = target->GetStat(IE_CLASSLEVELSUM);
+
+		if (maxTurnableLevel < levelSum) {
+			// unaffected
+			core->GetTokenDictionary()["RESOURCE"] = StringFromASCII(fx->SourceRef);
+			displaymsg->DisplayConstantStringName(HCStrings::ResResisted, GUIColors::WHITE, target);
+			return FX_NOT_APPLIED;
+		}
+
+		// convert to one of the other main 4 modes
+		if (GameScript::ID_Alignment(turner, AL_EVIL)) {
+			fx->Parameter2 = fx->CasterLevel <= levelSum * 2;
+		} else {
+			fx->Parameter2 = (fx->CasterLevel <= levelSum * 2) + 2;
+		}
+	}
+
+	static EffectRef fx_control_undead_ref = { "ControlUndead", -1 };
 	switch (fx->Parameter2)
 	{
 	case 0: //command
+		// replace with a control effect
+		fx->Opcode = EffectQueue::ResolveEffect(fx_control_undead_ref);
+		fx->Parameter2 = 4;
+		// also set fx->TimingMode to FX_DURATION_ABSOLUTE for some reason
+		displaymsg->DisplayStringName(core->GetString(ieStrRef::COMMANDED), GUIColors::WHITE, target);
 		target->AddTrigger(TriggerEntry(trigger_turnedby, Owner->GetGlobalID()));
-		target->Panic(Owner, PanicMode::RunAway);
 		break;
 	case 1://rebuke
-		target->AddTrigger(TriggerEntry(trigger_turnedby, Owner->GetGlobalID()));
-		if (target->SetSpellState(SS_REBUKED)) {
-			//display string rebuked
+		target->SetSpellState(SS_REBUKED);
+		if (fx->FirstApply) {
+			target->AddTrigger(TriggerEntry(trigger_turnedby, Owner->GetGlobalID()));
+			displaymsg->DisplayStringName(core->GetString(ieStrRef::REBUKED), GUIColors::WHITE, target);
 		}
-		target->AC.HandleFxBonus(-4, fx->TimingMode==FX_DURATION_INSTANT_PERMANENT);
+		target->AC.HandleFxBonus(-2, fx->TimingMode == FX_DURATION_INSTANT_PERMANENT);
 		break;
 	case 2://destroy
-		target->AddTrigger(TriggerEntry(trigger_turnedby, Owner->GetGlobalID()));
+		if (fx->FirstApply) {
+			target->AddTrigger(TriggerEntry(trigger_turnedby, Owner->GetGlobalID()));
+		}
+		target->LastDamageType |= DAMAGE_CHUNKING;
 		target->Die(Owner);
 		break;
 	case 3://panic
-		target->AddTrigger(TriggerEntry(trigger_turnedby, Owner->GetGlobalID()));
+		if (fx->FirstApply) {
+			target->AddTrigger(TriggerEntry(trigger_turnedby, Owner->GetGlobalID()));
+			displaymsg->DisplayStringName(core->GetString(ieStrRef::TURNED), GUIColors::WHITE, target);
+		}
 		target->Panic(Owner, PanicMode::RunAway);
 		break;
 	default://depends on caster
@@ -1681,6 +1726,64 @@ int fx_turn_undead2 (Scriptable* Owner, Actor* target, Effect* fx)
 			target->Turn(Owner, actor->GetStat(IE_TURNUNDEADLEVEL));
 		}
 		break;
+	}
+	return FX_APPLIED;
+}
+
+// 511 TurnUndead3 gemrb helper opcode substituting a hardcoded iwd2 projectile
+// we apply it to the user only and then it does its own targeting of fx_turn_undead2
+int fx_turn_undead3(Scriptable* /*Owner*/, Actor* target, Effect* /*fx*/)
+{
+	const Actor* turner = target;
+	if (!turner || turner->Type != ST_ACTOR) {
+		return FX_NOT_APPLIED;
+	}
+	const Map* area = turner->GetCurrentArea();
+	if (!area) return FX_NOT_APPLIED;
+
+	// highest undead level one can turn
+	int check = turner->LuckyRoll(1, 20, 1) + turner->GetAbilityBonus(IE_CHR);
+	int levelMod = check < 10 ? (check - 9) / 3 - 1 : (check - 10) / 3;
+	int maxTurnableLevel = turner->GetStat(IE_TURNUNDEADLEVEL) + levelMod;
+
+	// just a hardcoded +2 instead of the turner's level as per 3e
+	int maxTurnedLevels = turner->LuckyRoll(2, 6, 2) + turner->GetAbilityBonus(IE_CHR);
+	if (turner->HasFeat(Feat::ImprovedTurning)) {
+		maxTurnedLevels += 2;
+	}
+
+	int flags = GA_NO_SELF | GA_NO_DEAD | GA_NO_LOS | GA_NO_UNSCHEDULED;
+	const auto& targets = area->GetAllActorsInRadius(target->Pos, flags, turner->GetBase(IE_VISUALRANGE) / 2, turner);
+	int turnUndeadStat = turner->GetStat(IE_TURNUNDEADLEVEL);
+	for (auto subTarget : targets) {
+		// turn only once, possible with multiple clerics, paladins
+		// unlike in the other games, there's no turning of paladins
+		if (subTarget->GetStat(IE_GENERAL) != GEN_UNDEAD || subTarget->HasSpellState(SS_TURNED)) {
+			continue;
+		}
+
+		int levelSum = subTarget->GetStat(IE_CLASSLEVELSUM);
+		// original bug or bad late design revert: maxTurnedLevels is never decreased
+		// in effect there is no limit to how many actors turning can affect
+		// bug2: it can happen that maxTurnedLevels < maxTurnableLevel,
+		// reducing the overall turning impact
+		if (maxTurnableLevel < levelSum || maxTurnedLevels < levelSum) {
+			continue;
+		}
+
+		ResRef turningSpell;
+		if (GameScript::ID_Alignment(turner, AL_EVIL)) {
+			if (turnUndeadStat < levelSum * 2) {
+				turningSpell = "EffTU2";
+			} else {
+				turningSpell = "EffTU1";
+			}
+		} else if (turnUndeadStat < levelSum * 2) {
+			turningSpell = "EffTU4";
+		} else {
+			turningSpell = "EffTU3";
+		}
+		core->ApplySpell(turningSpell, subTarget, target, turnUndeadStat); // caster level doesn't really matter
 	}
 	return FX_APPLIED;
 }
@@ -2174,7 +2277,7 @@ int fx_control (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 
 	//check for slippery mind feat success
 	const Game *game = core->GetGame();
-	if (fx->FirstApply && target->HasFeat(FEAT_SLIPPERY_MIND)) {
+	if (fx->FirstApply && target->HasFeat(Feat::SlipperyMind)) {
 		fx->Parameter3 = 1;
 		fx->Parameter4 = game->GameTime+core->Time.round_size;
 	}
@@ -2907,8 +3010,8 @@ int fx_cleave (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	//FIXME:the previous opponent must be dead by now, or this code won't work
 	if (SeeCore(target, Enemy, false) ) {
 		const Actor* enemy = map->GetActorByGlobalID(target->objects.LastSeen);
-		//50 is more like our current weapon range
-		if (enemy && PersonalDistance(enemy, target) < 50 && target->objects.LastSeen != target->objects.LastTarget) {
+		int weaponRange = target->GetWeaponRange(target->usedLeftHand);
+		if (enemy && WithinPersonalRange(enemy, target, weaponRange) && target->objects.LastSeen != target->objects.LastTarget) {
 			displaymsg->DisplayConstantStringNameValue(HCStrings::Cleave, GUIColors::WHITE, target, fx->Parameter1);
 			target->attackcount=fx->Parameter1;
 			target->FaceTarget(enemy);
@@ -3156,7 +3259,7 @@ int fx_power_attack (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
 	// print("fx_power_attack(%2d)", fx->Opcode);
 
-	if (!target->HasFeat(FEAT_POWER_ATTACK)) return FX_NOT_APPLIED;
+	if (!target->HasFeat(Feat::PowerAttack)) return FX_NOT_APPLIED;
 	if (!target->PCStats) return FX_NOT_APPLIED;
 
 	ieDword x=target->PCStats->ExtraSettings[ES_POWERATTACK];
@@ -3183,7 +3286,7 @@ int fx_expertise (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 //up to feat_expertise count (player's choice)
 	// print("fx_expertise(%2d)", fx->Opcode);
 
-	if (!target->HasFeat(FEAT_EXPERTISE)) return FX_NOT_APPLIED;
+	if (!target->HasFeat(Feat::Expertise)) return FX_NOT_APPLIED;
 	if (!target->PCStats) return FX_NOT_APPLIED;
 
 	ieDword x=target->PCStats->ExtraSettings[ES_EXPERTISE];
@@ -3208,7 +3311,7 @@ int fx_arterial_strike (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
 	// print("fx_arterial_strike(%2d)", fx->Opcode);
 	//arterial strike doesn't work for npcs?
-	if (!target->HasFeat(FEAT_ARTERIAL_STRIKE)) return FX_NOT_APPLIED;
+	if (!target->HasFeat(Feat::ArterialStrike)) return FX_NOT_APPLIED;
 	if (!target->PCStats) return FX_NOT_APPLIED;
 
 	if (target->PCStats->ExtraSettings[ES_ARTERIAL]) {
@@ -3241,7 +3344,7 @@ int fx_hamstring (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
 	// print("fx_hamstring(%2d)", fx->Opcode);
 	//hamstring doesn't work for npcs?
-	if (!target->HasFeat(FEAT_HAMSTRING)) return FX_NOT_APPLIED;
+	if (!target->HasFeat(Feat::Hamstring)) return FX_NOT_APPLIED;
 	if (!target->PCStats) return FX_NOT_APPLIED;
 
 	if (target->PCStats->ExtraSettings[ES_HAMSTRING]) {
@@ -3273,7 +3376,7 @@ int fx_rapid_shot (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 {
 	// print("fx_rapid_shot(%2d)", fx->Opcode);
 	//rapid shot doesn't work for npcs?
-	if (!target->HasFeat(FEAT_RAPID_SHOT)) return FX_NOT_APPLIED;
+	if (!target->HasFeat(Feat::RapidShot)) return FX_NOT_APPLIED;
 	if (!target->PCStats) return FX_NOT_APPLIED;
 
 	if (target->PCStats->ExtraSettings[ES_RAPIDSHOT]) {

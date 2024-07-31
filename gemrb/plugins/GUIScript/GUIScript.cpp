@@ -4448,7 +4448,7 @@ static PyObject* GemRB_SaveGame(PyObject * /*self*/, PyObject * args)
 	if (slot == -1) {
 		CObject<SaveGame> save(obj);
 
-		return PyLong_FromLong(sgip->CreateSaveGame(save, PyString_AsStringView(folder)));
+		return PyLong_FromLong(sgip->CreateSaveGame(save, PyString_AsStringObj(folder)));
 	} else {
 		return PyLong_FromLong(sgip->CreateSaveGame(slot, core->config.MultipleQuickSaves));
 	}
@@ -8167,7 +8167,7 @@ number of all spells of the given type.\n\
 **Parameters:**\n\
   * PartyID   - the PC's position in the party\n\
   * SpellType - 0 - priest, 1 - wizard, 2 - innate\n\
-  * Level     - the known spell's level\n\
+  * Level     - the known spell's level (-1 for any level)\n\
 \n\
 **Return value:** numeric\n\
 \n\
@@ -10216,8 +10216,9 @@ actor has the passed feat id (from ie_feats.py).\n\
 
 static PyObject* GemRB_HasFeat(PyObject * /*self*/, PyObject* args)
 {
-	int globalID, featindex;
-	PARSE_ARGS( args, "ii", &globalID, &featindex );
+	int globalID;
+	Feat featindex;
+	PARSE_ARGS(args, "ib", &globalID, &featindex);
 	GET_GAME();
 	GET_ACTOR_GLOBAL();
 	return PyLong_FromLong(actor->GetFeat(featindex));
@@ -10242,11 +10243,13 @@ PyDoc_STRVAR( GemRB_SetFeat__doc,
 
 static PyObject* GemRB_SetFeat(PyObject * /*self*/, PyObject* args)
 {
-	int globalID, featindex, value;
-	PARSE_ARGS( args,  "iii", &globalID, &featindex, &value );
+	int globalID;
+	int value;
+	Feat featIndex;
+	PARSE_ARGS(args, "ibi", &globalID, &featIndex, &value);
 	GET_GAME();
 	GET_ACTOR_GLOBAL();
-	actor->SetFeatValue(featindex, value, false);
+	actor->SetFeatValue(featIndex, value, false);
 	Py_RETURN_NONE;
 }
 

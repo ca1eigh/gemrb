@@ -475,4 +475,4 @@ def ApplyFeats(MyChar):
 		return
 
 	import IDLUCommon
-	IDLUCommon.ApplyFeatsIWD2 (MyChar)
+	IDLUCommon.LearnFeatInnates (MyChar, MyChar < 1000, False) # did we get passed a global id?

@@ -24,7 +24,6 @@
 
 #include "Scriptable/Actor.h"
 
-#include "ie_feats.h"
 #include "overlays.h"
 #include "strrefs.h"
 #include "opcode_params.h"
@@ -156,10 +155,8 @@ static const int booksiwd2[ISCLASSES]={-1, IE_IWD2_SPELL_WIZARD, -1, -1,
  IE_IWD2_SPELL_PALADIN, IE_IWD2_SPELL_RANGER, IE_IWD2_SPELL_SORCERER, -1, -1};
 
 //stat values are 0-255, so a byte is enough
-static ieByte featstats[MAX_FEATS]={0
-};
-static ieByte featmax[MAX_FEATS]={0
-};
+static EnumArray<Feat, ieByte> featStats;
+static EnumArray<Feat, ieByte> featMax;
 
 // reputation modifiers
 #define CLASS_PCCUTOFF 32
@@ -293,10 +290,6 @@ static EffectRef fx_remove_portrait_icon_ref = { "Icon:Remove", -1 };
 static EffectRef fx_unpause_caster_ref = { "Cure:CasterHold", -1 };
 static EffectRef fx_ac_vs_creature_type_ref = { "ACVsCreatureType", -1 };
 static EffectRef fx_puppetmarker_ref = { "PuppetMarker", -1 };
-static EffectRef fx_stoneskin_ref = { "StoneSkinModifier", -1 };
-static EffectRef fx_stoneskin2_ref = { "StoneSkin2Modifier", -1 };
-static EffectRef fx_aegis_ref = { "Aegis", -1 };
-static EffectRef fx_cloak_ref = { "Overlay", -1 };
 static EffectRef fx_damage_ref = { "Damage", -1 };
 static EffectRef fx_melee_ref = { "SetMeleeEffect", -1 };
 static EffectRef fx_ranged_ref = { "SetRangedEffect", -1 };
@@ -1734,12 +1727,9 @@ static void InitActorTables()
 	}
 
 	int abilityMax = core->GetMaximumAbility();
-	maximum_values[IE_STR] = abilityMax;
-	maximum_values[IE_INT] = abilityMax;
-	maximum_values[IE_DEX] = abilityMax;
-	maximum_values[IE_CON] = abilityMax;
-	maximum_values[IE_CHR] = abilityMax;
-	maximum_values[IE_WIS] = abilityMax;
+	for (auto& stat : { IE_STR, IE_INT, IE_DEX, IE_CON, IE_CHR, IE_WIS }) {
+		maximum_values[stat] = abilityMax;
+	}
 	if (ReverseToHit) {
 		//all games except iwd2
 		maximum_values[IE_ARMORCLASS]=20;
@@ -1836,21 +1826,20 @@ static void InitActorTables()
 
 	tm = gamedata->LoadTable("featreq", true);
 	if (tm) {
-		unsigned int stat, max;
-
-		for (int i = 0; i < MAX_FEATS; i++) {
+		for (Feat feat : EnumIterator<Feat>()) {
 			//we need the MULTIPLE and MAX_LEVEL columns
 			//MULTIPLE: the FEAT_* stat index
 			//MAX_LEVEL: how many times it could be taken
-			stat = core->TranslateStat(tm->QueryField(i, 0));
+			auto i = static_cast<TableMgr::index_t>(feat);
+			ieDword stat = core->TranslateStat(tm->QueryField(i, 0));
 			if (stat>=MAX_STATS) {
-				Log(WARNING, "Actor", "Invalid stat value in featreq.2da");
+				Log(WARNING, "Actor", "Invalid stat value ({}) in featreq.2da", stat);
 			}
-			max = tm->QueryFieldUnsigned<unsigned int>(i,1);
-			//boolean feats can only be taken once, the code requires featmax for them too
+			ieByte max = tm->QueryFieldUnsigned<ieByte>(i, 1);
+			// boolean feats can only be taken once, the code requires featMax for them too
 			if (stat && (max<1)) max=1;
-			featstats[i] = (ieByte) stat;
-			featmax[i] = (ieByte) max;
+			featStats[feat] = static_cast<ieByte>(stat);
+			featMax[feat] = max;
 		}
 	}
 
@@ -2302,7 +2291,7 @@ ieDword Actor::GetSpellFailure(bool arcana) const
 	ieDword armor = GetTotalArmorFailure();
 
 	if (armor) {
-		ieDword feat = GetFeat(FEAT_ARMORED_ARCANA);
+		ieDword feat = GetFeat(Feat::ArmoredArcana);
 		if (armor<feat) armor = 0;
 		else armor -= feat;
 	}
@@ -2332,7 +2321,7 @@ int Actor::GetDexterityAC() const
 		}
 
 		//blindness negates the dexbonus
-		if ((GetStat(IE_STATE_ID)&STATE_BLIND) && !HasFeat(FEAT_BLIND_FIGHT)) {
+		if ((GetStat(IE_STATE_ID) & STATE_BLIND) && !HasFeat(Feat::BlindFight)) {
 			dexbonus = 0;
 		}
 	}
@@ -2479,13 +2468,6 @@ bool Actor::SetStat(unsigned int StatIndex, stat_t Value, int pcf)
 	return true;
 }
 
-int Actor::GetMod(unsigned int StatIndex) const
-{
-	if (StatIndex >= MAX_STATS) {
-		return 0xdadadada;
-	}
-	return (signed) Modified[StatIndex] - (signed) BaseStats[StatIndex];
-}
 /** Returns a Stat Base Value */
 ieDword Actor::GetBase(unsigned int StatIndex) const
 {
@@ -3233,8 +3215,8 @@ bool Actor::GetSavingThrow(ieDword type, int modifier, const Effect *fx)
 	// same hardcoded list as in the original
 	if (savingThrows[type] == IE_SAVEFORTITUDE && fx->Opcode == 25) {
 		if (BaseStats[IE_RACE] == 4 /* DWARF */) ret += 2;
-		if (HasFeat(FEAT_SNAKE_BLOOD)) ret += 2;
-		if (HasFeat(FEAT_RESIST_POISON)) ret += 4;
+		if (HasFeat(Feat::SnakeBlood)) ret += 2;
+		if (HasFeat(Feat::ResistPoison)) ret += 4;
 	}
 
 	// the original had a sourceType == TRIGGER check, but we handle more than ST_TRIGGER
@@ -3941,7 +3923,7 @@ bool Actor::OverrideActions()
 void Actor::Panic(const Scriptable* attacker, PanicMode mode)
 {
 	auto PanicAction = [](unsigned short actionID) {
-		return actionID == 184 || actionID == 85 || actionID == 124;
+		return actionID == 184 || actionID == 85 || actionID == 124 || actionID == 29;
 	};
 	if (GetStat(IE_STATE_ID) & STATE_PANIC && (!CurrentAction || PanicAction(CurrentAction->actionID))) {
 		Log(DEBUG, "Actor", "Already panicked!");
@@ -4021,7 +4003,7 @@ void Actor::GetHit(int damage, bool killingBlow)
 	}
 
 	if (Modified[IE_STATE_ID]&STATE_SLEEP) {
-		if (Modified[IE_EXTSTATE_ID]&EXTSTATE_NO_WAKEUP || HasSpellState(SS_NOAWAKE)) {
+		if (Modified[IE_EXTSTATE_ID] & (EXTSTATE_NO_WAKEUP | EXTSTATE_DOESNT_AWAKEN_ON_DAMAGE) || HasSpellState(SS_NOAWAKE)) {
 			return;
 		}
 		Effect *fx = EffectQueue::CreateEffect(fx_cure_sleep_ref, 0, 0, FX_DURATION_INSTANT_PERMANENT);
@@ -4059,7 +4041,7 @@ bool Actor::CheckSpellDisruption(int damage) const
 	int concentration = GetSkill(IE_CONCENTRATION);
 	int bonus = 0;
 	// combat casting bonus only applies when injured
-	if (HasFeat(FEAT_COMBAT_CASTING) && Modified[IE_MAXHITPOINTS] != Modified[IE_HITPOINTS]) {
+	if (HasFeat(Feat::CombatCasting) && Modified[IE_MAXHITPOINTS] != Modified[IE_HITPOINTS]) {
 		bonus += 4;
 	}
 	// ~Spell Disruption check (d20 + Concentration + Combat Casting bonus) %d + %d + %d vs. (10 + damageTaken + spellLevel)  = 10 + %d + %d.~
@@ -4086,14 +4068,14 @@ bool Actor::HandleCastingStance(const ResRef& spellResRef, bool deplete, bool in
 bool Actor::CheckSilenced() const
 {
 	if (!(Modified[IE_STATE_ID] & STATE_SILENCED)) return false;
-	if (HasFeat(FEAT_SUBVOCAL_CASTING)) return false;
+	if (HasFeat(Feat::SubvocalCasting)) return false;
 	if (HasSpellState(SS_VOCALIZE)) return false;
 	return true;
 }
 
 void Actor::CheckCleave()
 {
-	int cleave = GetFeat(FEAT_CLEAVE);
+	int cleave = GetFeat(Feat::Cleave);
 	//feat level 1 only enables one cleave per round
 	if ((cleave==1) && fxqueue.HasEffect(fx_cleave_ref) ) {
 		cleave = 0;
@@ -5933,7 +5915,7 @@ bool Actor::ValidTarget(int ga_flags, const Scriptable *checker) const
 	if (ga_flags&GA_SELECT) {
 		if (UnselectableTimer) return false;
 		if (Immobile()) return false;
-		if (Modified[IE_STATE_ID] & (STATE_MINDLESS ^ (STATE_CHARMED|STATE_BERSERK))) {
+		if (Modified[IE_STATE_ID] & (STATE_MINDLESS ^ STATE_CHARMED)) {
 			return false;
 		}
 		// charmed actors are only selectable if they were charmed by the party
@@ -6213,7 +6195,7 @@ void Actor::SetModal(enum Modal newstate, bool force)
 		Modal.FirstApply = true;
 	}
 
-	if (Modal.State == Modal::BattleSong && Modal.State != newstate && HasFeat(FEAT_LINGERING_SONG)) {
+	if (Modal.State == Modal::BattleSong && Modal.State != newstate && HasFeat(Feat::LingeringSong)) {
 		Modal.LingeringSpell = Modal.Spell;
 		Modal.LingeringCount = 2;
 	}
@@ -6526,8 +6508,8 @@ int Actor::GetProficiencyBonus(int& style, bool leftOrRight, int& damageBonus, i
 
 		// rangers wearing light or no armor gain ambidexterity and
 		// two-weapon-fighting feats for free
-		bool ambidextrous = HasFeat(FEAT_AMBIDEXTERITY);
-		bool twoWeaponFighting = HasFeat(FEAT_TWO_WEAPON_FIGHTING);
+		bool ambidextrous = HasFeat(Feat::Ambidexterity);
+		bool twoWeaponFighting = HasFeat(Feat::TwoWeaponFighting);
 		if (GetRangerLevel()) {
 			ieWord armorType = inventory.GetArmorItemType();
 			if (GetArmorWeightClass(armorType) <= 1) {
@@ -6726,7 +6708,7 @@ int Actor::GetToHit(ieDword Flags, const Actor *target)
 
 	if (target) {
 		// if the target is using a ranged weapon while we're meleeing, we get a +4 bonus
-		if ((Flags & WEAPON_STYLEMASK) != WEAPON_RANGED && target->weaponInfo[0].wflags & WEAPON_RANGED) {
+		if ((Flags & WEAPON_STYLEMASK) != WEAPON_RANGED && target->weaponInfo[usedLeftHand].wflags & WEAPON_RANGED) {
 			generic += 4;
 		}
 
@@ -6742,7 +6724,7 @@ int Actor::GetToHit(ieDword Flags, const Actor *target)
 		// close-quarter ranged penalties; let's say roughly max 1 foot apart
 		if (third && (Flags & WEAPON_STYLEMASK) == WEAPON_RANGED && WithinPersonalRange(target, this, 2)) {
 			generic -= 4;
-			if (!HasFeat(FEAT_PRECISE_SHOT)) {
+			if (!HasFeat(Feat::PreciseShot)) {
 				generic -= 4;
 			}
 		}
@@ -6776,7 +6758,7 @@ void Actor::GetTHAbilityBonus(ieDword Flags)
 	//get attack style (melee or ranged)
 	switch(Flags&WEAPON_STYLEMASK) {
 		case WEAPON_MELEE:
-			if ((Flags&WEAPON_FINESSE) && HasFeat(FEAT_WEAPON_FINESSE) ) {
+			if ((Flags & WEAPON_FINESSE) && HasFeat(Feat::WeaponFinesse)) {
 				if (third) {
 					dexbonus = GetAbilityBonus(IE_DEX );
 				} else {
@@ -7089,7 +7071,7 @@ void Actor::PerformAttack(ieDword gameTime)
 	int concealment = (GetStat(IE_ETHEREALNESS)>>8) + (target->GetStat(IE_ETHEREALNESS) & 0x64);
 	if (concealment && LuckyRoll(1, 100, 0) < concealment) {
 		// can we retry?
-		if (!HasFeat(FEAT_BLIND_FIGHT) || LuckyRoll(1, 100, 0) < concealment) {
+		if (!HasFeat(Feat::BlindFight) || LuckyRoll(1, 100, 0) < concealment) {
 			// Missed <TARGETNAME> due to concealment.
 			core->GetTokenDictionary()["TARGETNAME"] = target->GetDefaultName();
 			if (core->HasFeedback(FT_COMBAT)) displaymsg->DisplayConstantStringName(HCStrings::ConcealedMiss, GUIColors::WHITE, this);
@@ -7303,6 +7285,11 @@ int Actor::GetDamageReduction(int resist_stat, ieDword weaponEnchantment) const
 /*Always call this on the suffering actor */
 void Actor::ModifyDamage(Scriptable *hitter, int &damage, int &resisted, int damagetype)
 {
+	static EffectRef fx_stoneskin_ref = { "StoneSkinModifier", -1 };
+	static EffectRef fx_stoneskin2_ref = { "StoneSkin2Modifier", -1 };
+	static EffectRef fx_aegis_ref = { "Aegis", -1 };
+	static EffectRef fx_cloak_ref = { "Overlay", -1 };
+	static EffectRef fx_ironskins_ref = { "IronSkins", -1 }; // iwd2 stone- and ironskin
 	Actor* attacker = Scriptable::As<Actor>(hitter);
 
 	//guardian mantle for PST
@@ -7312,6 +7299,11 @@ void Actor::ModifyDamage(Scriptable *hitter, int &damage, int &resisted, int dam
 			damage = 0;
 			return;
 		}
+	}
+
+	ieDword weaponEnchantment = 0;
+	if (attacker) {
+		weaponEnchantment = attacker->weaponInfo[attacker->usedLeftHand].enchantment;
 	}
 
 	// only check stone skins if damage type is physical
@@ -7340,6 +7332,16 @@ void Actor::ModifyDamage(Scriptable *hitter, int &damage, int &resisted, int dam
 			damage = 0;
 			return;
 		}
+
+		// iwd-style ironskins with damage reduction handled below
+		if (third && HasSpellState(SS_STONESKIN) && weaponEnchantment < 5) {
+			int soak = std::min(damage, 10);
+			fxqueue.DecreaseParam3OfEffect(fx_ironskins_ref, soak, 0);
+			Modified[IE_RESISTCRUSHING] = 10;
+			Modified[IE_RESISTPIERCING] = 10;
+			Modified[IE_RESISTSLASHING] = 10;
+			Modified[IE_RESISTMISSILE] = 10;
+		}
 	}
 
 	if (damage>0) {
@@ -7362,7 +7364,6 @@ void Actor::ModifyDamage(Scriptable *hitter, int &damage, int &resisted, int dam
 				// flat resistance, eg. 10/- or eg. 5/+2 for physical types
 				// for actors we need special care for damage reduction - traps (...) don't have enchanted weapons
 				if (attacker && it->second.reduction) {
-					ieDword weaponEnchantment = attacker->weaponInfo[attacker->usedLeftHand].enchantment;
 					// disregard other resistance boni when checking whether to skip reduction
 					resisted = GetDamageReduction(it->second.resist_stat, weaponEnchantment);
 				} else {
@@ -9223,7 +9224,7 @@ void Actor::ModifyWeaponDamage(const WeaponInfo& wi, Actor* target, int& damage,
 			}
 
 			//apply the dirty fighting spell
-			if (HasFeat(FEAT_DIRTY_FIGHTING) ) {
+			if (HasFeat(Feat::DirtyFighting)) {
 				core->ApplySpell(DirtyFightingRef, target, this, multiplier);
 			}
 		}
@@ -9281,7 +9282,7 @@ int Actor::GetSneakAttackDamage(Actor* target, const WeaponInfo& wi, int& multip
 		core->ApplySpell(BackstabResRef, target, this, multiplier);
 		// do we need this?
 		BackstabResRef.Reset();
-		if (HasFeat(FEAT_CRIPPLING_STRIKE)) {
+		if (HasFeat(Feat::CripplingStrike)) {
 			core->ApplySpell(CripplingStrikeRef, target, this, multiplier);
 		}
 	}
@@ -9520,30 +9521,31 @@ void Actor::InitButtons(ieDword cls, bool forced) const
 	SetActionButtonRow(myrow);
 }
 
-void Actor::SetFeat(unsigned int feat, BitOp mode)
+void Actor::SetFeat(Feat idx, BitOp mode)
 {
-	if (feat>=MAX_FEATS) {
+	if (idx >= Feat::count) {
 		return;
 	}
-	ieDword mask = 1<<(feat&31);
-	ieDword idx = feat>>5;
-	
-	SetBits(BaseStats[IE_FEATS1+idx], mask, mode);
+
+	int feat = static_cast<int>(idx);
+	stat_t pos = IE_FEATS1 + (feat >> 5);
+	ieDword bit = 1 << (feat & 31);
+	SetBits(BaseStats[pos], bit, mode);
 }
 
-void Actor::SetFeatValue(unsigned int feat, int value, bool init)
+void Actor::SetFeatValue(Feat idx, int value, bool init)
 {
-	if (feat>=MAX_FEATS) {
+	if (idx >= Feat::count) {
 		return;
 	}
 
-	value = Clamp<int>(value, 0, featmax[feat]);
+	value = Clamp<int>(value, 0, featMax[idx]);
 	if (value) {
-		SetFeat(feat, BitOp::OR);
-		if (featstats[feat]) SetBase(featstats[feat], value);
+		SetFeat(idx, BitOp::OR);
+		if (featStats[idx]) SetBase(featStats[idx], value);
 	} else {
-		SetFeat(feat, BitOp::NAND);
-		if (featstats[feat]) SetBase(featstats[feat], 0);
+		SetFeat(idx, BitOp::NAND);
+		if (featStats[idx]) SetBase(featStats[idx], 0);
 	}
 
 	if (init) {
@@ -9856,7 +9858,7 @@ bool Actor::HasSpellState(unsigned int spellstate) const
 int Actor::GetMaxEncumbrance() const
 {
 	int max = core->GetStrengthBonus(3, GetStat(IE_STR), GetStat(IE_STREXTRA));
-	if (HasFeat(FEAT_STRONG_BACK)) max += max/2;
+	if (HasFeat(Feat::StrongBack)) max += max / 2;
 	return max;
 }
 
@@ -9902,15 +9904,18 @@ int Actor::GetSkill(unsigned int skill, bool ids) const
 
 //returns the numeric value of a feat, different from HasFeat
 //for multiple feats
-int Actor::GetFeat(unsigned int feat) const
+int Actor::GetFeat(Feat idx) const
 {
-	if (feat>=MAX_FEATS) {
+	if (idx >= Feat::count) {
 		return -1;
 	}
-	if (BaseStats[IE_FEATS1+(feat>>5)]&(1<<(feat&31)) ) {
+
+	int feat = static_cast<int>(idx);
+	stat_t pos = IE_FEATS1 + (feat >> 5);
+	if (BaseStats[pos] & (1 << (feat & 31))) {
 		//return the numeric stat value, instead of the boolean
-		if (featstats[feat]) {
-			return Modified[featstats[feat]];
+		if (featStats[idx]) {
+			return Modified[featStats[idx]];
 		}
 		return 1;
 	}
@@ -9918,11 +9923,13 @@ int Actor::GetFeat(unsigned int feat) const
 }
 
 //returns true if the feat exists
-bool Actor::HasFeat(unsigned int featindex) const
+bool Actor::HasFeat(Feat feat) const
 {
-	if (featindex>=MAX_FEATS) return false;
-	unsigned int pos = IE_FEATS1+(featindex>>5);
-	unsigned int bit = 1<<(featindex&31);
+	if (feat >= Feat::count) return false;
+
+	int idx = static_cast<int>(feat);
+	stat_t pos = IE_FEATS1 + (idx >> 5);
+	unsigned int bit = 1 << (idx & 31);
 	if (BaseStats[pos]&bit) return true;
 	return false;
 }
@@ -10868,7 +10875,7 @@ int Actor::GetArmorSkillPenalty(int profcheck, int &armor, int &shield) const
 	int weightClass = GetArmorWeightClass(armorType);
 
 	// ignore the penalty if we are proficient
-	if (profcheck && GetFeat(FEAT_ARMOUR_PROFICIENCY) >= weightClass) {
+	if (profcheck && GetFeat(Feat::ArmourProficiency) >= weightClass) {
 		penalty = 0;
 	}
 	bool magical = false;
@@ -10899,7 +10906,7 @@ int Actor::GetArmorSkillPenalty(int profcheck, int &armor, int &shield) const
 	if (magical) {
 		shieldPenalty = std::max(0, shieldPenalty - 1);
 	}
-	if (profcheck && HasFeat(FEAT_SHIELD_PROF)) {
+	if (profcheck && HasFeat(Feat::ShieldProf)) {
 		shieldPenalty = 0;
 	}
 	penalty += shieldPenalty;
@@ -11060,7 +11067,7 @@ bool Actor::ConcentrationCheck() const
 	int roll = LuckyRoll(1, 20, 0);
 	int concentration = GetSkill(IE_CONCENTRATION);
 	int bonus = 0;
-	if (HasFeat(FEAT_COMBAT_CASTING)) {
+	if (HasFeat(Feat::CombatCasting)) {
 		bonus += 4;
 	}
 

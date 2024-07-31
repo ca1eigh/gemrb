@@ -1139,6 +1139,7 @@ int fx_set_berserk_state (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	switch(fx->Parameter2) {
 	case 1: //always berserk
 		target->SetSpellState(SS_BERSERK);
+		EXTSTATE_SET(EXTSTATE_BERSERK);
 		STAT_SET(IE_BERSERKSTAGE2, 1);
 		// intentional fallthrough
 	default:
@@ -2251,6 +2252,7 @@ int fx_set_unconscious_state (Scriptable* Owner, Actor* target, Effect* fx)
 		STATE_SET( STATE_HELPLESS | STATE_SLEEP ); //don't awaken on damage
 		if (fx->Parameter2 || !core->HasFeature(GFFlags::HAS_EE_EFFECTS)) {
 			target->SetSpellState(SS_NOAWAKE);
+			EXTSTATE_SET(EXTSTATE_DOESNT_AWAKEN_ON_DAMAGE);
 		}
 		if (fx->IsVariable) {
 			target->SetSpellState(SS_PRONE);
@@ -3084,7 +3086,7 @@ int fx_set_blind_state (Scriptable* /*Owner*/, Actor* target, Effect* fx)
 	if (!STATE_GET(STATE_BLIND)) {
 		STATE_SET( STATE_BLIND );
 		//the feat normally exists only in IWD2, but won't hurt
-		if (!target->GetFeat(FEAT_BLIND_FIGHT)) {
+		if (!target->HasFeat(Feat::BlindFight)) {
 			target->AddPortraitIcon(PI_BLIND);
 			if (reverse) {
 				//BG2
@@ -4619,6 +4621,13 @@ int fx_casting_glow (Scriptable* Owner, Actor* target, Effect* fx)
 		//simulate sparkle casting glows
 		target->ApplyEffectCopy(fx, fx_sparkle_ref, Owner, fx->Parameter2, 3);
 	}
+
+	// Resource contains the termination sound from when used from GameScript::SpellCastEffect
+	// the channel is a guess
+	if (fx->Duration - core->GetGame()->GameTime == 1 && !fx->Resource.IsEmpty()) {
+		core->GetAudioDrv()->Play(fx->Resource, SFXChannel::Hits, target->Pos, GEM_SND_SPATIAL);
+	}
+
 	// TODO: this opcode is also affected by slow/haste
 	return FX_NOT_APPLIED;
 }
@@ -7456,7 +7465,7 @@ int fx_teleport_to_target (Scriptable* /*Owner*/, Actor* target, Effect* /*fx*/)
 	if (map) {
 		Object oC;
 		oC.objectFields[0]=EA_ENEMY;
-		Targets *tgts = GetAllObjects(map, target, &oC, GA_NO_DEAD);
+		Targets* tgts = GetAllObjects(map, target, &oC, GA_NO_DEAD, false);
 		if (!tgts) {
 			// no enemy to jump to
 			return FX_NOT_APPLIED;
@@ -8214,7 +8223,11 @@ int fx_add_effects_list(Scriptable* Owner, Actor* target, Effect* fx)
 	if (!EffectQueue::CheckIWDTargeting(Owner, target, fx->Parameter1, fx->Parameter2, fx)) {
 		return FX_NOT_APPLIED;
 	}
-	core->ApplySpell(fx->Resource, target, Owner, fx->Power);
+	if (fx->Pos.IsInvalid()) {
+		core->ApplySpell(fx->Resource, target, Owner, fx->Power);
+	} else {
+		core->ApplySpellPoint(fx->Resource, target->GetCurrentArea(), fx->Pos, Owner, fx->Power);
+	}
 	return FX_NOT_APPLIED;
 }
 
@@ -8425,6 +8438,7 @@ int fx_static_charge(Scriptable* Owner, Actor* target, Effect* fx)
 		displaymsg->DisplayConstantStringName(HCStrings::StaticDissipate, GUIColors::WHITE, target);
 		return FX_APPLIED;
 	}
+	victim->Modified[IE_EXTSTATE_ID] |= EXTSTATE_STATIC_CHARGE;
 
 	// ee style
 	if (fx->Opcode == 0x14d) {
